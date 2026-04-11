@@ -1,8 +1,7 @@
-import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { expect, test } from "bun:test";
 
 import { QuestDomainError } from "../src/core/errors";
 import { WorkerRegistry } from "../src/core/worker-registry";
@@ -66,11 +65,10 @@ test("worker registry upserts and lists workers in stable order", async () => {
     });
 
     const workers = await registry.listWorkers();
-    assert.equal(workers.length, 2);
-    assert.deepEqual(
+    expect(workers.length).toBe(2);
+    expect(
       workers.map((worker) => worker.id),
-      ["atlas", "ember"],
-    );
+    ).toEqual(["atlas", "ember"]);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -84,14 +82,13 @@ test("worker registry surfaces invalid JSON as a typed domain error", async () =
   try {
     writeFileSync(registryPath, "{not-json", "utf8");
 
-    await assert.rejects(
-      registry.listWorkers(),
-      (error: unknown) => {
-        assert.ok(error instanceof QuestDomainError);
-        assert.equal(error.code, "invalid_worker_registry");
-        return true;
-      },
-    );
+    try {
+      await registry.listWorkers();
+      throw new Error("Expected invalid_worker_registry");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("invalid_worker_registry");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

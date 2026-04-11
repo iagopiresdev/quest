@@ -1,8 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
     "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
     "outDir": "dist",
     "rootDir": ".",
     "strict": true,
@@ -10,7 +14,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node"]
+    "types": ["bun", "node"]
   },
   "include": ["src/**/*", "test/**/*", "scripts/**/*"],
   "exclude": ["dist", "node_modules"]

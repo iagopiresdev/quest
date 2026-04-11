@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "bun:test";
 
 import { planQuest } from "../src/core/planner";
 import type { QuestSpec } from "../src/core/spec-schema";
@@ -116,16 +115,14 @@ test("planner assigns independent slices into the same wave and respects depende
   };
 
   const plan = planQuest(spec, workers);
-  assert.equal(plan.waves.length, 2);
-  assert.deepEqual(
+  expect(plan.waves.length).toBe(2);
+  expect(
     plan.waves[0]?.slices.map((slice) => slice.id),
-    ["parser", "docs"],
-  );
-  assert.deepEqual(
+  ).toEqual(["parser", "docs"]);
+  expect(
     plan.waves[1]?.slices.map((slice) => slice.id),
-    ["tests"],
-  );
-  assert.equal(plan.waves[1]?.slices[0]?.assignedWorkerId, "sable");
+  ).toEqual(["tests"]);
+  expect(plan.waves[1]?.slices[0]?.assignedWorkerId).toBe("sable");
 });
 
 test("planner serializes overlapping ownership even when maxParallel allows more", () => {
@@ -162,9 +159,9 @@ test("planner serializes overlapping ownership even when maxParallel allows more
   };
 
   const plan = planQuest(spec, workers);
-  assert.equal(plan.waves.length, 2);
-  assert.equal(plan.waves[0]?.slices.length, 1);
-  assert.equal(plan.waves[1]?.slices.length, 1);
+  expect(plan.waves.length).toBe(2);
+  expect(plan.waves[0]?.slices.length).toBe(1);
+  expect(plan.waves[1]?.slices.length).toBe(1);
 });
 
 test("planner defers runnable slices to later waves instead of scheduling null assignments", () => {
@@ -202,10 +199,10 @@ test("planner defers runnable slices to later waves instead of scheduling null a
   };
 
   const plan = planQuest(spec, singleWorker);
-  assert.equal(plan.unassigned.length, 0);
-  assert.equal(plan.waves.length, 2);
-  assert.deepEqual(plan.waves[0]?.slices.map((slice) => slice.assignedWorkerId), ["ember"]);
-  assert.deepEqual(plan.waves[1]?.slices.map((slice) => slice.assignedWorkerId), ["ember"]);
+  expect(plan.unassigned.length).toBe(0);
+  expect(plan.waves.length).toBe(2);
+  expect(plan.waves[0]?.slices.map((slice) => slice.assignedWorkerId)).toEqual(["ember"]);
+  expect(plan.waves[1]?.slices.map((slice) => slice.assignedWorkerId)).toEqual(["ember"]);
 });
 
 test("planner reports slices with no compatible worker as unassigned", () => {
@@ -243,8 +240,8 @@ test("planner reports slices with no compatible worker as unassigned", () => {
   };
 
   const plan = planQuest(spec, workers);
-  assert.equal(plan.waves.length, 0);
-  assert.deepEqual(plan.unassigned, [
+  expect(plan.waves.length).toBe(0);
+  expect(plan.unassigned).toEqual([
     {
       dependsOn: [],
       id: "parser",

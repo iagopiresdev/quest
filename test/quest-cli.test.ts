@@ -1,10 +1,7 @@
-import assert from "node:assert/strict";
-import process from "node:process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import test, { afterEach } from "node:test";
+import { afterEach, expect, test } from "bun:test";
 
 type TestContext = {
   stateRoot: string;
@@ -12,7 +9,9 @@ type TestContext = {
 
 const activeContexts: TestContext[] = [];
 const cliArgs = ["./src/cli.ts"];
-const projectRoot = process.cwd();
+const projectRoot = import.meta.dir.replace(/\/test$/, "");
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 function createContext(): TestContext {
   const stateRoot = mkdtempSync(join(tmpdir(), "grind-quest-cli-"));
@@ -30,21 +29,23 @@ function runCli(
   stderr: string;
   stdout: string;
 } {
-  const result = spawnSync(process.execPath, [...cliArgs, ...args], {
+  const result = Bun.spawnSync({
+    cmd: ["bun", ...cliArgs, ...args],
     cwd: projectRoot,
-    encoding: "utf8",
     env: {
-      ...process.env,
+      ...Bun.env,
       QUEST_RUNNER_STATE_ROOT: context.stateRoot,
       QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
     },
-    input: options.input,
+    stdin: options.input ? textEncoder.encode(options.input) : null,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
   return {
-    code: result.status,
-    stderr: result.stderr,
-    stdout: result.stdout,
+    code: result.exitCode,
+    stderr: textDecoder.decode(result.stderr),
+    stdout: textDecoder.decode(result.stdout),
   };
 }
 
@@ -103,12 +104,12 @@ test("quest cli upserts, lists, and plans from stdin", () => {
   });
 
   const upsert = runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson });
-  assert.equal(upsert.code, 0);
-  assert.equal(JSON.parse(upsert.stdout).worker.id, "ember");
+  expect(upsert.code).toBe(0);
+  expect(JSON.parse(upsert.stdout).worker.id).toBe("ember");
 
   const listed = runCli(context, ["workers", "list"]);
-  assert.equal(listed.code, 0);
-  assert.equal(JSON.parse(listed.stdout).workers.length, 1);
+  expect(listed.code).toBe(0);
+  expect(JSON.parse(listed.stdout).workers.length).toBe(1);
 
   const plan = runCli(
     context,
@@ -148,13 +149,13 @@ test("quest cli upserts, lists, and plans from stdin", () => {
     },
   );
 
-  assert.equal(plan.code, 0);
+  expect(plan.code).toBe(0);
   const planned = JSON.parse(plan.stdout).plan;
-  assert.deepEqual(planned.waves.map((wave: { slices: Array<{ id: string }> }) => wave.slices.map((slice) => slice.id)), [
+  expect(planned.waves.map((wave: { slices: Array<{ id: string }> }) => wave.slices.map((slice) => slice.id))).toEqual([
     ["parser"],
     ["docs"],
   ]);
-  assert.deepEqual(planned.unassigned, []);
+  expect(planned.unassigned).toEqual([]);
 });
 
 test("quest cli plans from file and reports unassigned slices", () => {
@@ -198,16 +199,15 @@ test("quest cli plans from file and reports unassigned slices", () => {
   );
 
   const planned = runCli(context, ["plan", "--file", specPath]);
-  assert.equal(planned.code, 0);
+  expect(planned.code).toBe(0);
   const plan = JSON.parse(planned.stdout).plan;
-  assert.deepEqual(plan.waves, []);
-  assert.deepEqual(
+  expect(plan.waves).toEqual([]);
+  expect(
     plan.unassigned.map((slice: { id: string; reasonCode: string }) => ({ id: slice.id, reasonCode: slice.reasonCode })),
-    [
+  ).toEqual([
       { id: "parser", reasonCode: "no_worker_available" },
       { id: "tests", reasonCode: "dependency_blocked" },
-    ],
-  );
+    ]);
 });
 
 test("quest cli creates persisted runs and reads them back", () => {
@@ -256,7 +256,7 @@ test("quest cli creates persisted runs and reads them back", () => {
   });
 
   const upsert = runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson });
-  assert.equal(upsert.code, 0);
+  expect(upsert.code).toBe(0);
 
   const created = runCli(
     context,
@@ -286,20 +286,20 @@ test("quest cli creates persisted runs and reads them back", () => {
     },
   );
 
-  assert.equal(created.code, 0);
+  expect(created.code).toBe(0);
   const createdRun = JSON.parse(created.stdout).run;
-  assert.equal(createdRun.status, "planned");
-  assert.match(createdRun.id, /^quest-[a-z0-9]{8}-[a-z0-9]{8}$/);
+  expect(createdRun.status).toBe("planned");
+  expect(createdRun.id).toMatch(/^quest-[a-z0-9]{8}-[a-z0-9]{8}$/);
 
   const listed = runCli(context, ["runs", "list"]);
-  assert.equal(listed.code, 0);
+  expect(listed.code).toBe(0);
   const runs = JSON.parse(listed.stdout).runs;
-  assert.equal(runs.length, 1);
-  assert.equal(runs[0].id, createdRun.id);
+  expect(runs.length).toBe(1);
+  expect(runs[0].id).toBe(createdRun.id);
 
   const status = runCli(context, ["runs", "status", "--id", createdRun.id]);
-  assert.equal(status.code, 0);
-  assert.equal(JSON.parse(status.stdout).run.id, createdRun.id);
+  expect(status.code).toBe(0);
+  expect(JSON.parse(status.stdout).run.id).toBe(createdRun.id);
 });
 
 test("quest cli executes a planned run in dry-run mode", () => {
@@ -347,7 +347,7 @@ test("quest cli executes a planned run in dry-run mode", () => {
     tags: ["typescript"],
   });
 
-  assert.equal(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code, 0);
+  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
 
   const created = runCli(
     context,
@@ -376,12 +376,12 @@ test("quest cli executes a planned run in dry-run mode", () => {
       }),
     },
   );
-  assert.equal(created.code, 0);
+  expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
 
   const executed = runCli(context, ["runs", "execute", "--id", runId, "--dry-run"]);
-  assert.equal(executed.code, 0);
+  expect(executed.code).toBe(0);
   const executedRun = JSON.parse(executed.stdout).run;
-  assert.equal(executedRun.status, "completed");
-  assert.equal(executedRun.slices[0].status, "completed");
+  expect(executedRun.status).toBe("completed");
+  expect(executedRun.slices[0].status).toBe("completed");
 });

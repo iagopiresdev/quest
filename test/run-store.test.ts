@@ -1,8 +1,7 @@
-import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { expect, test } from "bun:test";
 
 import { QuestDomainError } from "../src/core/errors";
 import { QuestRunStore } from "../src/core/run-store";
@@ -74,17 +73,17 @@ test("run store creates a planned run and lists it", async () => {
 
   try {
     const run = await store.createRun(createSpec(), [createWorker("ember")]);
-    assert.equal(run.status, "planned");
-    assert.equal(run.events.length, 1);
-    assert.equal(run.events[0]?.type, "run_created");
+    expect(run.status).toBe("planned");
+    expect(run.events.length).toBe(1);
+    expect(run.events[0]?.type).toBe("run_created");
 
     const loaded = await store.getRun(run.id);
-    assert.equal(loaded.id, run.id);
+    expect(loaded.id).toBe(run.id);
 
     const runs = await store.listRuns();
-    assert.equal(runs.length, 1);
-    assert.equal(runs[0]?.id, run.id);
-    assert.equal(runs[0]?.waveCount, 1);
+    expect(runs.length).toBe(1);
+    expect(runs[0]?.id).toBe(run.id);
+    expect(runs[0]?.waveCount).toBe(1);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -96,9 +95,9 @@ test("run store marks blocked runs when planning leaves slices unassigned", asyn
 
   try {
     const run = await store.createRun(createSpec("openclaw"), [createWorker("ember", "codex")]);
-    assert.equal(run.status, "blocked");
-    assert.equal(run.plan.unassigned.length, 1);
-    assert.equal(run.events.at(-1)?.type, "run_blocked");
+    expect(run.status).toBe("blocked");
+    expect(run.plan.unassigned.length).toBe(1);
+    expect(run.events.at(-1)?.type).toBe("run_blocked");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -109,26 +108,24 @@ test("run store reports missing and invalid run documents as typed errors", asyn
   const store = new QuestRunStore(root);
 
   try {
-    await assert.rejects(
-      store.getRun("quest-00000000-deadbeef"),
-      (error: unknown) => {
-        assert.ok(error instanceof QuestDomainError);
-        assert.equal(error.code, "quest_run_not_found");
-        return true;
-      },
-    );
+    try {
+      await store.getRun("quest-00000000-deadbeef");
+      throw new Error("Expected quest_run_not_found");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_run_not_found");
+    }
 
     const invalidRunPath = join(root, "quest-00000000-deadbeef.json");
     writeFileSync(invalidRunPath, JSON.stringify({ version: 1, bad: true }), "utf8");
 
-    await assert.rejects(
-      store.getRun("quest-00000000-deadbeef"),
-      (error: unknown) => {
-        assert.ok(error instanceof QuestDomainError);
-        assert.equal(error.code, "invalid_quest_run");
-        return true;
-      },
-    );
+    try {
+      await store.getRun("quest-00000000-deadbeef");
+      throw new Error("Expected invalid_quest_run");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("invalid_quest_run");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

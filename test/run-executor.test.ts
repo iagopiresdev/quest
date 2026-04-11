@@ -1,8 +1,7 @@
-import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { expect, test } from "bun:test";
 
 import { QuestDomainError } from "../src/core/errors";
 import { QuestRunExecutor } from "../src/core/run-executor";
@@ -94,13 +93,12 @@ test("run executor completes a planned run in dry-run mode", async () => {
     const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
     const executed = await executor.executeRun(run.id, { dryRun: true });
 
-    assert.equal(executed.status, "completed");
-    assert.equal(
+    expect(executed.status).toBe("completed");
+    expect(
       executed.slices.every((slice) => slice.status === "completed"),
-      true,
-    );
-    assert.equal(executed.events.some((event) => event.type === "run_started"), true);
-    assert.equal(executed.events.some((event) => event.type === "run_completed"), true);
+    ).toBe(true);
+    expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
+    expect(executed.events.some((event) => event.type === "run_completed")).toBe(true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -127,16 +125,15 @@ test("run executor refuses blocked runs", async () => {
     };
 
     const run = await runStore.createRun(blockedSpec, await workerRegistry.listWorkers());
-    assert.equal(run.status, "blocked");
+    expect(run.status).toBe("blocked");
 
-    await assert.rejects(
-      executor.executeRun(run.id, { dryRun: true }),
-      (error: unknown) => {
-        assert.ok(error instanceof QuestDomainError);
-        assert.equal(error.code, "quest_run_not_executable");
-        return true;
-      },
-    );
+    try {
+      await executor.executeRun(run.id, { dryRun: true });
+      throw new Error("Expected quest_run_not_executable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_run_not_executable");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -154,18 +151,17 @@ test("run executor fails explicitly when no adapter is available", async () => {
     await workerRegistry.upsertWorker(createWorker("ember", "local-cli"));
     const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
 
-    await assert.rejects(
-      executor.executeRun(run.id),
-      (error: unknown) => {
-        assert.ok(error instanceof QuestDomainError);
-        assert.equal(error.code, "quest_runner_unavailable");
-        return true;
-      },
-    );
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_runner_unavailable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+    }
 
     const failedRun = await runStore.getRun(run.id);
-    assert.equal(failedRun.status, "failed");
-    assert.equal(failedRun.events.some((event) => event.type === "run_failed"), true);
+    expect(failedRun.status).toBe("failed");
+    expect(failedRun.events.some((event) => event.type === "run_failed")).toBe(true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
