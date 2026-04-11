@@ -6,6 +6,7 @@ import {
   type ObservableEvent,
   type ObservableEventType,
   shouldDeliverEvent,
+  type TelegramSink,
   type WebhookSink,
 } from "./observability-schema";
 import type { ObservabilityStore } from "./observability-store";
@@ -150,8 +151,89 @@ export class EventDispatcher {
     attempts: number,
   ): Promise<DeliveryRecord> {
     switch (sink.type) {
+      case "telegram":
+        return await this.deliverTelegramSink(sink, event, attempts);
       case "webhook":
         return await this.deliverWebhookSink(sink, event, attempts);
+    }
+  }
+
+  private async deliverTelegramSink(
+    sink: TelegramSink,
+    event: ObservableEvent,
+    attempts: number,
+  ): Promise<DeliveryRecord> {
+    const lastAttemptAt = new Date().toISOString();
+    const payload = event;
+
+    try {
+      const botToken = sink.botTokenSecretRef
+        ? await this.secretStore.getSecret(sink.botTokenSecretRef)
+        : sink.botTokenEnv
+          ? Bun.env[sink.botTokenEnv]
+          : undefined;
+      if (!botToken) {
+        return {
+          attempts,
+          eventId: event.eventId,
+          eventType: event.eventType,
+          lastAttemptAt,
+          lastError: "Telegram bot token is not configured",
+          payload,
+          sinkId: sink.id,
+          status: "failed",
+        };
+      }
+
+      const baseUrl = sink.apiBaseUrl ?? "https://api.telegram.org";
+      const response = await fetch(`${baseUrl}/bot${botToken}/sendMessage`, {
+        body: JSON.stringify({
+          chat_id: sink.chatId,
+          disable_notification: sink.disableNotification,
+          message_thread_id: sink.messageThreadId,
+          parse_mode: sink.parseMode,
+          text: formatTelegramMessage(event),
+        }),
+        headers: {
+          "content-type": "application/json",
+        },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        return {
+          attempts,
+          eventId: event.eventId,
+          eventType: event.eventType,
+          lastAttemptAt,
+          lastError: `HTTP ${response.status}`,
+          payload,
+          sinkId: sink.id,
+          status: "failed",
+        };
+      }
+
+      return {
+        attempts,
+        deliveredAt: lastAttemptAt,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        lastAttemptAt,
+        payload,
+        sinkId: sink.id,
+        status: "delivered",
+      };
+    } catch (error: unknown) {
+      return {
+        attempts,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        lastAttemptAt,
+        lastError: error instanceof Error ? error.message : String(error),
+        payload,
+        sinkId: sink.id,
+        status: "failed",
+      };
     }
   }
 
@@ -216,4 +298,27 @@ export class EventDispatcher {
       };
     }
   }
+}
+
+function formatTelegramMessage(event: ObservableEvent): string {
+  if (event.kind === "worker_calibration") {
+    return [
+      `quest-runner calibration`,
+      `worker: ${event.workerName} (${event.workerId})`,
+      `suite: ${event.suiteId}`,
+      `status: ${event.status}`,
+      `score: ${event.score}`,
+      `xp: ${event.xpAwarded}`,
+      `run: ${event.runId}`,
+    ].join("\n");
+  }
+
+  return [
+    `quest-runner event`,
+    `event: ${event.eventType}`,
+    `run: ${event.runId}`,
+    `title: ${event.title}`,
+    `status: ${event.runStatus}`,
+    `workspace: ${event.workspace}`,
+  ].join("\n");
 }

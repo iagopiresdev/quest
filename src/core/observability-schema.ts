@@ -4,6 +4,10 @@ import type { QuestRunDocument, QuestRunEvent } from "./run-schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const urlSchema = z.url().max(400);
+const secretRefSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/);
 
 export const observableRunEventTypeSchema = z.enum([
   "run_created",
@@ -52,7 +56,36 @@ export const webhookSinkSchema = z
   .strict();
 export type WebhookSink = z.infer<typeof webhookSinkSchema>;
 
-export const observabilitySinkSchema = z.discriminatedUnion("type", [webhookSinkSchema]);
+export const telegramSinkSchema = z
+  .object({
+    apiBaseUrl: urlSchema.optional(),
+    botTokenEnv: nonEmptyString(120).optional(),
+    botTokenSecretRef: secretRefSchema.optional(),
+    chatId: nonEmptyString(120),
+    disableNotification: z.boolean().default(false),
+    enabled: z.boolean().default(true),
+    eventTypes: z.array(observableEventTypeSchema).max(64).default([]),
+    id: nonEmptyString(80),
+    messageThreadId: z.number().int().min(1).optional(),
+    parseMode: z.enum(["Markdown", "MarkdownV2", "HTML"]).optional(),
+    type: z.literal("telegram"),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.botTokenEnv && !value.botTokenSecretRef) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "telegram sink requires botTokenEnv or botTokenSecretRef",
+        path: ["botTokenEnv"],
+      });
+    }
+  });
+export type TelegramSink = z.infer<typeof telegramSinkSchema>;
+
+export const observabilitySinkSchema = z.discriminatedUnion("type", [
+  webhookSinkSchema,
+  telegramSinkSchema,
+]);
 export type ObservabilitySink = z.infer<typeof observabilitySinkSchema>;
 
 export const observabilityConfigSchema = z

@@ -22,7 +22,7 @@ The project is small on purpose. The guidance below exists to keep it small, typ
    OpenClaw, Hermes, Codex, Claude, and future backends belong behind runner interfaces. None of them should define the core domain model.
 
 6. Optimize for agents first.
-   CLI I/O must stay machine-readable. Errors must be structured. Side effects must be durable and easy to inspect from automation.
+   CLI I/O must have a stable machine-readable mode. Errors must be structured. Side effects must be durable and easy to inspect from automation.
 
 ## System Design
 
@@ -36,6 +36,9 @@ Current architectural layers:
 
 - `src/core/worker-schema.ts`
   Worker contracts and backend metadata.
+
+- `src/core/worker-presets.ts`
+  Backend-specific worker presets and defaults. The CLI may choose among them, but transport code should not own backend templates.
 
 - `src/core/planner.ts`
   Pure planning logic. No filesystem or process execution.
@@ -87,6 +90,7 @@ The following invariants should stay true:
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
+- JSON is the stable CLI contract for automation. Human-readable output may exist as a presentation layer, but it must be derived from the same result object instead of inventing a second command surface.
 - New state should be appended, not inferred from logs after the fact.
 
 If a future change makes these rules harder to see, the design is getting worse.
@@ -200,13 +204,19 @@ Future observability work should prefer:
 - delivery records that keep the exact payload snapshot needed for audit and safe replay
 - typed sink definitions so new integrations extend the sink union instead of rewriting config storage
 
+When adding model-backed runners that are not local CLIs:
+- keep the external API call separate from the local file-application step
+- require a typed response contract
+- validate every returned path against the slice ownership boundary before touching disk
+
 ## CLI Conventions
 
 The CLI is the primary interface.
 
 Rules:
 
-- Output JSON only.
+- Keep JSON as the stable automation mode.
+- Human-readable output is allowed for TTYs, but `--json` must remain available and stable.
 - Exit `0` on success, non-zero on failure.
 - Keep command definitions centralized.
 - Accept `--file` and `--stdin` where structured input makes sense.

@@ -14,6 +14,8 @@ import {
   observabilityDeliveriesSchema,
   observabilitySinkSchema,
   observableCalibrationEventSchema,
+  type TelegramSink,
+  telegramSinkSchema,
   type WebhookSink,
   webhookSinkSchema,
 } from "./observability-schema";
@@ -99,6 +101,11 @@ export class ObservabilityStore {
   async upsertWebhookSink(candidate: WebhookSink): Promise<WebhookSink> {
     const parsed = webhookSinkSchema.parse(candidate);
     return (await this.upsertSink(parsed)) as WebhookSink;
+  }
+
+  async upsertTelegramSink(candidate: TelegramSink): Promise<TelegramSink> {
+    const parsed = telegramSinkSchema.parse(candidate);
+    return (await this.upsertSink(parsed)) as TelegramSink;
   }
 
   async deleteSink(sinkId: string): Promise<void> {

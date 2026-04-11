@@ -644,6 +644,97 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
   }
 });
 
+test("run executor completes a planned run with the hermes-api adapter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  const server = Bun.serve({
+    fetch: async (request) => {
+      const body = (await request.json()) as { messages: Array<{ content: string }> };
+      expect(body.messages[1]?.content).toContain("Current owned file snapshots");
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  files: [
+                    {
+                      content:
+                        "export function sum(a: number, b: number): number {\n  return a + b;\n}\n",
+                      path: "sum.ts",
+                    },
+                  ],
+                  summary: "Hermes updated sum.ts",
+                }),
+              },
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    },
+    port: 0,
+  });
+
+  try {
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "hermes-api", undefined, {
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        profile: "hermes-local",
+        runner: "hermes",
+      }),
+    );
+    const repositoryRoot = createCommittedRepo(root);
+    writeFileSync(
+      join(repositoryRoot, "sum.ts"),
+      "export function sum(a: number, b: number): number {\n  return a + b + 1;\n}\n",
+      "utf8",
+    );
+    Bun.spawnSync({ cmd: ["git", "add", "sum.ts"], cwd: repositoryRoot });
+    Bun.spawnSync({ cmd: ["git", "commit", "-m", "Add sum.ts"], cwd: repositoryRoot });
+
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Fix sum",
+          id: "fix-sum",
+          owns: ["sum.ts"],
+          title: "Fix sum",
+        },
+      ],
+      title: "Hermes run",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    const executed = await executor.executeRun(run.id);
+    const workspacePath = executed.slices[0]?.workspacePath ?? "";
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.summary).toBe("Hermes updated sum.ts");
+    expect(readFileSync(join(workspacePath, "sum.ts"), "utf8")).toContain("return a + b;");
+  } finally {
+    server.stop(true);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor resolves secret-store auth for codex-cli workers", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");

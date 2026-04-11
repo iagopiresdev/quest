@@ -1,3 +1,8 @@
+import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
+
+import { z } from "zod";
+
 import { QuestDomainError } from "./errors";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
@@ -20,6 +25,28 @@ export type RunnerExecutionContext = {
   slice: QuestSliceSpec;
   sliceState: QuestRunSliceState;
   worker: RegisteredWorker;
+};
+
+const hermesResponseSchema = z
+  .object({
+    files: z
+      .array(
+        z
+          .object({
+            content: z.string(),
+            path: z.string().trim().min(1).max(400),
+          })
+          .strict(),
+      )
+      .max(64)
+      .default([]),
+    summary: z.string().trim().min(1).max(400),
+  })
+  .strict();
+
+type HermesFileSnapshot = {
+  content: string;
+  path: string;
 };
 
 function buildLocalCommandPayload(context: RunnerExecutionContext): string {
@@ -108,6 +135,175 @@ function buildQuestPrompt(context: RunnerExecutionContext): string {
     "Global acceptance checks before integration:",
     globalAcceptanceChecks,
   ].join("\n");
+}
+
+function patternToRegExp(pattern: string): RegExp {
+  const normalized = pattern.replaceAll("\\", "/");
+  const escaped = normalized.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  const withStars = escaped.replaceAll("\\*\\*", "__DOUBLE_STAR__").replaceAll("\\*", "__STAR__");
+  return new RegExp(
+    `^${withStars.replaceAll("__DOUBLE_STAR__", ".*").replaceAll("__STAR__", "[^/]*")}$`,
+  );
+}
+
+function matchesOwnedPath(relativePath: string, ownedPatterns: string[]): boolean {
+  const normalized = relativePath.replaceAll("\\", "/");
+  return ownedPatterns.some((pattern) => patternToRegExp(pattern).test(normalized));
+}
+
+async function listWorkspaceFiles(root: string): Promise<string[]> {
+  const entries = await readdir(root, { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => resolve(root, entry.parentPath.replaceAll("\\", "/"), entry.name));
+}
+
+async function collectHermesFileSnapshots(
+  context: RunnerExecutionContext,
+): Promise<HermesFileSnapshot[]> {
+  const files = await listWorkspaceFiles(context.cwd);
+  const matchingFiles = files
+    .map((path) => ({
+      absolutePath: path,
+      relativePath: relative(context.cwd, path).replaceAll("\\", "/"),
+    }))
+    .filter((file) => matchesOwnedPath(file.relativePath, context.slice.owns))
+    .slice(0, 24);
+
+  const snapshots = await Promise.all(
+    matchingFiles.map(async (file) => ({
+      content: await Bun.file(file.absolutePath).text(),
+      path: file.relativePath,
+    })),
+  );
+
+  return snapshots.filter((snapshot) => snapshot.content.length <= 50_000);
+}
+
+function buildHermesPrompt(
+  context: RunnerExecutionContext,
+  snapshots: HermesFileSnapshot[],
+): string {
+  const filesSection =
+    snapshots.length === 0
+      ? "No owned files currently exist in the workspace."
+      : snapshots
+          .map((snapshot) => `File: ${snapshot.path}\n<<<FILE\n${snapshot.content}\nFILE`)
+          .join("\n\n");
+
+  return [
+    buildQuestPrompt(context),
+    "",
+    "Return JSON only with this shape:",
+    '{"summary":"short summary","files":[{"path":"relative/path","content":"full file contents"}]}',
+    "",
+    "Rules:",
+    "- Only write files inside the owned paths for this slice.",
+    "- Return complete file contents for each changed file.",
+    "- If no file change is needed, return an empty files array.",
+    "",
+    "Current owned file snapshots:",
+    filesSection,
+  ].join("\n");
+}
+
+function extractAssistantContent(responseBody: unknown): string {
+  const parsed = z
+    .object({
+      choices: z
+        .array(
+          z.object({
+            message: z.object({
+              content: z.union([
+                z.string(),
+                z.array(
+                  z.object({
+                    text: z.string().optional(),
+                    type: z.string(),
+                  }),
+                ),
+              ]),
+            }),
+          }),
+        )
+        .min(1),
+    })
+    .safeParse(responseBody);
+
+  if (!parsed.success) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: parsed.error.flatten(),
+      message: "Hermes response is not a valid chat completion payload",
+      statusCode: 1,
+    });
+  }
+
+  const content = parsed.data.choices[0]?.message.content;
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!content) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: parsed.data.choices[0],
+      message: "Hermes response did not include message content",
+      statusCode: 1,
+    });
+  }
+
+  return content
+    .map((part) => (part.type === "text" && part.text ? part.text : ""))
+    .join("")
+    .trim();
+}
+
+function parseHermesResponse(rawContent: string): z.infer<typeof hermesResponseSchema> {
+  const parsedJson = JSON.parse(rawContent) as unknown;
+  const parsed = hermesResponseSchema.safeParse(parsedJson);
+  if (!parsed.success) {
+    throw new QuestDomainError({
+      code: "quest_runner_command_failed",
+      details: parsed.error.flatten(),
+      message: "Hermes returned an invalid write plan",
+      statusCode: 1,
+    });
+  }
+
+  return parsed.data;
+}
+
+async function applyHermesWrites(
+  cwd: string,
+  ownedPatterns: string[],
+  files: Array<{ content: string; path: string }>,
+): Promise<void> {
+  for (const file of files) {
+    const normalizedPath = file.path.replaceAll("\\", "/");
+    if (!matchesOwnedPath(normalizedPath, ownedPatterns)) {
+      throw new QuestDomainError({
+        code: "quest_runner_command_failed",
+        details: { path: normalizedPath },
+        message: `Hermes attempted to write outside owned paths: ${normalizedPath}`,
+        statusCode: 1,
+      });
+    }
+
+    const absolutePath = resolve(cwd, normalizedPath);
+    const workspaceRoot = resolve(cwd);
+    if (!(absolutePath === workspaceRoot || absolutePath.startsWith(`${workspaceRoot}/`))) {
+      throw new QuestDomainError({
+        code: "quest_runner_command_failed",
+        details: { path: normalizedPath },
+        message: `Hermes attempted to escape the slice workspace: ${normalizedPath}`,
+        statusCode: 1,
+      });
+    }
+
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, file.content, "utf8");
+  }
 }
 
 async function resolveAuthEnv(
@@ -394,6 +590,78 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
       stderr,
       stdout,
       summary,
+    };
+  }
+}
+
+export class HermesApiRunnerAdapter implements RunnerAdapter {
+  readonly name = "hermes-api";
+
+  constructor(private readonly secretStore: SecretStore) {}
+
+  supports(worker: RegisteredWorker): boolean {
+    return worker.backend.adapter === this.name;
+  }
+
+  async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
+    const baseUrl = context.worker.backend.baseUrl;
+    if (!baseUrl) {
+      throw new QuestDomainError({
+        code: "quest_runner_unavailable",
+        details: { workerId: context.worker.id },
+        message: `Worker ${context.worker.id} has no Hermes base URL configured`,
+        statusCode: 1,
+      });
+    }
+
+    const authEnv = await resolveAuthEnv(context.worker, this.secretStore);
+    const apiKey =
+      context.worker.backend.auth?.targetEnvVar && authEnv[context.worker.backend.auth.targetEnvVar]
+        ? authEnv[context.worker.backend.auth.targetEnvVar]
+        : undefined;
+    const snapshots = await collectHermesFileSnapshots(context);
+    const prompt = buildHermesPrompt(context, snapshots);
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      body: JSON.stringify({
+        messages: [
+          {
+            content:
+              "You are Hermes running inside quest-runner. Return strict JSON only, no markdown.",
+            role: "system",
+          },
+          { content: prompt, role: "user" },
+        ],
+        model: context.worker.backend.profile,
+        temperature: 0.1,
+      }),
+      headers: {
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        "content-type": "application/json",
+      },
+      method: "POST",
+      signal: context.signal,
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new QuestDomainError({
+        code: "quest_runner_command_failed",
+        details: { body: responseText, status: response.status, workerId: context.worker.id },
+        message: `Hermes request failed for ${context.worker.id}`,
+        statusCode: 1,
+      });
+    }
+
+    const content = extractAssistantContent(JSON.parse(responseText) as unknown);
+    const plan = parseHermesResponse(content);
+    await applyHermesWrites(context.cwd, context.slice.owns, plan.files);
+
+    return {
+      exitCode: 0,
+      stderr: "",
+      stdout: content,
+      summary: plan.summary,
     };
   }
 }

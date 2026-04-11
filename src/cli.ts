@@ -14,6 +14,7 @@ import {
   deliveryStatusSchema,
   type ObservableEventType,
   observableEventTypeSchema,
+  telegramSinkSchema,
   webhookSinkSchema,
 } from "./core/observability-schema";
 import { ObservabilityStore } from "./core/observability-store";
@@ -37,6 +38,11 @@ import {
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
+import {
+  createCodexWorkerPreset,
+  createHermesWorkerPreset,
+  slugifyWorkerId,
+} from "./core/worker-presets";
 import { WorkerRegistry } from "./core/worker-registry";
 import {
   type RegisteredWorker,
@@ -51,6 +57,7 @@ type QuestCliCommand =
   | "observability:events:list"
   | "observability:sinks:list"
   | "observability:sink:delete"
+  | "observability:telegram:upsert"
   | "observability:webhook:upsert"
   | "plan"
   | "run"
@@ -68,6 +75,7 @@ type QuestCliCommand =
   | "secrets:status"
   | "setup"
   | "workers:add:codex"
+  | "workers:add:hermes"
   | "workers:calibrate"
   | "workers:list"
   | "workers:upsert";
@@ -98,20 +106,58 @@ type DoctorCheck = {
   ok: boolean;
 };
 
+type OutputMode = "json" | "pretty";
+
+type RunSliceSummary = {
+  id: string;
+  integrationStatus: string;
+  lastError: string | null;
+  status: string;
+  title: string;
+  wave: number;
+  workerId: string | null;
+};
+
+type RunDetailSummary = {
+  counts: {
+    integration: Record<string, number>;
+    slices: Record<string, number>;
+  };
+  id: string;
+  integration: {
+    checkCount: number;
+    status: string;
+    targetRef: string | null;
+    workspacePath: string | null;
+  };
+  sourceRepositoryPath: string | null;
+  status: string;
+  title: string;
+  updatedAt: string;
+  waves: number;
+  slices: RunSliceSummary[];
+};
+
 function printUsage(): void {
   void Bun.write(
     Bun.stdout,
     `${[
       "Usage:",
+      "  quest [--json|--pretty] <command> [options]",
+      "",
       ...commandDefinitions.map((definition) => `  ${definition.usage}`),
       "",
-      "Output is always JSON.",
+      "Output defaults to JSON for pipes and pretty text for interactive terminals.",
     ].join("\n")}\n`,
   );
 }
 
 function stdinIsTty(): boolean {
   return process.stdin.isTTY === true;
+}
+
+function stdoutIsTty(): boolean {
+  return process.stdout.isTTY === true;
 }
 
 function findOptionValue(args: string[], flag: string): string | null {
@@ -179,13 +225,20 @@ function parseDeliveryStatus(value: string | null): DeliveryStatus | undefined {
   return value ? deliveryStatusSchema.parse(value) : undefined;
 }
 
-function slugifyWorkerId(value: string): string {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "codex-worker";
+function determineOutputMode(args: string[]): OutputMode {
+  if (hasFlag(args, "--json")) {
+    return "json";
+  }
+
+  if (hasFlag(args, "--pretty")) {
+    return "pretty";
+  }
+
+  return stdoutIsTty() ? "pretty" : "json";
+}
+
+function stripGlobalOutputFlags(args: string[]): string[] {
+  return args.filter((argument) => argument !== "--json" && argument !== "--pretty");
 }
 
 function inferInvocationMode(invokedPath: string): "compiled" | "source" | "wrapper" {
@@ -290,51 +343,56 @@ function buildCodexWorker(args: string[]): RegisteredWorker {
             targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
           };
 
-  return {
-    backend: {
-      adapter: "codex-cli",
-      auth,
-      executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
-      profile: findOptionValue(args, "--profile") ?? "gpt-5.4",
-      runner: "codex",
-      toolPolicy: {
-        allow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
-        deny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
-      },
-    },
-    calibration: {
-      history: [],
-    },
-    class: findOptionValue(args, "--class") ?? "engineer",
-    enabled: true,
-    id: findOptionValue(args, "--id") ?? slugifyWorkerId(name),
+  return createCodexWorkerPreset({
+    approach: findOptionValue(args, "--approach") ?? undefined,
+    auth,
+    executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
+    id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "codex-worker"),
     name,
-    persona: {
-      approach: findOptionValue(args, "--approach") ?? "finish the change with minimal churn",
-      prompt:
-        findOptionValue(args, "--prompt") ?? "Keep diffs narrow and state residual risks briefly.",
-      voice: findOptionValue(args, "--voice") ?? "terse",
-    },
-    progression: { level: 1, xp: 0 },
-    resources: { cpuCost: 1, gpuCost: 0, maxParallel: 1, memoryCost: 1 },
-    stats: {
-      coding: 85,
-      contextEndurance: 60,
-      docs: 40,
-      mergeSafety: 80,
-      research: 40,
-      speed: 60,
-      testing: 70,
-    },
-    tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")).length
-      ? parseCommaSeparatedValues(findOptionValue(args, "--tags"))
-      : ["codex"],
-    title: findOptionValue(args, "--title") ?? "Battle Engineer",
-    trust: { calibratedAt: new Date().toISOString(), rating: 0.8 },
-  };
+    profile: findOptionValue(args, "--profile") ?? undefined,
+    prompt: findOptionValue(args, "--prompt") ?? undefined,
+    tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")),
+    title: findOptionValue(args, "--title") ?? undefined,
+    toolAllow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
+    toolDeny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
+    voice: findOptionValue(args, "--voice") ?? undefined,
+    workerClass: findOptionValue(args, "--class") ?? undefined,
+  });
 }
 
-function summarizeSliceState(slice: QuestRunSliceState): Record<string, unknown> {
+function buildHermesWorker(args: string[]): RegisteredWorker {
+  const name = findOptionValue(args, "--name") ?? "Hermes Worker";
+  const authMode = findOptionValue(args, "--auth-mode");
+  const auth =
+    authMode === "env-var"
+      ? {
+          envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
+          mode: "env-var" as const,
+          targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
+        }
+      : authMode === "secret-store"
+        ? {
+            mode: "secret-store" as const,
+            secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
+            targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
+          }
+        : undefined;
+
+  return createHermesWorkerPreset({
+    approach: findOptionValue(args, "--approach") ?? undefined,
+    auth,
+    baseUrl: findOptionValue(args, "--base-url") ?? "http://127.0.0.1:8000/v1",
+    id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "hermes-worker"),
+    name,
+    profile: findOptionValue(args, "--profile") ?? undefined,
+    prompt: findOptionValue(args, "--prompt") ?? undefined,
+    title: findOptionValue(args, "--title") ?? undefined,
+    voice: findOptionValue(args, "--voice") ?? undefined,
+    workerClass: findOptionValue(args, "--class") ?? undefined,
+  });
+}
+
+function summarizeSliceState(slice: QuestRunSliceState): RunSliceSummary {
   return {
     id: slice.sliceId,
     integrationStatus: slice.integrationStatus ?? "pending",
@@ -346,7 +404,7 @@ function summarizeSliceState(slice: QuestRunSliceState): Record<string, unknown>
   };
 }
 
-function summarizeRunDetail(run: QuestRunDocument): Record<string, unknown> {
+function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
   const sliceCounts = run.slices.reduce<Record<string, number>>((counts, slice) => {
     counts[slice.status] = (counts[slice.status] ?? 0) + 1;
     return counts;
@@ -520,6 +578,31 @@ async function checkCodexLogin(executable: string): Promise<DoctorCheck> {
   }
 }
 
+async function checkHermesApi(baseUrl: string): Promise<DoctorCheck> {
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/models`);
+    const body = await response.text();
+    return {
+      details: {
+        baseUrl,
+        body: body.length > 0 ? body.slice(0, 500) : null,
+        status: response.status,
+      },
+      name: "hermes-api",
+      ok: response.ok,
+    };
+  } catch (error: unknown) {
+    return {
+      details: {
+        baseUrl,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      name: "hermes-api",
+      ok: false,
+    };
+  }
+}
+
 async function runDoctor(
   args: string[],
   secretStore: SecretStore,
@@ -533,6 +616,8 @@ async function runDoctor(
 ): Promise<Record<string, unknown>> {
   const codexExecutable =
     findOptionValue(args, "--codex-executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE ?? "codex";
+  const hermesBaseUrl =
+    findOptionValue(args, "--hermes-base-url") ?? Bun.env.QUEST_RUNNER_HERMES_BASE_URL ?? null;
   const checks: DoctorCheck[] = [
     {
       details: {
@@ -559,6 +644,9 @@ async function runDoctor(
 
   const codexLogin = await checkCodexLogin(codexExecutable);
   checks.push(codexLogin);
+  if (hermesBaseUrl) {
+    checks.push(await checkHermesApi(hermesBaseUrl));
+  }
 
   try {
     const status = await secretStore.getStatus("quest-doctor-probe");
@@ -634,40 +722,66 @@ async function runSetup(
     ok: boolean;
   };
 
+  const backend = findOptionValue(args, "--backend") ?? "codex";
   const shouldCreateWorker =
     hasFlag(args, "--create-worker") ||
     (!hasFlag(args, "--skip-worker") &&
-      checkOk(doctor.checks, "codex-binary") &&
-      checkOk(doctor.checks, "codex-login"));
+      ((backend === "codex" &&
+        checkOk(doctor.checks, "codex-binary") &&
+        checkOk(doctor.checks, "codex-login")) ||
+        (backend === "hermes" && checkOk(doctor.checks, "hermes-api"))));
 
   const interactive = stdinIsTty() && !hasFlag(args, "--yes");
   let createdWorker: RegisteredWorker | null = null;
 
   if (shouldCreateWorker) {
-    let workerName = findOptionValue(args, "--worker-name") ?? "Codex Worker";
-    let profile = findOptionValue(args, "--profile") ?? "gpt-5.4";
+    let workerName =
+      findOptionValue(args, "--worker-name") ??
+      (backend === "hermes" ? "Hermes Worker" : "Codex Worker");
+    let profile =
+      findOptionValue(args, "--profile") ?? (backend === "hermes" ? "hermes" : "gpt-5.4");
+    let baseUrl =
+      findOptionValue(args, "--base-url") ??
+      findOptionValue(args, "--hermes-base-url") ??
+      "http://127.0.0.1:8000/v1";
     let createWorker = true;
 
     if (interactive) {
-      createWorker = await confirmWithDefault("Create a Codex worker now?", true);
+      createWorker = await confirmWithDefault(`Create a ${backend} worker now?`, true);
       if (createWorker) {
         workerName = await promptWithDefault("Worker name", workerName);
-        profile = await promptWithDefault("Codex profile", profile);
+        profile = await promptWithDefault("Worker profile", profile);
+        if (backend === "hermes") {
+          baseUrl = await promptWithDefault("Hermes base URL", baseUrl);
+        }
       }
     }
 
     if (createWorker) {
       createdWorker = await registry.upsertWorker(
         registeredWorkerSchema.parse(
-          buildCodexWorker([
+          (backend === "hermes" ? buildHermesWorker : buildCodexWorker)([
             "--name",
             workerName,
             "--profile",
             profile,
-            "--auth-mode",
-            findOptionValue(args, "--auth-mode") ?? "native-login",
             "--id",
             findOptionValue(args, "--worker-id") ?? slugifyWorkerId(workerName),
+            ...(backend === "hermes" ? ["--base-url", baseUrl] : []),
+            ...(backend === "codex"
+              ? ["--auth-mode", findOptionValue(args, "--auth-mode") ?? "native-login"]
+              : findOptionValue(args, "--auth-mode")
+                ? ["--auth-mode", findOptionValue(args, "--auth-mode") as string]
+                : []),
+            ...(findOptionValue(args, "--env-var")
+              ? ["--env-var", findOptionValue(args, "--env-var") as string]
+              : []),
+            ...(findOptionValue(args, "--secret-ref")
+              ? ["--secret-ref", findOptionValue(args, "--secret-ref") as string]
+              : []),
+            ...(findOptionValue(args, "--target-env-var")
+              ? ["--target-env-var", findOptionValue(args, "--target-env-var") as string]
+              : []),
             ...(findOptionValue(args, "--title")
               ? ["--title", findOptionValue(args, "--title") as string]
               : []),
@@ -712,50 +826,367 @@ function writeJson(value: unknown): void {
   void Bun.write(Bun.stdout, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function writeError(error: unknown): void {
+function formatCountMap(counts: Record<string, number>): string {
+  const entries = Object.entries(counts);
+  if (entries.length === 0) {
+    return "none";
+  }
+
+  return entries.map(([label, count]) => `${label}=${count}`).join(", ");
+}
+
+function formatWorkerLine(worker: RegisteredWorker): string {
+  return [
+    `${worker.id} (${worker.name})`,
+    `${worker.backend.runner}/${worker.backend.adapter}`,
+    worker.enabled ? "enabled" : "disabled",
+    `trust ${worker.trust.rating.toFixed(2)}`,
+  ].join(" | ");
+}
+
+function formatDoctorCheck(check: DoctorCheck): string {
+  const detailEntries = Object.entries(check.details ?? {}).filter(([, value]) => value !== null);
+  const detailText =
+    detailEntries.length === 0
+      ? ""
+      : ` - ${detailEntries
+          .map(([key, value]) =>
+            typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+              ? `${key}=${value}`
+              : `${key}=${JSON.stringify(value)}`,
+          )
+          .join(", ")}`;
+  return `${check.ok ? "[ok]" : "[fail]"} ${check.name}${detailText}`;
+}
+
+function formatSinkLine(sink: {
+  enabled: boolean;
+  eventTypes: string[];
+  id: string;
+  type: string;
+}): string {
+  const events = sink.eventTypes.length > 0 ? sink.eventTypes.join(",") : "all";
+  return `${sink.id} | ${sink.type} | ${sink.enabled ? "enabled" : "disabled"} | events=${events}`;
+}
+
+function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): string[] {
+  return [
+    `Run ${summary.id}`,
+    `  title: ${summary.title}`,
+    `  status: ${summary.status}`,
+    `  updated: ${summary.updatedAt}`,
+    `  waves: ${summary.waves}`,
+    `  slices: ${formatCountMap(summary.counts.slices)}`,
+    `  integration: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
+    ...summary.slices.map(
+      (slice) =>
+        `  - [${slice.status}] ${slice.id} | worker=${slice.workerId ?? "unassigned"} | integration=${slice.integrationStatus}`,
+    ),
+  ];
+}
+
+function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string {
+  const candidate =
+    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+  if (!candidate) {
+    return JSON.stringify(value, null, 2);
+  }
+
+  switch (commandId) {
+    case "doctor": {
+      const checks = (candidate.checks as DoctorCheck[] | undefined) ?? [];
+      const ok = candidate.ok === true ? "ok" : "fail";
+      return ["Quest Runner Doctor", `status: ${ok}`, "", ...checks.map(formatDoctorCheck)].join(
+        "\n",
+      );
+    }
+    case "setup": {
+      const doctor = candidate.doctor as { checks: DoctorCheck[]; ok: boolean } | undefined;
+      const createdWorker = candidate.createdWorker as RegisteredWorker | null | undefined;
+      const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
+      const paths = (candidate.paths as Record<string, string> | undefined) ?? {};
+      return [
+        "Quest Runner Setup",
+        `status: ${doctor?.ok === true ? "ok" : "fail"}`,
+        createdWorker
+          ? `created worker: ${formatWorkerLine(createdWorker)}`
+          : "created worker: none",
+        `workers: ${workers.length}`,
+        "",
+        "Paths",
+        ...Object.entries(paths).map(([key, path]) => `  ${key}: ${path}`),
+        "",
+        "Checks",
+        ...(doctor?.checks ?? []).map((check) => `  ${formatDoctorCheck(check)}`),
+      ].join("\n");
+    }
+    case "workers:list": {
+      const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
+      return ["Workers", ...workers.map((worker) => `  - ${formatWorkerLine(worker)}`)].join("\n");
+    }
+    case "workers:add:codex":
+    case "workers:add:hermes":
+    case "workers:upsert": {
+      const worker = candidate.worker as RegisteredWorker | undefined;
+      if (!worker) {
+        return JSON.stringify(value, null, 2);
+      }
+
+      return [
+        `Worker ${worker.id} saved`,
+        `  name: ${worker.name}`,
+        `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
+        `  profile: ${worker.backend.profile}`,
+        `  enabled: ${worker.enabled}`,
+      ].join("\n");
+    }
+    case "workers:calibrate": {
+      const result = candidate.result as
+        | {
+            calibration: {
+              score: number;
+              status: string;
+              suiteId: string;
+              xpAwarded: number;
+            };
+            run: { id: string; status: string };
+            worker: RegisteredWorker;
+          }
+        | undefined;
+      if (!result) {
+        return JSON.stringify(value, null, 2);
+      }
+
+      return [
+        `Calibration ${result.calibration.status}`,
+        `  worker: ${result.worker.id}`,
+        `  suite: ${result.calibration.suiteId}`,
+        `  score: ${result.calibration.score}`,
+        `  xp awarded: ${result.calibration.xpAwarded}`,
+        `  run: ${result.run.id} (${result.run.status})`,
+      ].join("\n");
+    }
+    case "observability:sinks:list": {
+      const sinks =
+        (candidate.sinks as
+          | Array<{ enabled: boolean; eventTypes: string[]; id: string; type: string }>
+          | undefined) ?? [];
+      return ["Observability Sinks", ...sinks.map((sink) => `  - ${formatSinkLine(sink)}`)].join(
+        "\n",
+      );
+    }
+    case "observability:webhook:upsert":
+    case "observability:telegram:upsert": {
+      const sink = candidate.sink as
+        | { enabled: boolean; eventTypes: string[]; id: string; type: string }
+        | undefined;
+      return sink ? `Sink saved\n  ${formatSinkLine(sink)}` : JSON.stringify(value, null, 2);
+    }
+    case "observability:events:list": {
+      const events =
+        (candidate.events as
+          | Array<{ at: string; eventType: string; runId?: string }>
+          | undefined) ?? [];
+      return [
+        `Events (${events.length})`,
+        ...events.map(
+          (event) => `  - ${event.at} | ${event.eventType} | run=${event.runId ?? "-"}`,
+        ),
+      ].join("\n");
+    }
+    case "observability:deliveries:list": {
+      const deliveries =
+        (candidate.deliveries as
+          | Array<{
+              attempts: number;
+              eventType: string;
+              sinkId: string;
+              status: string;
+            }>
+          | undefined) ?? [];
+      return [
+        `Deliveries (${deliveries.length})`,
+        ...deliveries.map(
+          (delivery) =>
+            `  - [${delivery.status}] ${delivery.sinkId} | ${delivery.eventType} | attempts=${delivery.attempts}`,
+        ),
+      ].join("\n");
+    }
+    case "observability:deliveries:retry": {
+      const attempts =
+        (candidate.attempts as
+          | Array<{
+              eventType: string;
+              ok: boolean;
+              sinkId: string;
+              status: string;
+            }>
+          | undefined) ?? [];
+      return [
+        `Delivery attempts (${attempts.length})`,
+        ...attempts.map(
+          (attempt) =>
+            `  - [${attempt.ok ? "ok" : "fail"}] ${attempt.sinkId} | ${attempt.eventType} | ${attempt.status}`,
+        ),
+      ].join("\n");
+    }
+    case "plan": {
+      const plan = candidate.plan as
+        | {
+            unassigned: Array<{ id: string; reason: string }>;
+            warnings: string[];
+            waves: Array<{
+              index: number;
+              slices: Array<{ assignedWorkerId?: string | null; id: string }>;
+            }>;
+          }
+        | undefined;
+      if (!plan) {
+        return JSON.stringify(value, null, 2);
+      }
+
+      return [
+        `Plan: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
+        ...plan.waves.map(
+          (wave) =>
+            `  wave ${wave.index}: ${wave.slices
+              .map((slice) => `${slice.id}@${slice.assignedWorkerId ?? "unassigned"}`)
+              .join(", ")}`,
+        ),
+        ...plan.unassigned.map((slice) => `  unassigned: ${slice.id} (${slice.reason})`),
+        ...plan.warnings.map((warning) => `  warning: ${warning}`),
+      ].join("\n");
+    }
+    case "run":
+    case "runs:status":
+    case "runs:execute":
+    case "runs:integrate":
+    case "runs:cleanup":
+    case "runs:abort":
+    case "runs:rerun": {
+      const run = candidate.run as QuestRunDocument | undefined;
+      return run
+        ? formatRunSummaryBlock(summarizeRunDetail(run)).join("\n")
+        : JSON.stringify(value, null, 2);
+    }
+    case "runs:summary": {
+      if (candidate.summary) {
+        return formatRunSummaryBlock(
+          candidate.summary as ReturnType<typeof summarizeRunDetail>,
+        ).join("\n");
+      }
+
+      const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
+      const lines = [
+        "Runs",
+        ...runs.map(
+          (run) =>
+            `  - ${formatRunSummaryBlock(summarizeRunDetail(run))[0]} | status=${run.status}`,
+        ),
+      ];
+      return lines.join("\n");
+    }
+    case "runs:list": {
+      const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
+      return [
+        `Runs (${runs.length})`,
+        ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.spec.title}`),
+      ].join("\n");
+    }
+    case "runs:logs": {
+      const logs =
+        (candidate.logs as
+          | Array<{ checkName?: string | null; sliceId: string; status?: string; stdout: string }>
+          | undefined) ?? [];
+      return [
+        `Logs (${logs.length})`,
+        ...logs.map(
+          (log) =>
+            `  - slice=${log.sliceId} ${log.checkName ? `check=${log.checkName}` : "worker"}${log.status ? ` status=${log.status}` : ""}`,
+        ),
+      ].join("\n");
+    }
+    case "secrets:status": {
+      const secret = candidate.secret as
+        | { exists: boolean; name: string; platform: string }
+        | undefined;
+      return secret
+        ? [
+            `Secret ${secret.name}`,
+            `  exists: ${secret.exists}`,
+            `  platform: ${secret.platform}`,
+          ].join("\n")
+        : JSON.stringify(value, null, 2);
+    }
+    case "secrets:set":
+    case "secrets:delete": {
+      return JSON.stringify(value, null, 2);
+    }
+    default:
+      return JSON.stringify(value, null, 2);
+  }
+}
+
+function writeOutput(commandId: QuestCliCommand, mode: OutputMode, value: unknown): void {
+  if (mode === "json") {
+    writeJson(value);
+    return;
+  }
+
+  void Bun.write(Bun.stdout, `${formatPrettyOutput(commandId, value)}\n`);
+}
+
+function writeError(error: unknown, mode: OutputMode): void {
   if (error instanceof ZodError) {
-    void Bun.write(
-      Bun.stderr,
-      `${JSON.stringify(
-        {
-          error: "validation_failed",
-          details: error.flatten(),
-          message: "Input validation failed",
-        },
-        null,
-        2,
-      )}\n`,
-    );
+    const payload = {
+      error: "validation_failed",
+      details: error.flatten(),
+      message: "Input validation failed",
+    };
+    if (mode === "json") {
+      void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
+    } else {
+      void Bun.write(
+        Bun.stderr,
+        `Validation failed\n${JSON.stringify(payload.details, null, 2)}\n`,
+      );
+    }
     return;
   }
 
   if (isQuestDomainError(error)) {
-    void Bun.write(
-      Bun.stderr,
-      `${JSON.stringify(
-        {
-          error: error.code,
-          details: error.details,
-          message: error.message,
-        },
-        null,
-        2,
-      )}\n`,
-    );
+    const payload = {
+      error: error.code,
+      details: error.details,
+      message: error.message,
+    };
+    if (mode === "json") {
+      void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
+    } else {
+      void Bun.write(
+        Bun.stderr,
+        [
+          `Error: ${payload.error}`,
+          `message: ${payload.message}`,
+          payload.details ? `details: ${JSON.stringify(payload.details, null, 2)}` : null,
+        ]
+          .filter((line) => line !== null)
+          .join("\n")
+          .concat("\n"),
+      );
+    }
     return;
   }
 
-  void Bun.write(
-    Bun.stderr,
-    `${JSON.stringify(
-      {
-        error: "cli_failure",
-        message: error instanceof Error ? error.message : String(error),
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  const payload = {
+    error: "cli_failure",
+    message: error instanceof Error ? error.message : String(error),
+  };
+  if (mode === "json") {
+    void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
+  } else {
+    void Bun.write(Bun.stderr, `Error: ${payload.error}\nmessage: ${payload.message}\n`);
+  }
 }
 
 const commandDefinitions: QuestCliCommandDefinition[] = [
@@ -764,7 +1195,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "setup",
     run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
     usage:
-      "quest setup [--yes] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--codex-executable <path>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--hermes-base-url <url>] [--state-root <path>]",
   },
   {
     id: "doctor",
@@ -884,6 +1315,36 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest observability webhook upsert --url <https://...> [--id <sink-id>] [--events <event,event>] [--headers <key=value,key=value>] [--secret-ref <name>] [--secret-header <name>] [--disabled] [--observability-config <path>] [--state-root <path>]",
   },
   {
+    id: "observability:telegram:upsert",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "telegram" &&
+      args[2] === "upsert",
+    run: async ({ args, observabilityStore }) => {
+      const sink = telegramSinkSchema.parse({
+        apiBaseUrl: findOptionValue(args, "--api-base-url") ?? undefined,
+        botTokenEnv: findOptionValue(args, "--bot-token-env") ?? undefined,
+        botTokenSecretRef: findOptionValue(args, "--bot-token-secret-ref") ?? undefined,
+        chatId: requireOptionValue(args, "--chat-id", "--chat-id <id>"),
+        disableNotification: hasFlag(args, "--disable-notification"),
+        enabled: !hasFlag(args, "--disabled"),
+        eventTypes: parseObservableEventTypes(findOptionValue(args, "--events")),
+        id: findOptionValue(args, "--id") ?? "default-telegram",
+        messageThreadId: findOptionValue(args, "--thread-id")
+          ? Number(requireOptionValue(args, "--thread-id", "--thread-id <id>"))
+          : undefined,
+        parseMode:
+          (findOptionValue(args, "--parse-mode") as "Markdown" | "MarkdownV2" | "HTML" | null) ??
+          undefined,
+        type: "telegram",
+      });
+      return { sink: await observabilityStore.upsertTelegramSink(sink) };
+    },
+    usage:
+      "quest observability telegram upsert --chat-id <id> [--id <sink-id>] [--bot-token-env <name> | --bot-token-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--thread-id <id>] [--parse-mode <Markdown|MarkdownV2|HTML>] [--disable-notification] [--disabled] [--observability-config <path>] [--state-root <path>]",
+  },
+  {
     id: "observability:sink:delete",
     matches: (args) =>
       args.length >= 3 &&
@@ -938,6 +1399,17 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+  },
+  {
+    id: "workers:add:hermes",
+    matches: (args) =>
+      args.length >= 3 && args[0] === "workers" && args[1] === "add" && args[2] === "hermes",
+    run: async ({ args, registry }) => {
+      const worker = registeredWorkerSchema.parse(buildHermesWorker(args));
+      return { worker: await registry.upsertWorker(worker) };
+    },
+    usage:
+      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--profile <model>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:calibrate",
@@ -1118,7 +1590,9 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
 ];
 
 async function main(): Promise<number> {
-  const args = Bun.argv.slice(2);
+  const rawArgs = Bun.argv.slice(2);
+  const outputMode = determineOutputMode(rawArgs);
+  const args = stripGlobalOutputFlags(rawArgs);
 
   if (args.length === 0 || hasFlag(args, "--help")) {
     printUsage();
@@ -1184,10 +1658,10 @@ async function main(): Promise<number> {
       secretStore,
     });
     await dispatchResultEvents(result, dispatcher);
-    writeJson(result);
+    writeOutput(command.id, outputMode, result);
     return 0;
   } catch (error: unknown) {
-    writeError(error);
+    writeError(error, outputMode);
     return 1;
   }
 }

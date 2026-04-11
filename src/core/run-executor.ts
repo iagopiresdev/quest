@@ -9,6 +9,7 @@ import type { QuestRunStore } from "./run-store";
 import {
   CodexCliRunnerAdapter,
   DryRunRunnerAdapter,
+  HermesApiRunnerAdapter,
   LocalCommandRunnerAdapter,
   RunnerRegistry,
 } from "./runner";
@@ -135,6 +136,7 @@ export class QuestRunExecutor {
       new DryRunRunnerAdapter(),
       new LocalCommandRunnerAdapter(),
       new CodexCliRunnerAdapter(secretStore),
+      new HermesApiRunnerAdapter(secretStore),
     ]);
   }
 

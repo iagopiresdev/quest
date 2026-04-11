@@ -9,6 +9,12 @@ CLI-first worker registry and quest planner for parallel agent execution.
 - conservative planning around worker capacity and file ownership
 - event-driven observability with optional sinks such as webhooks
 
+CLI output modes:
+- JSON remains the stable automation contract
+- interactive terminals default to a readable text view
+- `--json` forces machine output
+- `--pretty` forces human-readable output
+
 Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.md](./docs/specs/training-grounds-v2.md).
 
@@ -18,6 +24,7 @@ Current adapters:
 - `dry-run` via `runs execute --dry-run`
 - `local-command` for real local subprocess execution
 - `codex-cli` for native Codex CLI execution with optional native login, env-var auth, or keychain-backed secret lookup
+- `hermes-api` for Hermes/OpenAI-compatible HTTP execution with controlled owned-path file writes
 
 Current built-in worker evaluation:
 - `training-grounds-v1` calibration suite for scoring a worker on throwaway coding, testing, and docs tasks
@@ -139,6 +146,56 @@ Auth modes for `codex-cli`:
 
 For `native-login`, Quest Runner probes `codex login status` before execution so a missing or broken local session fails fast as a runner-availability problem instead of surfacing later as a partial run failure.
 
+Example `hermes-api` worker:
+
+```json
+{
+  "id": "ember-hermes",
+  "name": "Ember Hermes",
+  "title": "Arcane Engineer",
+  "class": "sage",
+  "enabled": true,
+  "backend": {
+    "runner": "hermes",
+    "profile": "hermes-local",
+    "adapter": "hermes-api",
+    "baseUrl": "http://127.0.0.1:8000/v1",
+    "toolPolicy": { "allow": [], "deny": [] }
+  },
+  "persona": {
+    "voice": "precise",
+    "approach": "analyze carefully and return precise file updates",
+    "prompt": "Return only the exact file updates needed for the slice."
+  },
+  "stats": {
+    "coding": 78,
+    "testing": 82,
+    "docs": 35,
+    "research": 48,
+    "speed": 55,
+    "mergeSafety": 72,
+    "contextEndurance": 62
+  },
+  "resources": {
+    "cpuCost": 1,
+    "memoryCost": 2,
+    "gpuCost": 1,
+    "maxParallel": 1
+  },
+  "trust": {
+    "rating": 0.75,
+    "calibratedAt": "2026-04-11T00:00:00Z"
+  },
+  "progression": {
+    "level": 1,
+    "xp": 0
+  },
+  "tags": ["hermes"]
+}
+```
+
+`hermes-api` calls an OpenAI-compatible `/chat/completions` endpoint, asks Hermes for a strict JSON write plan, and applies only owned-path writes inside the slice workspace. The runner rejects responses that try to write outside the owned paths or escape the slice workspace.
+
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
@@ -168,6 +225,7 @@ Runs emit typed events. Observability is the layer that persists and dispatches 
 
 Current sink support:
 - `webhook`
+- `telegram`
 
 Internally, sinks already live behind a typed sink model instead of a webhook-only config shape. That keeps the current webhook path simple while leaving room for future Telegram, Linear, Slack, or metrics sinks without rewriting delivery storage.
 
@@ -200,11 +258,17 @@ bun run install:local
 # bootstrap state paths and optionally create the first Codex worker
 quest setup --yes
 
+# bootstrap a Hermes worker instead
+quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
+
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
 
 # add a Codex worker from flags instead of hand-writing worker JSON
 quest workers add codex --name "Quest Codex" --profile gpt-5.4
+
+# add a Hermes worker from flags
+quest workers add hermes --name "Quest Hermes" --base-url http://127.0.0.1:8000/v1 --profile hermes-local
 
 # list configured observability sinks
 quest observability sinks list
@@ -220,6 +284,13 @@ quest observability webhook upsert \
   --id local-webhook \
   --url https://example.com/quest-events \
   --events run_failed,run_completed,worker_calibration_recorded
+
+# add or update a Telegram sink
+quest observability telegram upsert \
+  --id local-telegram \
+  --chat-id 123456 \
+  --bot-token-secret-ref telegram.bot \
+  --events run_failed,run_completed
 
 # retry failed webhook deliveries after the sink is healthy again
 quest observability deliveries retry --sink-id local-webhook --status failed
@@ -341,6 +412,7 @@ Do not commit runtime state, tokens, or local config.
 
 - typed worker registry
 - setup command for bootstrapping state paths and the first Codex worker
+- setup support for Codex or Hermes workers
 - typed quest specs and conservative wave planning
 - explicit worker forcing for plan/run/rerun flows
 - persisted quest runs plus run events
@@ -348,6 +420,7 @@ Do not commit runtime state, tokens, or local config.
 - persisted slice output logs and basic control commands (`runs logs`, `runs abort`)
 - real local subprocess execution through the `local-command` adapter
 - native Codex execution through the `codex-cli` adapter
+- Hermes/OpenAI-compatible execution through the `hermes-api` adapter
 - slice-level tester lane through `acceptanceChecks`
 - basic steering commands to abort and rerun runs
 - runtime-managed per-run and per-slice workspace directories
@@ -361,6 +434,7 @@ Do not commit runtime state, tokens, or local config.
 - built-in worker calibration through the throwaway `training-grounds-v1` suite
 - persisted calibration history, trust updates, and XP awards on workers
 - event-driven observability with a webhook sink
+- Telegram sink delivery through the same eventing model
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.

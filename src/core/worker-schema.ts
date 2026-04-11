@@ -92,6 +92,7 @@ export const workerBackendSchema = z
   .object({
     adapter: nonEmptyString(80),
     auth: workerBackendAuthSchema.optional(),
+    baseUrl: nonEmptyString(240).optional(),
     command: z.array(nonEmptyString(240)).min(1).max(24).optional(),
     env: z.record(z.string(), nonEmptyString(400)).optional(),
     executable: nonEmptyString(240).optional(),
@@ -123,6 +124,14 @@ export const workerBackendSchema = z
         code: z.ZodIssueCode.custom,
         message: "codex-cli adapter does not use backend.command",
         path: ["command"],
+      });
+    }
+
+    if (value.adapter === "hermes-api" && !value.baseUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "hermes-api adapter requires backend.baseUrl",
+        path: ["baseUrl"],
       });
     }
   });

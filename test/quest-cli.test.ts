@@ -114,6 +114,29 @@ test("quest cli adds a codex worker from flags", () => {
   expect(JSON.parse(listed.stdout).workers).toHaveLength(1);
 });
 
+test("quest cli adds a hermes worker from flags", () => {
+  const context = trackContext();
+
+  const added = runCli(context, [
+    "workers",
+    "add",
+    "hermes",
+    "--name",
+    "Quest Hermes",
+    "--base-url",
+    "http://127.0.0.1:8000/v1",
+    "--profile",
+    "hermes-local",
+  ]);
+
+  expect(added.code).toBe(0);
+  const worker = JSON.parse(added.stdout).worker;
+  expect(worker.id).toBe("quest-hermes");
+  expect(worker.backend.adapter).toBe("hermes-api");
+  expect(worker.backend.baseUrl).toBe("http://127.0.0.1:8000/v1");
+  expect(worker.backend.runner).toBe("hermes");
+});
+
 test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
@@ -135,6 +158,43 @@ test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   expect(result.createdWorker.id).toBe("quest-codex");
   expect(result.createdWorker.backend.adapter).toBe("codex-cli");
   expect(result.workers).toHaveLength(1);
+});
+
+test("quest cli setup bootstraps a hermes worker from detected api", async () => {
+  const context = trackContext();
+  const server = Bun.serve({
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          data: [{ id: "hermes-local" }],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    port: 0,
+  });
+
+  try {
+    const setup = await runCliAsync(context, [
+      "setup",
+      "--yes",
+      "--backend",
+      "hermes",
+      "--hermes-base-url",
+      `http://127.0.0.1:${server.port}/v1`,
+      "--worker-name",
+      "Quest Hermes",
+      "--profile",
+      "hermes-local",
+    ]);
+
+    expect(setup.code).toBe(0);
+    const result = JSON.parse(setup.stdout);
+    expect(result.doctor.ok).toBe(true);
+    expect(result.createdWorker.id).toBe("quest-hermes");
+    expect(result.createdWorker.backend.adapter).toBe("hermes-api");
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("quest cli can force planning and runs to a specific worker", () => {
@@ -240,6 +300,64 @@ test("quest cli configures webhook sinks and delivers run events", async () => {
     expect(deleted.code).toBe(0);
     expect(JSON.parse(deleted.stdout)).toMatchObject({ deleted: "local-webhook", ok: true });
   } finally {
+    server.stop(true);
+  }
+});
+
+test("quest cli configures telegram sinks and delivers run events", async () => {
+  const context = trackContext();
+  const receivedBodies: Array<Record<string, unknown>> = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      receivedBodies.push((await request.json()) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+    port: 0,
+  });
+  const previousToken = Bun.env.QUEST_TELEGRAM_TOKEN;
+  Bun.env.QUEST_TELEGRAM_TOKEN = "telegram-test-token";
+
+  try {
+    const upsertSink = await runCliAsync(context, [
+      "observability",
+      "telegram",
+      "upsert",
+      "--id",
+      "telegram-local",
+      "--api-base-url",
+      `http://127.0.0.1:${server.port}`,
+      "--chat-id",
+      "123456",
+      "--bot-token-env",
+      "QUEST_TELEGRAM_TOKEN",
+      "--events",
+      "run_completed",
+    ]);
+    expect(upsertSink.code).toBe(0);
+
+    expectWorkerUpserted(context);
+    const created = await runCliAsync(context, ["run", "--stdin"], {
+      input: JSON.stringify(createSpec({ title: "Telegram observed run" })),
+    });
+    expect(created.code).toBe(0);
+    const runId = JSON.parse(created.stdout).run.id as string;
+
+    const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+    expect(executed.code).toBe(0);
+
+    expect(receivedBodies).toHaveLength(1);
+    expect(receivedBodies[0]).toMatchObject({
+      chat_id: "123456",
+      text: expect.stringContaining("run_completed"),
+    });
+  } finally {
+    if (previousToken === undefined) {
+      delete Bun.env.QUEST_TELEGRAM_TOKEN;
+    } else {
+      Bun.env.QUEST_TELEGRAM_TOKEN = previousToken;
+    }
     server.stop(true);
   }
 });
@@ -867,4 +985,36 @@ test("quest cli doctor reports codex and storage health", () => {
   expect(report.checks.find((check: { name: string }) => check.name === "secret-store")?.ok).toBe(
     true,
   );
+});
+
+test("quest cli pretty prints doctor output when requested", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
+
+  const doctor = runCli(context, ["doctor", "--pretty"], {
+    env: { QUEST_RUNNER_CODEX_EXECUTABLE: codexExecutable },
+  });
+
+  expect(doctor.code).toBe(0);
+  expect(doctor.stdout).toContain("Quest Runner Doctor");
+  expect(doctor.stdout).toContain("[ok] codex-binary");
+  expect(doctor.stdout).not.toContain('"checks"');
+});
+
+test("quest cli pretty prints run summaries when requested", async () => {
+  const context = trackContext();
+
+  expectWorkerUpserted(context);
+  const created = await runCliAsync(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Pretty summary run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const summary = await runCliAsync(context, ["runs", "summary", "--id", runId, "--pretty"]);
+  expect(summary.code).toBe(0);
+  expect(summary.stdout).toContain(`Run ${runId}`);
+  expect(summary.stdout).toContain("status: planned");
+  expect(summary.stdout).toContain("slices:");
+  expect(summary.stdout).not.toContain('"summary"');
 });
