@@ -54,13 +54,7 @@ function printUsage(): void {
 }
 
 function stdinIsTty(): boolean {
-  return (
-    Bun.spawnSync({
-      cmd: ["/bin/sh", "-lc", "test -t 0"],
-      stderr: "ignore",
-      stdout: "ignore",
-    }).exitCode === 0
-  );
+  return process.stdin.isTTY === true;
 }
 
 function findOptionValue(args: string[], flag: string): string | null {

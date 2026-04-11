@@ -291,8 +291,6 @@ When adding a new subsystem, update:
 
 These are known weak spots worth addressing next:
 
-- acceptance checks still rely on `/bin/sh -lc`
-- CLI TTY detection still shells out
 - `test/quest-cli.test.ts` still has duplicated payload setup
 - storage still leans on Node-style filesystem paths and exception-driven flows
 - Bun coverage output is not configured yet

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -45,14 +45,16 @@ export function resolveQuestRunPath(
 }
 
 export async function readJsonFileOrDefault<T>(path: string, fallback: T): Promise<T> {
+  const file = Bun.file(path);
+
   try {
-    const content = await readFile(path, "utf8");
-    return JSON.parse(content) as T;
-  } catch (error: unknown) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+    if (!(await file.exists())) {
       return fallback;
     }
 
+    const content = await file.text();
+    return JSON.parse(content) as T;
+  } catch (error: unknown) {
     if (error instanceof SyntaxError) {
       throw new QuestDomainError({
         code: "invalid_worker_registry",

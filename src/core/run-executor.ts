@@ -1,3 +1,5 @@
+import { $ } from "bun";
+
 import { QuestDomainError } from "./errors";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
@@ -62,23 +64,23 @@ function resolveExecutionCwd(
   return worker?.backend.workingDirectory ?? Bun.env.PWD ?? ".";
 }
 
-function runAcceptanceChecks(commands: string[], cwd: string): QuestRunCheckResult[] {
-  return commands.map((command) => {
-    const result = Bun.spawnSync({
-      cmd: ["/bin/sh", "-lc", command],
-      cwd,
-      env: Bun.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+async function runAcceptanceChecks(
+  commands: string[],
+  cwd: string,
+): Promise<QuestRunCheckResult[]> {
+  const results: QuestRunCheckResult[] = [];
 
-    return {
+  for (const command of commands) {
+    const result = await $`${{ raw: command }}`.cwd(cwd).env(Bun.env).nothrow().quiet();
+    results.push({
       command,
       exitCode: result.exitCode,
-      stderr: new TextDecoder().decode(result.stderr),
-      stdout: new TextDecoder().decode(result.stdout),
-    };
-  });
+      stderr: result.stderr.toString(),
+      stdout: result.stdout.toString(),
+    });
+  }
+
+  return results;
 }
 
 export class QuestRunExecutor {
@@ -174,7 +176,7 @@ export class QuestRunExecutor {
           }),
         );
 
-        results.forEach(({ result, sliceState }) => {
+        for (const { result, sliceState } of results) {
           const workerCwd = resolveExecutionCwd(sliceState, workerMap);
           const sliceSpec = specSliceMap.get(sliceState.sliceId);
           if (!sliceSpec) {
@@ -200,7 +202,7 @@ export class QuestRunExecutor {
             );
           }
 
-          const checkResults = runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd);
+          const checkResults = await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd);
           sliceState.lastChecks = checkResults;
 
           const failedCheck = checkResults.find((check) => check.exitCode !== 0);
@@ -268,7 +270,7 @@ export class QuestRunExecutor {
             },
             eventAt,
           );
-        });
+        }
         await this.runStore.saveRun(run);
       }
 
