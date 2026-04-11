@@ -65,13 +65,14 @@ export function createCliContext(): CliTestContext {
 export function runCli(
   context: CliTestContext,
   args: string[],
-  options: { input?: string } = {},
+  options: { env?: Record<string, string | undefined>; input?: string } = {},
 ): CliResult {
   const result = Bun.spawnSync({
     cmd: ["bun", ...cliArgs, ...args],
     cwd: projectRoot,
     env: {
       ...Bun.env,
+      ...options.env,
       QUEST_RUNNER_STATE_ROOT: context.stateRoot,
       QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
       QUEST_RUNNER_SECRET_STORE_SERVICE_NAME: context.secretServiceName,

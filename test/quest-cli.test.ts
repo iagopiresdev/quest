@@ -83,6 +83,33 @@ test("quest cli upserts, lists, and plans from stdin", () => {
   expect(planned.unassigned).toEqual([]);
 });
 
+test("quest cli adds a codex worker from flags", () => {
+  const context = trackContext();
+
+  const added = runCli(context, [
+    "workers",
+    "add",
+    "codex",
+    "--name",
+    "Quest Codex",
+    "--profile",
+    "gpt-5.4-mini",
+    "--auth-mode",
+    "native-login",
+  ]);
+
+  expect(added.code).toBe(0);
+  const worker = JSON.parse(added.stdout).worker;
+  expect(worker.id).toBe("quest-codex");
+  expect(worker.backend.adapter).toBe("codex-cli");
+  expect(worker.backend.profile).toBe("gpt-5.4-mini");
+  expect(worker.backend.auth.mode).toBe("native-login");
+
+  const listed = runCli(context, ["workers", "list"]);
+  expect(listed.code).toBe(0);
+  expect(JSON.parse(listed.stdout).workers).toHaveLength(1);
+});
+
 test("quest cli plans from file and reports unassigned slices", () => {
   const context = trackContext();
   const specPath = join(context.stateRoot, "spec.json");
@@ -155,6 +182,15 @@ test("quest cli creates persisted runs and reads them back", () => {
   const status = runCli(context, ["runs", "status", "--id", createdRun.id]);
   expect(status.code).toBe(0);
   expect(JSON.parse(status.stdout).run.id).toBe(createdRun.id);
+
+  const summary = runCli(context, ["runs", "summary", "--id", createdRun.id]);
+  expect(summary.code).toBe(0);
+  expect(JSON.parse(summary.stdout).summary).toMatchObject({
+    id: createdRun.id,
+    integration: { status: "not_started" },
+    status: "planned",
+    title: "Create quest run",
+  });
 });
 
 test("quest cli executes a planned run in dry-run mode", () => {
@@ -173,6 +209,12 @@ test("quest cli executes a planned run in dry-run mode", () => {
   expect(executedRun.status).toBe("completed");
   expect(executedRun.slices[0].status).toBe("completed");
   expect(executedRun.slices[0].lastOutput.summary).toContain("Dry run completed slice");
+
+  const summary = runCli(context, ["runs", "summary", "--id", runId]);
+  expect(summary.code).toBe(0);
+  const runSummary = JSON.parse(summary.stdout).summary;
+  expect(runSummary.counts.slices.completed).toBe(1);
+  expect(runSummary.slices[0].workerId).toBe("ember");
 });
 
 test("quest cli returns logs and aborts a planned run", () => {
@@ -446,4 +488,44 @@ test("quest cli stores, checks, and deletes secrets through the keychain backend
   const missingStatus = runCli(context, ["secrets", "status", "--name", secretName]);
   expect(missingStatus.code).toBe(0);
   expect(JSON.parse(missingStatus.stdout).secret.exists).toBe(false);
+});
+
+test("quest cli doctor reports codex and storage health", () => {
+  const context = trackContext();
+  const fakeCodexPath = join(context.stateRoot, "fake-codex");
+  writeFileSync(
+    fakeCodexPath,
+    [
+      "#!/usr/bin/env bun",
+      "const args = process.argv.slice(2);",
+      "if (args.length === 1 && args[0] === '--version') {",
+      "  await Bun.write(Bun.stdout, 'codex 0.0.0-test');",
+      "  process.exit(0);",
+      "}",
+      "if (args[0] === 'login' && args[1] === 'status') {",
+      "  await Bun.write(Bun.stdout, 'Logged in using ChatGPT');",
+      "  process.exit(0);",
+      "}",
+      "process.exit(1);",
+    ].join("\n"),
+    "utf8",
+  );
+  Bun.spawnSync({ cmd: ["chmod", "+x", fakeCodexPath], cwd: context.stateRoot });
+
+  const doctor = runCli(context, ["doctor"], {
+    env: { QUEST_RUNNER_CODEX_EXECUTABLE: fakeCodexPath },
+  });
+
+  expect(doctor.code).toBe(0);
+  const report = JSON.parse(doctor.stdout);
+  expect(report.ok).toBe(true);
+  expect(report.checks.find((check: { name: string }) => check.name === "codex-binary")?.ok).toBe(
+    true,
+  );
+  expect(report.checks.find((check: { name: string }) => check.name === "codex-login")?.ok).toBe(
+    true,
+  );
+  expect(report.checks.find((check: { name: string }) => check.name === "secret-store")?.ok).toBe(
+    true,
+  );
 });

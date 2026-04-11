@@ -1,25 +1,33 @@
 #!/usr/bin/env bun
 
+import { unlink } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+
 import { ZodError } from "zod";
 
 import { isQuestDomainError } from "./core/errors";
 import { planQuest } from "./core/planner";
+import { runSubprocess } from "./core/process";
+import { buildProcessEnv } from "./core/process-env";
 import { QuestRunCleanup } from "./core/run-cleanup";
 import { QuestRunExecutor } from "./core/run-executor";
 import { QuestRunIntegrator } from "./core/run-integrator";
+import type { QuestRunDocument, QuestRunSliceState } from "./core/run-schema";
 import { QuestRunStore } from "./core/run-store";
 import { SecretStore } from "./core/secret-store";
 import { questSpecSchema } from "./core/spec-schema";
 import {
+  ensureDirectory,
   resolveQuestRunsRoot,
   resolveQuestStateRoot,
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
 import { WorkerRegistry } from "./core/worker-registry";
-import { registeredWorkerSchema } from "./core/worker-schema";
+import { type RegisteredWorker, registeredWorkerSchema } from "./core/worker-schema";
 
 type QuestCliCommand =
+  | "doctor"
   | "plan"
   | "run"
   | "runs:abort"
@@ -30,9 +38,11 @@ type QuestCliCommand =
   | "runs:logs"
   | "runs:list"
   | "runs:status"
+  | "runs:summary"
   | "secrets:delete"
   | "secrets:set"
   | "secrets:status"
+  | "workers:add:codex"
   | "workers:list"
   | "workers:upsert";
 
@@ -51,6 +61,12 @@ type QuestCliCommandDefinition = {
   matches(args: string[]): boolean;
   usage: string;
   run(context: QuestCliContext): Promise<unknown>;
+};
+
+type DoctorCheck = {
+  details?: Record<string, unknown>;
+  name: string;
+  ok: boolean;
 };
 
 function printUsage(): void {
@@ -91,6 +107,38 @@ function requireOptionValue(args: string[], flag: string, label: string): string
   return value;
 }
 
+function parseCommaSeparatedValues(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function slugifyWorkerId(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "codex-worker";
+}
+
+function inferInvocationMode(invokedPath: string): "compiled" | "source" | "wrapper" {
+  if (invokedPath.endsWith("/src/cli.ts")) {
+    return "source";
+  }
+
+  if (invokedPath.endsWith("/dist/quest")) {
+    return "compiled";
+  }
+
+  return "wrapper";
+}
+
 async function readStdin(): Promise<string> {
   return await Bun.stdin.text();
 }
@@ -124,6 +172,258 @@ async function readJsonInput(args: string[]): Promise<unknown> {
   }
 
   throw new Error("Expected --file <path> or --stdin");
+}
+
+function buildCodexWorker(args: string[]): RegisteredWorker {
+  const name = findOptionValue(args, "--name") ?? "Codex Worker";
+  const authMode = findOptionValue(args, "--auth-mode") ?? "native-login";
+
+  const auth =
+    authMode === "env-var"
+      ? {
+          envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
+          mode: "env-var" as const,
+          targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
+        }
+      : authMode === "secret-store"
+        ? {
+            mode: "secret-store" as const,
+            secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
+            targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
+          }
+        : {
+            mode: "native-login" as const,
+            targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
+          };
+
+  return {
+    backend: {
+      adapter: "codex-cli",
+      auth,
+      executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
+      profile: findOptionValue(args, "--profile") ?? "gpt-5.4",
+      runner: "codex",
+      toolPolicy: {
+        allow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
+        deny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
+      },
+    },
+    class: findOptionValue(args, "--class") ?? "engineer",
+    enabled: true,
+    id: findOptionValue(args, "--id") ?? slugifyWorkerId(name),
+    name,
+    persona: {
+      approach: findOptionValue(args, "--approach") ?? "finish the change with minimal churn",
+      prompt:
+        findOptionValue(args, "--prompt") ?? "Keep diffs narrow and state residual risks briefly.",
+      voice: findOptionValue(args, "--voice") ?? "terse",
+    },
+    progression: { level: 1, xp: 0 },
+    resources: { cpuCost: 1, gpuCost: 0, maxParallel: 1, memoryCost: 1 },
+    stats: {
+      coding: 85,
+      contextEndurance: 60,
+      docs: 40,
+      mergeSafety: 80,
+      research: 40,
+      speed: 60,
+      testing: 70,
+    },
+    tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")).length
+      ? parseCommaSeparatedValues(findOptionValue(args, "--tags"))
+      : ["codex"],
+    title: findOptionValue(args, "--title") ?? "Battle Engineer",
+    trust: { calibratedAt: new Date().toISOString(), rating: 0.8 },
+  };
+}
+
+function summarizeSliceState(slice: QuestRunSliceState): Record<string, unknown> {
+  return {
+    id: slice.sliceId,
+    integrationStatus: slice.integrationStatus ?? "pending",
+    lastError: slice.lastError ?? null,
+    status: slice.status,
+    title: slice.title,
+    wave: slice.wave,
+    workerId: slice.assignedWorkerId,
+  };
+}
+
+function summarizeRunDetail(run: QuestRunDocument): Record<string, unknown> {
+  const sliceCounts = run.slices.reduce<Record<string, number>>((counts, slice) => {
+    counts[slice.status] = (counts[slice.status] ?? 0) + 1;
+    return counts;
+  }, {});
+  const integrationCounts = run.slices.reduce<Record<string, number>>((counts, slice) => {
+    const status = slice.integrationStatus ?? "pending";
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+
+  const integrationStatus = run.events.some((event) => event.type === "run_integrated")
+    ? "integrated"
+    : run.events.some((event) => event.type === "run_integration_checks_failed")
+      ? "failed"
+      : run.integrationWorkspacePath
+        ? "started"
+        : "not_started";
+
+  return {
+    counts: {
+      integration: integrationCounts,
+      slices: sliceCounts,
+    },
+    id: run.id,
+    integration: {
+      checkCount: run.lastIntegrationChecks?.length ?? 0,
+      status: integrationStatus,
+      targetRef: run.targetRef ?? null,
+      workspacePath: run.integrationWorkspacePath ?? null,
+    },
+    sourceRepositoryPath: run.sourceRepositoryPath ?? null,
+    status: run.status,
+    title: run.spec.title,
+    updatedAt: run.updatedAt,
+    waves: run.plan.waves.length,
+    slices: run.slices.map(summarizeSliceState),
+  };
+}
+
+async function checkPathWritable(path: string): Promise<DoctorCheck> {
+  try {
+    await ensureDirectory(path);
+    const probePath = resolve(path, `.quest-doctor-${crypto.randomUUID()}.tmp`);
+    await Bun.write(probePath, "ok");
+    await unlink(probePath);
+    return { details: { path }, name: `writable:${path}`, ok: true };
+  } catch (error: unknown) {
+    return {
+      details: {
+        message: error instanceof Error ? error.message : String(error),
+        path,
+      },
+      name: `writable:${path}`,
+      ok: false,
+    };
+  }
+}
+
+async function checkCodexExecutable(executable: string): Promise<DoctorCheck> {
+  try {
+    const result = await runSubprocess({
+      cmd: [executable, "--version"],
+      cwd: Bun.env.PWD ?? ".",
+      env: buildProcessEnv(),
+      timeoutMs: 30_000,
+    });
+
+    return {
+      details: {
+        executable,
+        exitCode: result.exitCode,
+        version: result.stdout.trim() || null,
+      },
+      name: "codex-binary",
+      ok: result.exitCode === 0,
+    };
+  } catch (error: unknown) {
+    return {
+      details: {
+        executable,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      name: "codex-binary",
+      ok: false,
+    };
+  }
+}
+
+async function checkCodexLogin(executable: string): Promise<DoctorCheck> {
+  try {
+    const result = await runSubprocess({
+      cmd: [executable, "login", "status"],
+      cwd: Bun.env.PWD ?? ".",
+      env: buildProcessEnv(),
+      timeoutMs: 30_000,
+    });
+
+    return {
+      details: {
+        executable,
+        exitCode: result.exitCode,
+        stderr: result.stderr.trim() || null,
+        stdout: result.stdout.trim() || null,
+      },
+      name: "codex-login",
+      ok: result.exitCode === 0,
+    };
+  } catch (error: unknown) {
+    return {
+      details: {
+        executable,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      name: "codex-login",
+      ok: false,
+    };
+  }
+}
+
+async function runDoctor(
+  args: string[],
+  secretStore: SecretStore,
+  stateRoot: string,
+  runsRoot: string,
+  workspacesRoot: string,
+  registryPath: string,
+): Promise<Record<string, unknown>> {
+  const codexExecutable =
+    findOptionValue(args, "--codex-executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE ?? "codex";
+  const checks: DoctorCheck[] = [
+    {
+      details: {
+        invokedAs: Bun.argv[1] ?? null,
+        mode: inferInvocationMode(Bun.argv[1] ?? ""),
+      },
+      name: "entrypoint",
+      ok: true,
+    },
+    {
+      details: { version: Bun.version },
+      name: "bun",
+      ok: true,
+    },
+    await checkPathWritable(stateRoot),
+    await checkPathWritable(runsRoot),
+    await checkPathWritable(workspacesRoot),
+    await checkPathWritable(dirname(registryPath)),
+    await checkCodexExecutable(codexExecutable),
+  ];
+
+  const codexLogin = await checkCodexLogin(codexExecutable);
+  checks.push(codexLogin);
+
+  try {
+    const status = await secretStore.getStatus("quest-doctor-probe");
+    checks.push({
+      details: status,
+      name: "secret-store",
+      ok: true,
+    });
+  } catch (error: unknown) {
+    checks.push({
+      details: {
+        message: error instanceof Error ? error.message : String(error),
+      },
+      name: "secret-store",
+      ok: false,
+    });
+  }
+
+  return {
+    checks,
+    ok: checks.every((check) => check.ok),
+  };
 }
 
 function writeJson(value: unknown): void {
@@ -178,6 +478,30 @@ function writeError(error: unknown): void {
 
 const commandDefinitions: QuestCliCommandDefinition[] = [
   {
+    id: "doctor",
+    matches: (args) => args.length >= 1 && args[0] === "doctor",
+    run: async ({ args, secretStore }) =>
+      await runDoctor(
+        args,
+        secretStore,
+        resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined),
+        resolveQuestRunsRoot({
+          explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
+          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
+        }),
+        resolveQuestWorkspacesRoot({
+          explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
+          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
+        }),
+        resolveWorkerRegistryPath({
+          explicitRegistryPath: findOptionValue(args, "--registry") ?? undefined,
+          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
+        }),
+      ),
+    usage:
+      "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "secrets:set",
     matches: (args) => args.length >= 2 && args[0] === "secrets" && args[1] === "set",
     run: async ({ args, secretStore }) => {
@@ -206,6 +530,17 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       ),
     }),
     usage: "quest secrets status --name <secret-name>",
+  },
+  {
+    id: "workers:add:codex",
+    matches: (args) =>
+      args.length >= 3 && args[0] === "workers" && args[1] === "add" && args[2] === "codex",
+    run: async ({ args, registry }) => {
+      const worker = registeredWorkerSchema.parse(buildCodexWorker(args));
+      return { worker: await registry.upsertWorker(worker) };
+    },
+    usage:
+      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:list",
@@ -328,6 +663,20 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     }),
     usage:
       "quest runs status --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:summary",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "summary",
+    run: async ({ args, runStore }) => {
+      const runId = findOptionValue(args, "--id");
+      if (runId) {
+        return { summary: summarizeRunDetail(await runStore.getRun(runId)) };
+      }
+
+      return { runs: await runStore.listRuns() };
+    },
+    usage:
+      "quest runs summary [--id <run-id>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
 ];
 

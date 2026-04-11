@@ -166,6 +166,9 @@ bun run install:local
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
 
+# add a Codex worker from flags instead of hand-writing worker JSON
+quest workers add codex --name "Quest Codex" --profile gpt-5.4
+
 # list workers
 quest workers list
 
@@ -187,6 +190,9 @@ quest runs list
 # inspect one persisted quest run
 quest runs status --id quest-abc12345-deadbeef
 
+# inspect a compact run summary
+quest runs summary --id quest-abc12345-deadbeef
+
 # execute a persisted run with the built-in dry-run adapter
 quest runs execute --id quest-abc12345-deadbeef --dry-run
 
@@ -207,6 +213,9 @@ quest secrets status --name codex.api
 
 # delete a stored secret
 quest secrets delete --name codex.api
+
+# verify the local operator/runtime prerequisites
+quest doctor
 
 # remove quest-managed workspaces for a run
 # source-repo runs must be integrated before cleanup
