@@ -27,10 +27,7 @@ type DeliveryAttempt = {
 };
 
 export class EventDispatcher {
-  private readonly sinkHandlers: Map<
-    ObservabilitySink["type"],
-    EventSinkHandler<ObservabilitySink>
-  >;
+  private readonly sinkHandlers: Map<string, EventSinkHandler<ObservabilitySink>>;
 
   constructor(
     private readonly observabilityStore: ObservabilityStore,
