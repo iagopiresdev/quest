@@ -1,11 +1,11 @@
 import { z } from "zod";
+import type { DeliveryRecord } from "../delivery-schema";
+import { observableEventTypeSchema } from "../event-types";
 import type {
-  DeliveryRecord,
   ObservableCalibrationEvent,
   ObservableEvent,
   ObservableRunEvent,
-} from "../../observability-schema";
-import { observableEventTypeSchema } from "../event-types";
+} from "../observable-events";
 import type { EventSinkDeliveryContext, EventSinkHandler } from "./handler";
 import { nonEmptyString, secretRefSchema, urlSchema } from "./schema-helpers";
 

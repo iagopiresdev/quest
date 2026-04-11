@@ -1,6 +1,7 @@
 import { z } from "zod";
-import type { DeliveryRecord, ObservableEvent } from "../../observability-schema";
+import type { DeliveryRecord } from "../delivery-schema";
 import { observableEventTypeSchema } from "../event-types";
+import type { ObservableEvent } from "../observable-events";
 import type { EventSinkDeliveryContext, EventSinkHandler } from "./handler";
 import { nonEmptyString, urlSchema } from "./schema-helpers";
 

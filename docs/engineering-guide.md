@@ -108,6 +108,7 @@ Preferred patterns:
 - Explicit domain errors with stable `code` values.
 - Sparse comments that explain why a boundary or invariant exists, not what the next line of code does.
 - Import ordering must be left to Biome's `source.organizeImports` action instead of hand-maintained local styles.
+- Circular imports in `src/**` must fail lint. Keep shared contracts below the modules that consume them instead of using barrel files as two-way dependency hubs.
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 - Redaction before delegation:

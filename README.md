@@ -14,6 +14,7 @@ CLI output modes:
 - interactive terminals default to a readable text view
 - `--json` forces machine output
 - `--pretty` forces human-readable output
+- `bun run lint` now also fails on circular imports in `src/**`
 
 Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.md](./docs/specs/training-grounds-v2.md).
