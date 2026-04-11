@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { QuestDomainError } from "../src/core/errors";
 import { QuestRunCleanup } from "../src/core/run-cleanup";
 import { QuestRunExecutor } from "../src/core/run-executor";
+import { QuestRunIntegrator } from "../src/core/run-integrator";
 import { QuestRunStore } from "../src/core/run-store";
 import { WorkerRegistry } from "../src/core/worker-registry";
 import { createCommittedRepo, createSpec, createWorker } from "./helpers";
@@ -45,6 +46,7 @@ test("run cleanup removes git worktrees from the source repository", async () =>
   const workerRegistry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
   const cleanup = new QuestRunCleanup(runStore);
 
   try {
@@ -66,6 +68,7 @@ test("run cleanup removes git worktrees from the source repository", async () =>
     const workspacePath = executed.slices[0]?.workspacePath ?? "";
 
     expect(existsSync(workspacePath)).toBe(true);
+    await integrator.integrateRun(run.id);
 
     await cleanup.cleanupRun(run.id);
 
@@ -80,6 +83,36 @@ test("run cleanup removes git worktrees from the source repository", async () =>
     expect(worktreeList.exitCode).toBe(0);
     expect(existsSync(workspacePath)).toBe(false);
     expect(new TextDecoder().decode(worktreeList.stdout)).not.toContain(workspacePath);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run cleanup refuses completed source-repo runs before integration", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const cleanup = new QuestRunCleanup(runStore);
+
+  try {
+    await workerRegistry.upsertWorker(createWorker());
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    await executor.executeRun(run.id, { dryRun: true });
+
+    try {
+      await cleanup.cleanupRun(run.id);
+      throw new Error("Expected quest_run_not_cleanupable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_run_not_cleanupable");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

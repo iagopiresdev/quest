@@ -6,6 +6,7 @@ import {
   type CliTestContext,
   cleanupTempRoot,
   createCliContext,
+  createCommand,
   createCommittedRepo,
   createSlice,
   createSpec,
@@ -50,7 +51,7 @@ test("quest cli upserts, lists, and plans from stdin", () => {
   const plan = runCli(context, ["plan", "--stdin"], {
     input: JSON.stringify(
       createSpec({
-        acceptanceChecks: ["npm test"],
+        acceptanceChecks: [createCommand(["npm", "test"])],
         featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
         maxParallel: 2,
         slices: [
@@ -327,7 +328,7 @@ test("quest cli fails integration when top-level acceptance checks fail", () => 
   const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
     input: JSON.stringify(
       createSpec({
-        acceptanceChecks: ['bun -e "process.exit(9)"'],
+        acceptanceChecks: [createCommand(["bun", "-e", "process.exit(9)"])],
         title: "Integration checks fail",
       }),
     ),
@@ -364,7 +365,9 @@ test("quest cli fails a run when acceptance checks fail", () => {
   const created = runCli(context, ["run", "--stdin"], {
     input: JSON.stringify(
       createSpec({
-        slices: [createSlice({ acceptanceChecks: ['bun -e "process.exit(4)"'] })],
+        slices: [
+          createSlice({ acceptanceChecks: [createCommand(["bun", "-e", "process.exit(4)"])] }),
+        ],
         title: "Execute failing check run",
       }),
     ),

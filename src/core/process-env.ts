@@ -1,0 +1,51 @@
+const DEFAULT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin";
+
+const ALLOWED_HOST_ENV_KEYS = [
+  "CI",
+  "COLORTERM",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "NO_COLOR",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USER",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+] as const;
+
+type ProcessEnvValue = string | undefined;
+
+function sanitizeEntries(source: Record<string, ProcessEnvValue>): Record<string, string> {
+  const entries = Object.entries(source).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string",
+  );
+
+  return Object.fromEntries(entries);
+}
+
+export function buildProcessEnv(
+  explicitOverrides: Record<string, ProcessEnvValue> = {},
+): Record<string, string> {
+  const baseEnv: Record<string, ProcessEnvValue> = {};
+
+  for (const key of ALLOWED_HOST_ENV_KEYS) {
+    baseEnv[key] = Bun.env[key];
+  }
+
+  const merged = sanitizeEntries({
+    ...baseEnv,
+    ...explicitOverrides,
+    PATH: explicitOverrides.PATH ?? baseEnv.PATH ?? DEFAULT_PATH,
+  });
+
+  return merged;
+}

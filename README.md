@@ -77,10 +77,18 @@ If the run has `--source-repo <path>`, Quest Runner materializes each slice work
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
 Top-level spec `acceptanceChecks` run in that integration worktree after slices are replayed. If they fail, integration exits non-zero and the recorded integration checks stay on the run for inspection.
+Acceptance checks are structured argv commands, not shell strings. Example:
+
+```json
+{
+  "argv": ["bun", "-e", "console.log('ok')"],
+  "env": {}
+}
+```
 
 ## Tester Lane
 
-Each slice can define `acceptanceChecks`. After the worker command succeeds, Quest Runner executes those checks in order and persists their results into slice logs.
+Each slice can define `acceptanceChecks`. After the worker command succeeds, Quest Runner executes those argv-defined checks in order and persists their results into slice logs.
 
 If any check exits non-zero:
 - the slice becomes `failed`
@@ -128,6 +136,7 @@ bun ./src/cli.ts runs integrate --id quest-abc12345-deadbeef --target-ref main
 bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
 
 # remove quest-managed workspaces for a run
+# source-repo runs must be integrated before cleanup
 bun ./src/cli.ts runs cleanup --id quest-abc12345-deadbeef
 
 # abort a pending or running run
@@ -177,6 +186,7 @@ Do not commit runtime state, tokens, or local config.
 - integration-time execution of top-level `acceptanceChecks`
 - resume-safe `runs integrate` when the existing integration worktree is clean
 - explicit workspace cleanup via `runs cleanup`
+- cleanup confinement under the configured workspaces root
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
 

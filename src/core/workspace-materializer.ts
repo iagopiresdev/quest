@@ -3,8 +3,13 @@ import { dirname, resolve } from "node:path";
 
 import { QuestDomainError } from "./errors";
 import { runSubprocess } from "./process";
+import { buildProcessEnv } from "./process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import { ensureDirectory } from "./storage";
+import {
+  assertWorkspacePathWithinRoot,
+  resolveIntegrationWorkspacePathForRunRoot,
+} from "./workspace-layout";
 
 async function directoryHasEntries(path: string): Promise<boolean> {
   try {
@@ -32,7 +37,7 @@ export async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Pr
   const result = await runSubprocess({
     cmd: ["git", "rev-parse", "--show-toplevel"],
     cwd: resolvedSourcePath,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -55,7 +60,7 @@ export async function ensureGitRepositoryIsClean(repositoryRoot: string): Promis
   const result = await runSubprocess({
     cmd: ["git", "status", "--porcelain"],
     cwd: repositoryRoot,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -106,7 +111,7 @@ async function materializeGitWorktree(
   const result = await runSubprocess({
     cmd: ["git", "worktree", "add", "--detach", workspacePath, "HEAD"],
     cwd: repositoryRoot,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -154,7 +159,7 @@ async function readHeadRevision(cwd: string): Promise<string> {
   const result = await runSubprocess({
     cmd: ["git", "rev-parse", "HEAD"],
     cwd,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -178,6 +183,18 @@ export async function prepareExecutionWorkspace(
   sliceState: QuestRunSliceState,
   cwd: string,
 ): Promise<{ baseRevision?: string }> {
+  const workspaceRoot = run.workspaceRoot;
+  if (!workspaceRoot) {
+    throw new QuestDomainError({
+      code: "quest_workspace_materialization_failed",
+      details: { runId: run.id, sliceId: sliceState.sliceId },
+      message: `Quest run ${run.id} is missing a workspace root`,
+      statusCode: 1,
+    });
+  }
+
+  await assertWorkspacePathWithinRoot(workspaceRoot, cwd, `Slice workspace ${sliceState.sliceId}`);
+
   let baseRevision: string | undefined;
   if (run.sourceRepositoryPath) {
     await materializeGitWorktree(run.sourceRepositoryPath, cwd);
@@ -191,6 +208,11 @@ export async function prepareExecutionWorkspace(
 }
 
 export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise<void> {
+  const workspaceRoot = run.workspaceRoot;
+  if (!workspaceRoot) {
+    return;
+  }
+
   const workspacePaths = run.slices
     .map((slice) => slice.workspacePath)
     .filter((workspacePath): workspacePath is string => Boolean(workspacePath));
@@ -202,46 +224,58 @@ export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise
     const repositoryRoot = await resolveGitRepositoryRoot(run.sourceRepositoryPath);
 
     for (const workspacePath of workspacePaths) {
-      if (!(await directoryHasEntries(workspacePath))) {
+      const confinedWorkspacePath = await assertWorkspacePathWithinRoot(
+        workspaceRoot,
+        workspacePath,
+        "Workspace path",
+      );
+
+      if (!(await directoryHasEntries(confinedWorkspacePath))) {
         continue;
       }
 
       const result = await runSubprocess({
-        cmd: ["git", "worktree", "remove", "--force", workspacePath],
+        cmd: ["git", "worktree", "remove", "--force", confinedWorkspacePath],
         cwd: repositoryRoot,
-        env: Bun.env,
+        env: buildProcessEnv(),
       });
 
       if (result.exitCode !== 0) {
         throw new QuestDomainError({
           code: "quest_workspace_materialization_failed",
           details: {
-            path: workspacePath,
+            path: confinedWorkspacePath,
             sourceRepositoryPath: repositoryRoot,
             stderr: result.stderr,
             stdout: result.stdout,
           },
-          message: `Failed to remove git worktree for ${workspacePath}`,
+          message: `Failed to remove git worktree for ${confinedWorkspacePath}`,
           statusCode: 1,
         });
       }
     }
   }
 
-  if (!run.workspaceRoot) {
-    return;
-  }
+  await assertWorkspacePathWithinRoot(workspaceRoot, workspaceRoot, "Workspace root");
+
+  const integrationWorkspacePath =
+    run.integrationWorkspacePath ?? resolveIntegrationWorkspacePathForRunRoot(workspaceRoot);
+  await assertWorkspacePathWithinRoot(
+    workspaceRoot,
+    integrationWorkspacePath,
+    "Integration workspace",
+  );
 
   try {
-    await rm(run.workspaceRoot, { force: true, recursive: true });
+    await rm(workspaceRoot, { force: true, recursive: true });
   } catch (error: unknown) {
     throw new QuestDomainError({
       code: "quest_workspace_materialization_failed",
       details: {
-        path: run.workspaceRoot,
+        path: workspaceRoot,
         reason: error instanceof Error ? error.message : String(error),
       },
-      message: `Failed to remove workspace root ${run.workspaceRoot}`,
+      message: `Failed to remove workspace root ${workspaceRoot}`,
       statusCode: 1,
     });
   }

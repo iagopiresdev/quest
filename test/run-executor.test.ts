@@ -16,7 +16,7 @@ import { QuestRunStore } from "../src/core/run-store";
 import type { QuestSpec } from "../src/core/spec-schema";
 import { WorkerRegistry } from "../src/core/worker-registry";
 import type { RegisteredWorker } from "../src/core/worker-schema";
-import { createCommittedRepo } from "./helpers";
+import { createCommand, createCommittedRepo } from "./helpers";
 
 function createWorker(id: string, adapter = "local-cli", command?: string[]): RegisteredWorker {
   return {
@@ -218,7 +218,13 @@ test("run executor executes the worker inside the slice workspace", async () => 
     const executed = await executor.executeRun(run.id);
     const workspacePath = executed.slices[0]?.workspacePath ?? "";
 
-    expect(workspacePath).toBe(join(root, "workspaces", run.id, "slices", "parser"));
+    const expectedWorkspacePath = join(
+      realpathSync(join(root, "workspaces")),
+      run.id,
+      "slices",
+      "parser",
+    );
+    expect(workspacePath).toBe(expectedWorkspacePath);
     expect(realpathSync(executed.slices[0]?.lastOutput?.stdout.trim() ?? "")).toBe(
       realpathSync(workspacePath),
     );
@@ -372,7 +378,7 @@ test("run executor persists passing acceptance checks", async () => {
       maxParallel: 1,
       slices: [
         {
-          acceptanceChecks: ["bun -e \"console.log('ok')\""],
+          acceptanceChecks: [createCommand(["bun", "-e", "console.log('ok')"])],
           contextHints: [],
           dependsOn: [],
           discipline: "coding",
@@ -423,7 +429,7 @@ test("run executor fails when acceptance checks fail", async () => {
       maxParallel: 1,
       slices: [
         {
-          acceptanceChecks: ['bun -e "process.exit(3)"'],
+          acceptanceChecks: [createCommand(["bun", "-e", "process.exit(3)"])],
           contextHints: [],
           dependsOn: [],
           discipline: "coding",
@@ -522,6 +528,38 @@ test("run executor fails explicitly when no adapter is available", async () => {
     const failedRun = await runStore.getRun(run.id);
     expect(failedRun.status).toBe("failed");
     expect(failedRun.events.some((event) => event.type === "run_failed")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor refuses to re-execute a failed run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-fail.ts");
+    Bun.write(scriptPath, ["await Bun.write(Bun.stderr, 'boom');", "process.exit(2);"].join("\n"));
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_runner_command_failed");
+    } catch {}
+
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_run_not_rerunnable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_run_not_rerunnable");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

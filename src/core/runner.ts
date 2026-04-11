@@ -1,5 +1,6 @@
 import { QuestDomainError } from "./errors";
 import { runSubprocess } from "./process";
+import { buildProcessEnv } from "./process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestSliceSpec } from "./spec-schema";
 import type { RegisteredWorker } from "./worker-schema";
@@ -14,6 +15,7 @@ export type RunnerExecutionResult = {
 export type RunnerExecutionContext = {
   cwd: string;
   run: QuestRunDocument;
+  signal?: AbortSignal;
   slice: QuestSliceSpec;
   sliceState: QuestRunSliceState;
   worker: RegisteredWorker;
@@ -95,21 +97,48 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
     }
 
     const payload = buildLocalCommandPayload(context);
-    const { exitCode, stderr, stdout } = await runSubprocess({
-      cmd: command,
-      cwd: context.cwd,
-      env: {
-        ...Bun.env,
-        ...context.worker.backend.env,
-        QUEST_RUN_ID: context.run.id,
-        QUEST_SLICE_ID: context.slice.id,
-        QUEST_WORKER_ID: context.worker.id,
-        QUEST_WORKSPACE: context.run.spec.workspace,
-        QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
-        QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
-      },
-      stdin: payload,
-    });
+    const { aborted, exitCode, stderr, stderrTruncated, stdout, stdoutTruncated, timedOut } =
+      await runSubprocess({
+        cmd: command,
+        cwd: context.cwd,
+        env: buildProcessEnv({
+          ...context.worker.backend.env,
+          QUEST_RUN_ID: context.run.id,
+          QUEST_SLICE_ID: context.slice.id,
+          QUEST_WORKER_ID: context.worker.id,
+          QUEST_WORKSPACE: context.run.spec.workspace,
+          QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
+          QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
+        }),
+        signal: context.signal,
+        stdin: payload,
+        timeoutMs: 5 * 60 * 1000,
+      });
+
+    if (timedOut) {
+      throw new QuestDomainError({
+        code: "quest_subprocess_timed_out",
+        details: {
+          command,
+          cwd: context.cwd,
+          workerId: context.worker.id,
+        },
+        message: `Worker command timed out for ${context.worker.id}`,
+        statusCode: 1,
+      });
+    }
+
+    if (aborted || context.signal?.aborted) {
+      throw new QuestDomainError({
+        code: "quest_subprocess_aborted",
+        details: {
+          command,
+          workerId: context.worker.id,
+        },
+        message: `Worker command was aborted for ${context.worker.id}`,
+        statusCode: 1,
+      });
+    }
 
     if (exitCode !== 0) {
       throw new QuestDomainError({
@@ -118,7 +147,9 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
           command,
           exitCode,
           stderr,
+          stderrTruncated,
           stdout,
+          stdoutTruncated,
           workerId: context.worker.id,
         },
         message: `Worker command failed for ${context.worker.id} with exit code ${exitCode}`,

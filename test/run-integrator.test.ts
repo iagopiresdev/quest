@@ -8,7 +8,13 @@ import { QuestRunExecutor } from "../src/core/run-executor";
 import { QuestRunIntegrator } from "../src/core/run-integrator";
 import { QuestRunStore } from "../src/core/run-store";
 import { WorkerRegistry } from "../src/core/worker-registry";
-import { createCommittedRepo, createSpec, createWorker, runCommandOrThrow } from "./helpers";
+import {
+  createCommand,
+  createCommittedRepo,
+  createSpec,
+  createWorker,
+  runCommandOrThrow,
+} from "./helpers";
 
 test("run integrator cherry-picks completed slice changes into a dedicated integration worktree", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
@@ -139,7 +145,9 @@ test("run integrator runs top-level acceptance checks in the integration workspa
 
     const run = await runStore.createRun(
       createSpec({
-        acceptanceChecks: ["bun -e \"process.exit(Bun.file('tracked.txt').size > 0 ? 0 : 1)\""],
+        acceptanceChecks: [
+          createCommand(["bun", "-e", "process.exit(Bun.file('tracked.txt').size > 0 ? 0 : 1)"]),
+        ],
       }),
       await workerRegistry.listWorkers(),
       {
@@ -153,6 +161,46 @@ test("run integrator runs top-level acceptance checks in the integration workspa
     expect(
       integratedRun.events.some((event) => event.type === "run_integration_checks_completed"),
     ).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator rejects resuming against a different target ref", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    await executor.executeRun(run.id);
+    await integrator.integrateRun(run.id, { targetRef: "HEAD" });
+
+    const reloadedRun = await runStore.getRun(run.id);
+    reloadedRun.events = reloadedRun.events.filter((event) => event.type !== "run_integrated");
+    await runStore.saveRun(reloadedRun);
+
+    try {
+      await integrator.integrateRun(run.id, { targetRef: "HEAD~1" });
+      throw new Error("Expected quest_integration_failed");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_integration_failed");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

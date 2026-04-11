@@ -15,12 +15,15 @@ import {
   readJsonFileOrDefault,
   resolveQuestRunPath,
   resolveQuestRunsRoot,
-  resolveQuestRunWorkspaceRoot,
-  resolveQuestSliceWorkspacePath,
   resolveQuestWorkspacesRoot,
   writeJsonFileAtomically,
 } from "./storage";
 import type { RegisteredWorker } from "./worker-schema";
+import {
+  assertWorkspacePathWithinRoot,
+  resolveRunWorkspaceRootPath,
+  resolveSliceWorkspacePathForRunRoot,
+} from "./workspace-layout";
 
 export type QuestRunSummary = Pick<
   QuestRunDocument,
@@ -71,25 +74,26 @@ function summarizeRun(run: QuestRunDocument): QuestRunSummary {
 }
 
 function resolveRunWorkspaceRootForStore(runId: string, workspacesRoot: string): string {
-  return resolveQuestRunWorkspaceRoot(runId, {
-    explicitWorkspacesRoot: workspacesRoot,
-  });
+  return resolveRunWorkspaceRootPath(workspacesRoot, runId);
 }
 
-function resolveSliceWorkspacePathForStore(
-  runId: string,
-  sliceId: string,
-  workspacesRoot: string,
-): string {
-  return resolveQuestSliceWorkspacePath(runId, sliceId, {
-    explicitWorkspacesRoot: workspacesRoot,
-  });
+function resolveSliceWorkspacePathForStore(workspaceRoot: string, sliceId: string): string {
+  return resolveSliceWorkspacePathForRunRoot(workspaceRoot, sliceId);
 }
 
 function buildInitialSliceStates(
   run: Pick<QuestRunDocument, "id" | "plan" | "spec" | "workspaceRoot">,
-  workspacesRoot: string,
 ): QuestRunSliceState[] {
+  const workspaceRoot = run.workspaceRoot;
+  if (!workspaceRoot) {
+    throw new QuestDomainError({
+      code: "invalid_quest_run",
+      details: { runId: run.id },
+      message: `Quest run ${run.id} is missing a workspace root`,
+      statusCode: 1,
+    });
+  }
+
   const scheduledSlices = run.plan.waves.flatMap((wave) =>
     wave.slices.map<QuestRunSliceState>((slice) => ({
       assignedRunner: slice.assignedRunner,
@@ -99,7 +103,7 @@ function buildInitialSliceStates(
       status: "pending",
       title: slice.title,
       wave: slice.wave,
-      workspacePath: resolveSliceWorkspacePathForStore(run.id, slice.id, workspacesRoot),
+      workspacePath: resolveSliceWorkspacePathForStore(workspaceRoot, slice.id),
     })),
   );
 
@@ -112,7 +116,7 @@ function buildInitialSliceStates(
     status: "blocked",
     title: slice.title,
     wave: 0,
-    workspacePath: resolveSliceWorkspacePathForStore(run.id, slice.id, workspacesRoot),
+    workspacePath: resolveSliceWorkspacePathForStore(workspaceRoot, slice.id),
   }));
 
   const orderedSliceIds = run.spec.slices.map((slice) => slice.id);
@@ -128,12 +132,41 @@ function hydrateWorkspacePaths(run: QuestRunDocument, workspacesRoot: string): Q
 
   run.workspaceRoot = workspaceRoot;
   run.slices.forEach((slice) => {
-    slice.workspacePath ??= resolveSliceWorkspacePathForStore(
-      run.id,
-      slice.sliceId,
-      workspacesRoot,
-    );
+    slice.workspacePath ??= resolveSliceWorkspacePathForStore(workspaceRoot, slice.sliceId);
   });
+
+  return run;
+}
+
+async function validateWorkspacePaths(
+  run: QuestRunDocument,
+  workspacesRoot: string,
+): Promise<QuestRunDocument> {
+  const workspaceRoot =
+    run.workspaceRoot ?? resolveRunWorkspaceRootForStore(run.id, workspacesRoot);
+  run.workspaceRoot = await assertWorkspacePathWithinRoot(
+    workspacesRoot,
+    workspaceRoot,
+    "Workspace root",
+  );
+
+  for (const slice of run.slices) {
+    const workspacePath =
+      slice.workspacePath ?? resolveSliceWorkspacePathForStore(run.workspaceRoot, slice.sliceId);
+    slice.workspacePath = await assertWorkspacePathWithinRoot(
+      run.workspaceRoot,
+      workspacePath,
+      `Slice workspace ${slice.sliceId}`,
+    );
+  }
+
+  if (run.integrationWorkspacePath) {
+    run.integrationWorkspacePath = await assertWorkspacePathWithinRoot(
+      run.workspaceRoot,
+      run.integrationWorkspacePath,
+      "Integration workspace",
+    );
+  }
 
   return run;
 }
@@ -188,18 +221,26 @@ export class QuestRunStore {
 
     const run: QuestRunDocument = {
       ...runBase,
-      slices: buildInitialSliceStates(runBase, this.workspacesRoot),
+      slices: buildInitialSliceStates(runBase),
       status: plan.unassigned.length > 0 ? "blocked" : "planned",
       updatedAt: createdAt,
       version: 1,
     };
 
-    return this.saveRun(hydrateWorkspacePaths(run, this.workspacesRoot));
+    return this.saveRun(
+      await validateWorkspacePaths(
+        hydrateWorkspacePaths(run, this.workspacesRoot),
+        this.workspacesRoot,
+      ),
+    );
   }
 
   async getRun(runId: string): Promise<QuestRunDocument> {
     const path = resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot });
-    const rawDocument = await readJsonFileOrDefault<QuestRunDocument | null>(path, null);
+    const rawDocument = await readJsonFileOrDefault<QuestRunDocument | null>(path, null, {
+      invalidJsonCode: "invalid_quest_run",
+      invalidJsonMessage: `Invalid JSON in quest run file: ${path}`,
+    });
     if (rawDocument === null) {
       throw new QuestDomainError({
         code: "quest_run_not_found",
@@ -219,7 +260,10 @@ export class QuestRunStore {
       });
     }
 
-    return hydrateWorkspacePaths(parsed.data, this.workspacesRoot);
+    return await validateWorkspacePaths(
+      hydrateWorkspacePaths(parsed.data, this.workspacesRoot),
+      this.workspacesRoot,
+    );
   }
 
   async listRuns(): Promise<QuestRunSummary[]> {
@@ -259,9 +303,11 @@ export class QuestRunStore {
   }
 
   async saveRun(run: QuestRunDocument): Promise<QuestRunDocument> {
-    const parsed = questRunDocumentSchema.safeParse(
+    const hydratedRun = await validateWorkspacePaths(
       hydrateWorkspacePaths(run, this.workspacesRoot),
+      this.workspacesRoot,
     );
+    const parsed = questRunDocumentSchema.safeParse(hydratedRun);
     if (!parsed.success) {
       throw new QuestDomainError({
         code: "invalid_quest_run",
@@ -338,8 +384,7 @@ export class QuestRunStore {
         title: slice.title,
         wave: slice.wave,
         workspacePath:
-          slice.workspacePath ??
-          resolveSliceWorkspacePathForStore(run.id, slice.sliceId, this.workspacesRoot),
+          slice.workspacePath ?? resolveSliceWorkspacePathForStore(workspaceRoot, slice.sliceId),
         lastError: slice.lastError,
         lastChecks: slice.lastChecks,
         lastOutput: slice.lastOutput,

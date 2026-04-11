@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import type { QuestPlan } from "./planner";
-import { type QuestSpec, questSpecSchema } from "./spec-schema";
+import {
+  type QuestCommandSpec,
+  type QuestSpec,
+  questCommandSchema,
+  questSpecSchema,
+} from "./spec-schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const isoDateStringSchema = z.string().datetime({ offset: true });
@@ -128,7 +133,7 @@ export const questRunSliceOutputSchema = z
 
 export const questRunCheckResultSchema = z
   .object({
-    command: nonEmptyString(400),
+    command: questCommandSchema,
     exitCode: z.number().int(),
     stderr: z.string(),
     stdout: z.string(),
@@ -161,6 +166,7 @@ export const questRunDocumentSchema = z
   .object({
     createdAt: isoDateStringSchema,
     id: questRunIdSchema,
+    integrationBaseRevision: nonEmptyString(80).optional(),
     integrationWorkspacePath: nonEmptyString(400).optional(),
     lastIntegrationChecks: z.array(questRunCheckResultSchema).optional(),
     plan: questPlanSchema,
@@ -179,6 +185,7 @@ export const questRunDocumentSchema = z
 export type QuestRunDocument = z.infer<typeof questRunDocumentSchema>;
 export type QuestRunCheckResult = z.infer<typeof questRunCheckResultSchema>;
 export type QuestRunEvent = z.infer<typeof questRunEventSchema>;
+export type QuestRunCheckCommand = QuestCommandSpec;
 export type QuestRunSliceOutput = z.infer<typeof questRunSliceOutputSchema>;
 export type QuestRunSliceState = z.infer<typeof questRunSliceStateSchema>;
 export type QuestRunPlan = QuestPlan;

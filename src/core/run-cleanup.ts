@@ -13,6 +13,15 @@ function requireCleanupableRun(run: QuestRunDocument): void {
       statusCode: 1,
     });
   }
+
+  if (run.sourceRepositoryPath && !run.events.some((event) => event.type === "run_integrated")) {
+    throw new QuestDomainError({
+      code: "quest_run_not_cleanupable",
+      details: { runId: run.id, status: run.status },
+      message: `Quest run ${run.id} cannot be cleaned before integration finishes`,
+      statusCode: 1,
+    });
+  }
 }
 
 export class QuestRunCleanup {

@@ -1,11 +1,13 @@
 import { resolve } from "node:path";
-import { $ } from "bun";
 
 import { QuestDomainError } from "./errors";
+import { runSubprocess } from "./process";
+import { buildProcessEnv } from "./process-env";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestRunStore } from "./run-store";
 import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
+import type { QuestCommandSpec } from "./spec-schema";
 import { ensureDirectory } from "./storage";
 import type { WorkerRegistry } from "./worker-registry";
 import type { RegisteredWorker } from "./worker-schema";
@@ -35,6 +37,15 @@ function requireExecutableRun(run: QuestRunDocument): void {
       code: "quest_run_not_executable",
       details: { runId: run.id, status: run.status },
       message: `Quest run ${run.id} is aborted and cannot be executed`,
+      statusCode: 1,
+    });
+  }
+
+  if (run.status === "failed") {
+    throw new QuestDomainError({
+      code: "quest_run_not_rerunnable",
+      details: { runId: run.id, status: run.status },
+      message: `Quest run ${run.id} failed and must be recreated with quest runs rerun`,
       statusCode: 1,
     });
   }
@@ -69,23 +80,42 @@ function resolveExecutionCwd(
 }
 
 async function runAcceptanceChecks(
-  commands: string[],
+  commands: QuestCommandSpec[],
   cwd: string,
 ): Promise<QuestRunCheckResult[]> {
   const results: QuestRunCheckResult[] = [];
 
   for (const command of commands) {
-    const result = await $`${{ raw: command }}`.cwd(cwd).env(Bun.env).nothrow().quiet();
+    const result = await runSubprocess({
+      cmd: command.argv,
+      cwd,
+      env: buildProcessEnv(command.env),
+    });
     results.push({
       command,
       exitCode: result.exitCode,
-      stderr: result.stderr.toString(),
-      stdout: result.stdout.toString(),
+      stderr: result.stderr,
+      stdout: result.stdout,
     });
   }
 
   return results;
 }
+
+type WaveExecutionSuccess = {
+  result: {
+    exitCode: number;
+    stderr: string;
+    stdout: string;
+    summary: string;
+  };
+  sliceState: QuestRunSliceState;
+};
+
+type WaveExecutionFailure = {
+  error: unknown;
+  sliceState: QuestRunSliceState;
+};
 
 export class QuestRunExecutor {
   private readonly runnerRegistry = new RunnerRegistry([
@@ -122,9 +152,13 @@ export class QuestRunExecutor {
 
     try {
       for (const wave of run.plan.waves) {
-        const waveSliceStates = wave.slices.map((plannedSlice) =>
-          findSliceState(run, plannedSlice.id),
-        );
+        const waveSliceStates = wave.slices
+          .map((plannedSlice) => findSliceState(run, plannedSlice.id))
+          .filter((sliceState) => sliceState.status !== "completed");
+
+        if (waveSliceStates.length === 0) {
+          continue;
+        }
 
         waveSliceStates.forEach((sliceState) => {
           const eventAt = nowIsoString();
@@ -142,7 +176,7 @@ export class QuestRunExecutor {
         });
         await this.runStore.saveRun(run);
 
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
           waveSliceStates.map(async (sliceState) => {
             const workerId = sliceState.assignedWorkerId;
             if (!workerId) {
@@ -186,6 +220,7 @@ export class QuestRunExecutor {
               result: await adapter.execute({
                 cwd,
                 run,
+                signal: undefined,
                 slice,
                 sliceState,
                 worker,
@@ -195,7 +230,27 @@ export class QuestRunExecutor {
           }),
         );
 
-        for (const { result, sliceState } of results) {
+        const waveFailures: WaveExecutionFailure[] = [];
+        const waveSuccesses: WaveExecutionSuccess[] = [];
+
+        results.forEach((result, index) => {
+          const sliceState = waveSliceStates[index];
+          if (!sliceState) {
+            return;
+          }
+
+          if (result.status === "rejected") {
+            waveFailures.push({ error: result.reason, sliceState });
+            return;
+          }
+
+          waveSuccesses.push({
+            result: result.value.result,
+            sliceState,
+          });
+        });
+
+        for (const { result, sliceState } of waveSuccesses) {
           const workerId = sliceState.assignedWorkerId;
           if (!workerId) {
             throw new QuestDomainError({
@@ -249,36 +304,40 @@ export class QuestRunExecutor {
             const eventAt = nowIsoString();
             setSliceStatus(sliceState, "failed", {
               completedAt: eventAt,
-              lastError: `Acceptance check failed: ${failedCheck.command}`,
+              lastError: `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
               lastOutput: {
-                exitCode: result.exitCode,
-                stderr: result.stderr,
-                stdout: result.stdout,
-                summary: result.summary,
+                exitCode: failedCheck.exitCode,
+                stderr: failedCheck.stderr,
+                stdout: failedCheck.stdout,
+                summary: `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
               },
             });
             appendEvent(
               run,
               "slice_testing_failed",
               {
-                command: failedCheck.command,
+                command: failedCheck.command.argv,
                 exitCode: failedCheck.exitCode,
                 sliceId: sliceState.sliceId,
               },
               eventAt,
             );
-            throw new QuestDomainError({
-              code: "quest_acceptance_check_failed",
-              details: {
-                command: failedCheck.command,
-                runId: run.id,
-                sliceId: sliceState.sliceId,
-                stderr: failedCheck.stderr,
-                stdout: failedCheck.stdout,
-              },
-              message: `Acceptance check failed for slice ${sliceState.sliceId}`,
-              statusCode: 1,
+            waveFailures.push({
+              error: new QuestDomainError({
+                code: "quest_acceptance_check_failed",
+                details: {
+                  command: failedCheck.command,
+                  runId: run.id,
+                  sliceId: sliceState.sliceId,
+                  stderr: failedCheck.stderr,
+                  stdout: failedCheck.stdout,
+                },
+                message: `Acceptance check failed for slice ${sliceState.sliceId}`,
+                statusCode: 1,
+              }),
+              sliceState,
             });
+            continue;
           }
 
           if (sliceSpec.acceptanceChecks.length > 0) {
@@ -310,7 +369,31 @@ export class QuestRunExecutor {
             eventAt,
           );
         }
+
+        for (const { error, sliceState } of waveFailures) {
+          const eventAt = nowIsoString();
+          setSliceStatus(sliceState, "failed", {
+            completedAt: eventAt,
+            lastError: error instanceof Error ? error.message : String(error),
+            lastOutput: sliceState.lastOutput,
+          });
+          appendEvent(
+            run,
+            "slice_failed",
+            {
+              error: sliceState.lastError,
+              sliceId: sliceState.sliceId,
+              workerId: sliceState.assignedWorkerId,
+            },
+            eventAt,
+          );
+        }
+
         await this.runStore.saveRun(run);
+
+        if (waveFailures.length > 0) {
+          throw waveFailures[0]?.error;
+        }
       }
 
       setRunStatus(run, "completed");
@@ -323,7 +406,9 @@ export class QuestRunExecutor {
       const eventAt = nowIsoString();
       setRunStatus(run, "failed");
 
-      const activeSliceStates = run.slices.filter((slice) => slice.status === "running");
+      const activeSliceStates = run.slices.filter(
+        (slice) => slice.status === "running" || slice.status === "testing",
+      );
       activeSliceStates.forEach((sliceState) => {
         setSliceStatus(sliceState, "failed", {
           completedAt: eventAt,

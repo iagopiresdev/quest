@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { planQuest } from "../src/core/planner";
 import type { QuestSpec } from "../src/core/spec-schema";
 import type { RegisteredWorker } from "../src/core/worker-schema";
-import { createSlice, createSpec, createWorker } from "./helpers";
+import { createCommand, createSlice, createSpec, createWorker } from "./helpers";
 
 const workers: RegisteredWorker[] = [
   createWorker({
@@ -61,7 +61,7 @@ const workers: RegisteredWorker[] = [
 
 test("planner assigns independent slices into the same wave and respects dependencies", () => {
   const spec: QuestSpec = createSpec({
-    acceptanceChecks: ["npm test"],
+    acceptanceChecks: [createCommand(["npm", "test"])],
     featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
     hotspots: ["src/orchestration/**"],
     maxParallel: 2,
@@ -75,7 +75,7 @@ test("planner assigns independent slices into the same wave and respects depende
         title: "Docs",
       }),
       createSlice({
-        acceptanceChecks: ["npm test -- ssrf"],
+        acceptanceChecks: [createCommand(["npm", "test", "--", "ssrf"])],
         dependsOn: ["parser"],
         discipline: "testing",
         goal: "Write SSRF regression tests",

@@ -210,8 +210,8 @@ Be careful with:
 - `Bun.spawnSync(...)`
   only use it when serialization is intentional
 
-- shell dependencies
-  `/bin/sh -lc` is still present in acceptance checks and should be treated as technical debt, not a default pattern
+- subprocess command contracts
+  user-provided or spec-provided commands must be modeled as argv arrays, not shell strings
 
 - Node compatibility APIs
   allowed when Bun does not yet provide a better surface, but document the reason

@@ -7,6 +7,18 @@ const sliceIdSchema = z
   .string()
   .trim()
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const envKeySchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+
+export const questCommandSchema = z
+  .object({
+    argv: z.array(nonEmptyString(200)).min(1).max(32),
+    env: z.record(envKeySchema, nonEmptyString(400)).default({}),
+  })
+  .strict();
+export type QuestCommandSpec = z.infer<typeof questCommandSchema>;
 
 export const questFeatureDocSchema = z
   .object({
@@ -17,7 +29,7 @@ export const questFeatureDocSchema = z
 
 export const questSliceSchema = z
   .object({
-    acceptanceChecks: z.array(nonEmptyString(200)).max(16).default([]),
+    acceptanceChecks: z.array(questCommandSchema).max(16).default([]),
     contextHints: z.array(nonEmptyString(200)).max(16).default([]),
     dependsOn: z.array(sliceIdSchema).max(16).default([]),
     discipline: z.enum(workerDisciplineValues),
@@ -34,7 +46,7 @@ export type QuestSliceSpec = z.infer<typeof questSliceSchema>;
 
 export const questSpecSchema = z
   .object({
-    acceptanceChecks: z.array(nonEmptyString(200)).max(24).default([]),
+    acceptanceChecks: z.array(questCommandSchema).max(24).default([]),
     featureDoc: questFeatureDocSchema.default({ enabled: false }),
     hotspots: z.array(nonEmptyString(240)).max(24).default([]),
     maxParallel: z.number().int().min(1).max(8).default(1),

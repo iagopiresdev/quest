@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { QuestSliceSpec, QuestSpec } from "../src/core/spec-schema";
+import type { QuestCommandSpec, QuestSliceSpec, QuestSpec } from "../src/core/spec-schema";
 import type { RegisteredWorker, WorkerRunner } from "../src/core/worker-schema";
 
 export type CliTestContext = {
@@ -227,6 +227,10 @@ export function createSlice(overrides: Partial<QuestSliceSpec> = {}): QuestSlice
     title: "Parser",
     ...overrides,
   };
+}
+
+export function createCommand(argv: string[], env: Record<string, string> = {}): QuestCommandSpec {
+  return { argv, env };
 }
 
 export function createSpec(

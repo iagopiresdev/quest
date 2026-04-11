@@ -77,7 +77,14 @@ export function resolveQuestSliceWorkspacePath(
   return join(resolveQuestRunWorkspaceRoot(runId, options), "slices", sliceId);
 }
 
-export async function readJsonFileOrDefault<T>(path: string, fallback: T): Promise<T> {
+export async function readJsonFileOrDefault<T>(
+  path: string,
+  fallback: T,
+  options: {
+    invalidJsonCode?: "invalid_quest_run" | "invalid_worker_registry";
+    invalidJsonMessage?: string;
+  } = {},
+): Promise<T> {
   const file = Bun.file(path);
 
   try {
@@ -90,9 +97,9 @@ export async function readJsonFileOrDefault<T>(path: string, fallback: T): Promi
   } catch (error: unknown) {
     if (error instanceof SyntaxError) {
       throw new QuestDomainError({
-        code: "invalid_worker_registry",
+        code: options.invalidJsonCode ?? "invalid_worker_registry",
         details: { path },
-        message: `Invalid JSON in registry file: ${path}`,
+        message: options.invalidJsonMessage ?? `Invalid JSON in registry file: ${path}`,
         statusCode: 1,
       });
     }

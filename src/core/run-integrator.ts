@@ -1,12 +1,17 @@
 import { readdir, realpath } from "node:fs/promises";
-import { $ } from "bun";
 
 import { QuestDomainError } from "./errors";
 import { runSubprocess } from "./process";
+import { buildProcessEnv } from "./process-env";
 import { appendEvent } from "./run-lifecycle";
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestRunStore } from "./run-store";
+import type { QuestCommandSpec } from "./spec-schema";
 import { ensureDirectory } from "./storage";
+import {
+  assertWorkspacePathWithinRoot,
+  resolveIntegrationWorkspacePathForRunRoot,
+} from "./workspace-layout";
 import { ensureGitRepositoryIsClean, resolveGitRepositoryRoot } from "./workspace-materializer";
 
 function requireIntegratableRun(run: QuestRunDocument): void {
@@ -33,7 +38,7 @@ async function readHeadRevision(cwd: string): Promise<string> {
   const result = await runSubprocess({
     cmd: ["git", "rev-parse", "HEAD"],
     cwd,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -52,12 +57,36 @@ async function readHeadRevision(cwd: string): Promise<string> {
   return result.stdout.trim();
 }
 
+async function readRevisionForRef(cwd: string, ref: string): Promise<string> {
+  const result = await runSubprocess({
+    cmd: ["git", "rev-parse", ref],
+    cwd,
+    env: buildProcessEnv(),
+  });
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_integration_failed",
+      details: {
+        cwd,
+        ref,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Failed to resolve git ref ${ref} for ${cwd}`,
+      statusCode: 1,
+    });
+  }
+
+  return result.stdout.trim();
+}
+
 async function readAheadCount(baseRevision: string, cwd: string): Promise<number> {
   const currentHead = await readHeadRevision(cwd);
   const result = await runSubprocess({
     cmd: ["git", "rev-list", "--count", `${baseRevision}..${currentHead}`],
     cwd,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -81,7 +110,7 @@ async function readGitStatus(cwd: string): Promise<string> {
   const result = await runSubprocess({
     cmd: ["git", "status", "--porcelain"],
     cwd,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -126,15 +155,50 @@ async function prepareIntegrationWorkspace(
   repositoryRoot: string,
   targetRef: string,
 ): Promise<string> {
-  const workspacePath = run.integrationWorkspacePath ?? `${run.workspaceRoot}/integration`;
+  const workspaceRoot = run.workspaceRoot;
+  if (!workspaceRoot) {
+    throw new QuestDomainError({
+      code: "quest_integration_failed",
+      details: { runId: run.id },
+      message: `Quest run ${run.id} has no workspace root`,
+      statusCode: 1,
+    });
+  }
+
+  const targetBaseRevision = await readRevisionForRef(repositoryRoot, targetRef);
+  const workspacePath =
+    run.integrationWorkspacePath ?? resolveIntegrationWorkspacePathForRunRoot(workspaceRoot);
   run.integrationWorkspacePath = workspacePath;
-  run.targetRef = targetRef;
+  await assertWorkspacePathWithinRoot(workspaceRoot, workspacePath, "Integration workspace");
 
   if (await directoryHasEntries(workspacePath)) {
+    if (run.targetRef && run.targetRef !== targetRef) {
+      throw new QuestDomainError({
+        code: "quest_integration_failed",
+        details: { previousTargetRef: run.targetRef, runId: run.id, targetRef },
+        message: `Quest run ${run.id} cannot resume integration against a different target ref`,
+        statusCode: 1,
+      });
+    }
+
+    if (run.integrationBaseRevision && run.integrationBaseRevision !== targetBaseRevision) {
+      throw new QuestDomainError({
+        code: "quest_integration_failed",
+        details: {
+          expectedBaseRevision: run.integrationBaseRevision,
+          runId: run.id,
+          targetBaseRevision,
+          targetRef,
+        },
+        message: `Quest run ${run.id} cannot resume integration against a different target revision`,
+        statusCode: 1,
+      });
+    }
+
     const topLevelResult = await runSubprocess({
       cmd: ["git", "rev-parse", "--show-toplevel"],
       cwd: workspacePath,
-      env: Bun.env,
+      env: buildProcessEnv(),
     });
     const expectedWorkspacePath = await realpath(workspacePath);
     const resolvedTopLevelPath =
@@ -162,11 +226,11 @@ async function prepareIntegrationWorkspace(
     return workspacePath;
   }
 
-  await ensureDirectory(run.workspaceRoot ?? "");
+  await ensureDirectory(workspaceRoot);
   const result = await runSubprocess({
     cmd: ["git", "worktree", "add", "--detach", workspacePath, targetRef],
     cwd: repositoryRoot,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (result.exitCode !== 0) {
@@ -183,6 +247,8 @@ async function prepareIntegrationWorkspace(
     });
   }
 
+  run.targetRef = targetRef;
+  run.integrationBaseRevision = targetBaseRevision;
   return workspacePath;
 }
 
@@ -201,6 +267,14 @@ async function freezeSliceResult(
       message: `Slice ${sliceState.sliceId} has no workspace path`,
       statusCode: 1,
     });
+  }
+
+  if (run.workspaceRoot) {
+    await assertWorkspacePathWithinRoot(
+      run.workspaceRoot,
+      sliceState.workspacePath,
+      `Slice workspace ${sliceState.sliceId}`,
+    );
   }
 
   const baseRevision =
@@ -238,7 +312,7 @@ async function freezeSliceResult(
     const addResult = await runSubprocess({
       cmd: ["git", "add", "-A"],
       cwd: sliceState.workspacePath,
-      env: Bun.env,
+      env: buildProcessEnv(),
     });
 
     if (addResult.exitCode !== 0) {
@@ -269,7 +343,7 @@ async function freezeSliceResult(
         ].join("\n"),
       ],
       cwd: sliceState.workspacePath,
-      env: Bun.env,
+      env: buildProcessEnv(),
     });
 
     if (commitResult.exitCode !== 0) {
@@ -320,7 +394,7 @@ async function commitIntegrationSlice(
       ].join("\n"),
     ],
     cwd: integrationWorkspacePath,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (commitResult.exitCode !== 0) {
@@ -362,7 +436,7 @@ async function integrateSlice(
   const cherryPickResult = await runSubprocess({
     cmd: ["git", "cherry-pick", "--no-commit", resultRevision],
     cwd: integrationWorkspacePath,
-    env: Bun.env,
+    env: buildProcessEnv(),
   });
 
   if (cherryPickResult.exitCode !== 0) {
@@ -370,7 +444,7 @@ async function integrateSlice(
     await runSubprocess({
       cmd: ["git", "cherry-pick", "--abort"],
       cwd: integrationWorkspacePath,
-      env: Bun.env,
+      env: buildProcessEnv(),
     });
     throw new QuestDomainError({
       code: "quest_integration_failed",
@@ -399,18 +473,22 @@ async function integrateSlice(
 }
 
 async function runIntegrationChecks(
-  commands: string[],
+  commands: QuestCommandSpec[],
   cwd: string,
 ): Promise<QuestRunCheckResult[]> {
   const results: QuestRunCheckResult[] = [];
 
   for (const command of commands) {
-    const result = await $`${{ raw: command }}`.cwd(cwd).env(Bun.env).nothrow().quiet();
+    const result = await runSubprocess({
+      cmd: command.argv,
+      cwd,
+      env: buildProcessEnv(command.env),
+    });
     results.push({
       command,
       exitCode: result.exitCode,
-      stderr: result.stderr.toString(),
-      stdout: result.stdout.toString(),
+      stderr: result.stderr,
+      stdout: result.stdout,
     });
   }
 
