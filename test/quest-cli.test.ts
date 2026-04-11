@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import process from "node:process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ type TestContext = {
 };
 
 const activeContexts: TestContext[] = [];
-const cliArgs = ["--import", "./node_modules/tsx/dist/loader.mjs", "./src/cli.ts"];
+const cliArgs = ["./src/cli.ts"];
 const projectRoot = process.cwd();
 
 function createContext(): TestContext {

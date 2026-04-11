@@ -15,7 +15,7 @@
   "scripts": {
     "build": "bun ./scripts/build.mjs",
     "quest": "bun run build && bun dist/cli.js",
-    "test": "bun x tsx --test test/*.test.ts",
+    "test": "bun test",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -24,7 +24,6 @@
   "devDependencies": {
     "@types/node": "^22.19.15",
     "esbuild": "^0.27.0",
-    "tsx": "^4.20.6",
     "typescript": "^6.0.2"
   }
 }

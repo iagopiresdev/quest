@@ -69,6 +69,6 @@ Real runner adapters, git worktrees, tester lane, and integration are still pend
 ```sh
 bun install
 bun run typecheck
-bun run test
+bun test
 bun run build
 ```
