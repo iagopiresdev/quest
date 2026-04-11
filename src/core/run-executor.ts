@@ -6,7 +6,13 @@ import { buildProcessEnv } from "./process-env";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestRunStore } from "./run-store";
-import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
+import {
+  CodexCliRunnerAdapter,
+  DryRunRunnerAdapter,
+  LocalCommandRunnerAdapter,
+  RunnerRegistry,
+} from "./runner";
+import { SecretStore } from "./secret-store";
 import type { QuestCommandSpec } from "./spec-schema";
 import { ensureDirectory } from "./storage";
 import type { WorkerRegistry } from "./worker-registry";
@@ -118,15 +124,19 @@ type WaveExecutionFailure = {
 };
 
 export class QuestRunExecutor {
-  private readonly runnerRegistry = new RunnerRegistry([
-    new DryRunRunnerAdapter(),
-    new LocalCommandRunnerAdapter(),
-  ]);
+  private readonly runnerRegistry: RunnerRegistry;
 
   constructor(
     private readonly runStore: QuestRunStore,
     private readonly workerRegistry: WorkerRegistry,
-  ) {}
+    secretStore: SecretStore = new SecretStore(),
+  ) {
+    this.runnerRegistry = new RunnerRegistry([
+      new DryRunRunnerAdapter(),
+      new LocalCommandRunnerAdapter(),
+      new CodexCliRunnerAdapter(secretStore),
+    ]);
+  }
 
   async executeRun(
     runId: string,

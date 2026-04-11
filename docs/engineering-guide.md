@@ -90,6 +90,8 @@ Preferred patterns:
 - Sparse comments that explain why a boundary or invariant exists, not what the next line of code does.
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
+- Redaction before delegation:
+  prompts sent to external runners should carry only the context needed to finish the slice, not raw secrets or literal command payloads.
 
 Avoid:
 
@@ -141,6 +143,7 @@ Rules:
 - Do not overload one error code for unrelated causes.
 - Preserve the low-level details needed for retry or diagnosis.
 - Keep messages concise and actionable.
+- Distinguish missing credentials from credential-backend failures; an inaccessible keychain is not the same thing as an absent secret.
 
 Examples:
 
@@ -164,6 +167,7 @@ Minimum standard:
 - worker stdout/stderr is persisted
 - acceptance check results are persisted
 - timestamps are updated consistently
+- secret values never appear in persisted logs, prompts, or argv when a safer channel exists
 
 When adding behavior, ask:
 
@@ -214,6 +218,9 @@ Be careful with:
 
 - subprocess command contracts
   user-provided or spec-provided commands must be modeled as argv arrays, not shell strings
+
+- subprocess secrets
+  avoid argv for credentials when the platform offers stdin, native login reuse, or a dedicated secret store
 
 - Node compatibility APIs
   allowed when Bun does not yet provide a better surface, but document the reason

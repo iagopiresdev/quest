@@ -8,6 +8,7 @@ import { QuestRunCleanup } from "./core/run-cleanup";
 import { QuestRunExecutor } from "./core/run-executor";
 import { QuestRunIntegrator } from "./core/run-integrator";
 import { QuestRunStore } from "./core/run-store";
+import { SecretStore } from "./core/secret-store";
 import { questSpecSchema } from "./core/spec-schema";
 import {
   resolveQuestRunsRoot,
@@ -29,6 +30,9 @@ type QuestCliCommand =
   | "runs:logs"
   | "runs:list"
   | "runs:status"
+  | "secrets:delete"
+  | "secrets:set"
+  | "secrets:status"
   | "workers:list"
   | "workers:upsert";
 
@@ -39,6 +43,7 @@ type QuestCliContext = {
   runExecutor: QuestRunExecutor;
   runIntegrator: QuestRunIntegrator;
   runStore: QuestRunStore;
+  secretStore: SecretStore;
 };
 
 type QuestCliCommandDefinition = {
@@ -88,6 +93,21 @@ function requireOptionValue(args: string[], flag: string, label: string): string
 
 async function readStdin(): Promise<string> {
   return await Bun.stdin.text();
+}
+
+async function readTextInput(args: string[]): Promise<string> {
+  const filePath = findOptionValue(args, "--file");
+  const useStdin = hasFlag(args, "--stdin");
+
+  if (filePath) {
+    return await Bun.file(filePath).text();
+  }
+
+  if (useStdin || !stdinIsTty()) {
+    return await readStdin();
+  }
+
+  throw new Error("Expected --file <path> or --stdin");
 }
 
 async function readJsonInput(args: string[]): Promise<unknown> {
@@ -157,6 +177,36 @@ function writeError(error: unknown): void {
 }
 
 const commandDefinitions: QuestCliCommandDefinition[] = [
+  {
+    id: "secrets:set",
+    matches: (args) => args.length >= 2 && args[0] === "secrets" && args[1] === "set",
+    run: async ({ args, secretStore }) => {
+      const name = requireOptionValue(args, "--name", "--name <secret-name>");
+      await secretStore.setSecret(name, await readTextInput(args));
+      return { ok: true, secret: await secretStore.getStatus(name) };
+    },
+    usage: "quest secrets set --name <secret-name> (--file <path> | --stdin)",
+  },
+  {
+    id: "secrets:delete",
+    matches: (args) => args.length >= 2 && args[0] === "secrets" && args[1] === "delete",
+    run: async ({ args, secretStore }) => {
+      const name = requireOptionValue(args, "--name", "--name <secret-name>");
+      await secretStore.deleteSecret(name);
+      return { ok: true, name };
+    },
+    usage: "quest secrets delete --name <secret-name>",
+  },
+  {
+    id: "secrets:status",
+    matches: (args) => args.length >= 2 && args[0] === "secrets" && args[1] === "status",
+    run: async ({ args, secretStore }) => ({
+      secret: await secretStore.getStatus(
+        requireOptionValue(args, "--name", "--name <secret-name>"),
+      ),
+    }),
+    usage: "quest secrets status --name <secret-name>",
+  },
   {
     id: "workers:list",
     matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "list",
@@ -310,13 +360,22 @@ async function main(): Promise<number> {
   });
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const secretStore = new SecretStore();
   const runCleanup = new QuestRunCleanup(runStore);
-  const runExecutor = new QuestRunExecutor(runStore, registry);
+  const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
 
   try {
     writeJson(
-      await command.run({ args, registry, runCleanup, runExecutor, runIntegrator, runStore }),
+      await command.run({
+        args,
+        registry,
+        runCleanup,
+        runExecutor,
+        runIntegrator,
+        runStore,
+        secretStore,
+      }),
     );
     return 0;
   } catch (error: unknown) {

@@ -402,3 +402,48 @@ test("quest cli reruns a prior run by cloning its spec", () => {
   expect(secondRun.spec.title).toBe(firstRun.spec.title);
   expect(secondRun.status).toBe("planned");
 });
+
+test("quest cli stores, checks, and deletes secrets through the keychain backend", () => {
+  const context = trackContext();
+  const secretName = "codex.api";
+  const secretValue = "top-secret-token  ";
+
+  const stored = runCli(context, ["secrets", "set", "--name", secretName, "--stdin"], {
+    input: secretValue,
+  });
+  expect(stored.code).toBe(0);
+  expect(JSON.parse(stored.stdout).secret.exists).toBe(true);
+
+  const fetched = Bun.spawnSync({
+    cmd: [
+      "security",
+      "find-generic-password",
+      "-a",
+      secretName,
+      "-s",
+      context.secretServiceName,
+      "-w",
+    ],
+    cwd: context.stateRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(fetched.exitCode).toBe(0);
+  expect(new TextDecoder().decode(fetched.stdout).replace(/\n$/, "")).toBe(secretValue);
+
+  const status = runCli(context, ["secrets", "status", "--name", secretName]);
+  expect(status.code).toBe(0);
+  expect(JSON.parse(status.stdout).secret).toEqual({
+    backend: "macos-keychain",
+    exists: true,
+    name: secretName,
+  });
+
+  const deleted = runCli(context, ["secrets", "delete", "--name", secretName]);
+  expect(deleted.code).toBe(0);
+  expect(JSON.parse(deleted.stdout)).toEqual({ name: secretName, ok: true });
+
+  const missingStatus = runCli(context, ["secrets", "status", "--name", secretName]);
+  expect(missingStatus.code).toBe(0);
+  expect(JSON.parse(missingStatus.stdout).secret.exists).toBe(false);
+});

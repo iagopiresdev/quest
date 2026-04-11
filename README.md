@@ -15,6 +15,7 @@ Engineering guidance for future work lives in [docs/engineering-guide.md](./docs
 Current adapters:
 - `dry-run` via `runs execute --dry-run`
 - `local-command` for real local subprocess execution
+- `codex-cli` for native Codex CLI execution with optional native login, env-var auth, or keychain-backed secret lookup
 
 Example `local-command` worker:
 
@@ -72,6 +73,64 @@ Execution happens from the slice workspace path for that run, and the process al
 - `QUEST_WORKSPACE`
 - `QUEST_WORKSPACE_ROOT`
 - `QUEST_SLICE_WORKSPACE`
+
+Example `codex-cli` worker:
+
+```json
+{
+  "id": "ember-codex",
+  "name": "Ember Codex",
+  "title": "Battle Engineer",
+  "class": "engineer",
+  "enabled": true,
+  "backend": {
+    "runner": "codex",
+    "profile": "gpt-5.4",
+    "adapter": "codex-cli",
+    "auth": {
+      "mode": "native-login"
+    },
+    "toolPolicy": { "allow": [], "deny": [] }
+  },
+  "persona": {
+    "voice": "terse",
+    "approach": "finish the change with minimal churn",
+    "prompt": "Keep diffs narrow and state residual risks briefly."
+  },
+  "stats": {
+    "coding": 85,
+    "testing": 70,
+    "docs": 40,
+    "research": 40,
+    "speed": 60,
+    "mergeSafety": 80,
+    "contextEndurance": 60
+  },
+  "resources": {
+    "cpuCost": 1,
+    "memoryCost": 1,
+    "gpuCost": 0,
+    "maxParallel": 1
+  },
+  "trust": {
+    "rating": 0.8,
+    "calibratedAt": "2026-04-11T00:00:00Z"
+  },
+  "progression": {
+    "level": 1,
+    "xp": 0
+  },
+  "tags": ["codex"]
+}
+```
+
+`codex-cli` runs `codex exec` inside the slice workspace, persists Codex stdout/stderr, and captures the final response through `--output-last-message`.
+The prompt includes owned paths, dependencies, and redacted acceptance-check summaries. It does not forward raw acceptance-check argv or env values to the model.
+
+Auth modes for `codex-cli`:
+- `native-login`: reuse the local `codex login` session
+- `env-var`: copy a named env var into the target subprocess env
+- `secret-store`: load a named secret from the OS keychain backend
 
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
@@ -135,6 +194,15 @@ bun ./src/cli.ts runs integrate --id quest-abc12345-deadbeef --target-ref main
 # inspect persisted slice logs/output
 bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
 
+# store a backend secret in the local keychain backend
+printf 'sk-example' | bun ./src/cli.ts secrets set --name codex.api --stdin
+
+# inspect whether a keychain secret exists
+bun ./src/cli.ts secrets status --name codex.api
+
+# delete a stored secret
+bun ./src/cli.ts secrets delete --name codex.api
+
 # remove quest-managed workspaces for a run
 # source-repo runs must be integrated before cleanup
 bun ./src/cli.ts runs cleanup --id quest-abc12345-deadbeef
@@ -157,12 +225,14 @@ Defaults:
 - worker registry: `~/.quest-runner/workers.json`
 - runs root: `~/.quest-runner/runs`
 - workspaces root: `~/.quest-runner/workspaces`
+- secret-store service name: `quest-runner`
 
 Overrides:
 - `QUEST_RUNNER_STATE_ROOT`
 - `QUEST_RUNNER_WORKER_REGISTRY_PATH`
 - `QUEST_RUNNER_RUNS_ROOT`
 - `QUEST_RUNNER_WORKSPACES_ROOT`
+- `QUEST_RUNNER_SECRET_STORE_SERVICE_NAME`
 - `--registry <path>`
 - `--runs-root <path>`
 - `--workspaces-root <path>`
@@ -178,6 +248,7 @@ Do not commit runtime state, tokens, or local config.
 - dry-run execution path for exercising run state transitions
 - persisted slice output logs and basic control commands (`runs logs`, `runs abort`)
 - real local subprocess execution through the `local-command` adapter
+- native Codex execution through the `codex-cli` adapter
 - slice-level tester lane through `acceptanceChecks`
 - basic steering commands to abort and rerun runs
 - runtime-managed per-run and per-slice workspace directories
@@ -187,6 +258,7 @@ Do not commit runtime state, tokens, or local config.
 - resume-safe `runs integrate` when the existing integration worktree is clean
 - explicit workspace cleanup via `runs cleanup`
 - cleanup confinement under the configured workspaces root
+- local keychain-backed secret storage for runner auth
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
 

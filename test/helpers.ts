@@ -6,6 +6,7 @@ import type { QuestCommandSpec, QuestSliceSpec, QuestSpec } from "../src/core/sp
 import type { RegisteredWorker, WorkerRunner } from "../src/core/worker-schema";
 
 export type CliTestContext = {
+  secretServiceName: string;
   stateRoot: string;
 };
 
@@ -55,7 +56,10 @@ export function createCommittedRepo(root: string): string {
 }
 
 export function createCliContext(): CliTestContext {
-  return { stateRoot: createTempRoot("quest-cli-") };
+  return {
+    secretServiceName: `quest-runner-test-${crypto.randomUUID()}`,
+    stateRoot: createTempRoot("quest-cli-"),
+  };
 }
 
 export function runCli(
@@ -70,6 +74,7 @@ export function runCli(
       ...Bun.env,
       QUEST_RUNNER_STATE_ROOT: context.stateRoot,
       QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
+      QUEST_RUNNER_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
     },
     stdin: options.input ? textEncoder.encode(options.input) : null,
     stdout: "pipe",

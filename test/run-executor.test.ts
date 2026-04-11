@@ -13,12 +13,18 @@ import { join } from "node:path";
 import { QuestDomainError } from "../src/core/errors";
 import { QuestRunExecutor } from "../src/core/run-executor";
 import { QuestRunStore } from "../src/core/run-store";
+import { SecretStore } from "../src/core/secret-store";
 import type { QuestSpec } from "../src/core/spec-schema";
 import { WorkerRegistry } from "../src/core/worker-registry";
 import type { RegisteredWorker } from "../src/core/worker-schema";
 import { createCommand, createCommittedRepo } from "./helpers";
 
-function createWorker(id: string, adapter = "local-cli", command?: string[]): RegisteredWorker {
+function createWorker(
+  id: string,
+  adapter = "local-cli",
+  command?: string[],
+  backendOverrides: Partial<RegisteredWorker["backend"]> = {},
+): RegisteredWorker {
   return {
     backend: {
       adapter,
@@ -26,6 +32,7 @@ function createWorker(id: string, adapter = "local-cli", command?: string[]): Re
       profile: "gpt-5.4",
       runner: "codex",
       toolPolicy: { allow: [], deny: [] },
+      ...backendOverrides,
     },
     class: "engineer",
     enabled: true,
@@ -566,6 +573,161 @@ test("run executor passes explicit env into acceptance checks without leaking am
     } else {
       Bun.env.QUEST_RUNNER_SECRET_TEST = previousSecret;
     }
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor completes a planned run with the codex-cli adapter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "fake-codex");
+    writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bun",
+        "const args = process.argv.slice(2);",
+        "if (args.includes('-a')) {",
+        "  await Bun.write(Bun.stderr, 'unexpected approval flag');",
+        "  process.exit(1);",
+        "}",
+        "const outputIndex = args.indexOf('--output-last-message');",
+        "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
+        "const prompt = await Bun.stdin.text();",
+        "await Bun.write('codex-marker.txt', prompt.includes('Owned paths:') ? 'ok' : 'bad');",
+        "await Bun.write('codex-prompt.txt', prompt);",
+        "if (outputPath) await Bun.write(outputPath, 'codex summary from fake cli');",
+        "await Bun.write(Bun.stdout, 'fake-codex-stdout');",
+      ].join("\n"),
+      "utf8",
+    );
+    Bun.spawnSync({ cmd: ["chmod", "+x", scriptPath], cwd: root });
+
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "codex-cli", undefined, {
+        executable: scriptPath,
+        profile: "gpt-5.4",
+      }),
+    );
+
+    const run = await runStore.createRun(
+      {
+        ...createSpec(),
+        acceptanceChecks: [createCommand(["grep", "-q", "top-secret-value", "note.txt"])],
+      },
+      await workerRegistry.listWorkers(),
+    );
+    const executed = await executor.executeRun(run.id);
+    const workspacePath = executed.slices[0]?.workspacePath ?? "";
+    const prompt = readFileSync(join(workspacePath, "codex-prompt.txt"), "utf8");
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.summary).toBe("codex summary from fake cli");
+    expect(readFileSync(join(workspacePath, "codex-marker.txt"), "utf8")).toBe("ok");
+    expect(prompt).toContain("Global acceptance checks before integration:");
+    expect(prompt).toContain("grep (3 arg(s) redacted)");
+    expect(prompt).not.toContain("top-secret-value");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor resolves secret-store auth for codex-cli workers", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const secretStore = new SecretStore({
+    platform: "darwin",
+    runCommand: async ({ cmd }) => ({
+      aborted: false,
+      exitCode: 0,
+      stderr: "",
+      stderrTruncated: false,
+      stdout: cmd.includes("-w") ? "secret-token\n" : "",
+      stdoutTruncated: false,
+      timedOut: false,
+    }),
+    serviceName: "quest-runner-tests",
+  });
+  const executor = new QuestRunExecutor(runStore, workerRegistry, secretStore);
+
+  try {
+    const scriptPath = join(root, "fake-codex");
+    writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bun",
+        "const args = process.argv.slice(2);",
+        "const outputIndex = args.indexOf('--output-last-message');",
+        "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
+        "await Bun.write(Bun.stdout, process.env.OPENAI_API_KEY ?? 'missing');",
+        "if (outputPath) await Bun.write(outputPath, 'codex secret summary');",
+      ].join("\n"),
+      "utf8",
+    );
+    Bun.spawnSync({ cmd: ["chmod", "+x", scriptPath], cwd: root });
+
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "codex-cli", undefined, {
+        auth: {
+          mode: "secret-store",
+          secretRef: "codex.api",
+          targetEnvVar: "OPENAI_API_KEY",
+        },
+        executable: scriptPath,
+        profile: "gpt-5.4",
+      }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+
+    expect(executed.slices[0]?.lastOutput?.stdout).toBe("secret-token");
+    expect(executed.slices[0]?.lastOutput?.summary).toBe("codex secret summary");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor fails codex-cli workers when env-var auth is missing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    delete Bun.env.CODEX_API_KEY_FOR_TESTS;
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "codex-cli", undefined, {
+        auth: {
+          envVar: "CODEX_API_KEY_FOR_TESTS",
+          mode: "env-var",
+          targetEnvVar: "OPENAI_API_KEY",
+        },
+        executable: "/bin/echo",
+        profile: "gpt-5.4",
+      }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_runner_unavailable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+    }
+  } finally {
     rmSync(root, { force: true, recursive: true });
   }
 });

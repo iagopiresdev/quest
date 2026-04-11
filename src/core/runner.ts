@@ -2,6 +2,7 @@ import { QuestDomainError } from "./errors";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
+import type { SecretStore } from "./secret-store";
 import type { QuestSliceSpec } from "./spec-schema";
 import type { RegisteredWorker } from "./worker-schema";
 
@@ -55,6 +56,93 @@ export interface RunnerAdapter {
   readonly name: string;
   supports(worker: RegisteredWorker): boolean;
   execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult>;
+}
+
+function describeCommandForPrompt(command: QuestSliceSpec["acceptanceChecks"][number]): string {
+  const envOverrideCount = Object.keys(command.env).length;
+  const argCount = Math.max(0, command.argv.length - 1);
+  const envSuffix = envOverrideCount > 0 ? `, ${envOverrideCount} env override(s)` : "";
+  return `${command.argv[0]} (${argCount} arg(s) redacted${envSuffix})`;
+}
+
+function buildQuestPrompt(context: RunnerExecutionContext): string {
+  const ownedPaths = context.slice.owns.map((path) => `- ${path}`).join("\n");
+  const dependencyList =
+    context.slice.dependsOn.length === 0
+      ? "- none"
+      : context.slice.dependsOn.map((dependency) => `- ${dependency}`).join("\n");
+  const sliceAcceptanceChecks =
+    context.slice.acceptanceChecks.length === 0
+      ? "- none"
+      : context.slice.acceptanceChecks
+          .map((check) => `- ${describeCommandForPrompt(check)}`)
+          .join("\n");
+  const globalAcceptanceChecks =
+    context.run.spec.acceptanceChecks.length === 0
+      ? "- none"
+      : context.run.spec.acceptanceChecks
+          .map((check) => `- ${describeCommandForPrompt(check)}`)
+          .join("\n");
+
+  return [
+    `Quest: ${context.run.spec.title}`,
+    `Slice: ${context.slice.title} (${context.slice.id})`,
+    "",
+    "Goal:",
+    context.slice.goal,
+    "",
+    "Constraints:",
+    "- Work only within the owned paths for this slice unless a generated file is strictly required.",
+    "- Leave code changes in the current workspace; do not describe hypothetical diffs only.",
+    "- Keep the final response short and focused on completed work and residual risks.",
+    "",
+    "Owned paths:",
+    ownedPaths,
+    "",
+    "Dependencies:",
+    dependencyList,
+    "",
+    "Later slice acceptance checks:",
+    sliceAcceptanceChecks,
+    "",
+    "Global acceptance checks before integration:",
+    globalAcceptanceChecks,
+  ].join("\n");
+}
+
+async function resolveAuthEnv(
+  worker: RegisteredWorker,
+  secretStore: SecretStore,
+): Promise<Record<string, string>> {
+  const auth = worker.backend.auth;
+  if (!auth || auth.mode === "native-login") {
+    return {};
+  }
+
+  if (auth.mode === "env-var") {
+    const value = auth.envVar ? Bun.env[auth.envVar] : undefined;
+    if (!value) {
+      throw new QuestDomainError({
+        code: "quest_runner_unavailable",
+        details: { envVar: auth.envVar, workerId: worker.id },
+        message: `Environment variable ${auth.envVar} is not set for worker ${worker.id}`,
+        statusCode: 1,
+      });
+    }
+
+    return { [auth.targetEnvVar]: value };
+  }
+
+  if (!auth.secretRef) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: { workerId: worker.id },
+      message: `Worker ${worker.id} is missing a secret-store reference`,
+      statusCode: 1,
+    });
+  }
+
+  return { [auth.targetEnvVar]: await secretStore.getSecret(auth.secretRef) };
 }
 
 export class DryRunRunnerAdapter implements RunnerAdapter {
@@ -165,6 +253,120 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
         stdout.trim().length > 0
           ? stdout.trim()
           : `Local command completed slice ${context.slice.id}`,
+    };
+  }
+}
+
+export class CodexCliRunnerAdapter implements RunnerAdapter {
+  readonly name = "codex-cli";
+
+  constructor(private readonly secretStore: SecretStore) {}
+
+  supports(worker: RegisteredWorker): boolean {
+    return worker.backend.adapter === this.name;
+  }
+
+  async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
+    const executable = context.worker.backend.executable ?? "codex";
+    const outputPath = `${context.cwd}/.quest-runner/codex-last-message.txt`;
+    const prompt = buildQuestPrompt(context);
+    const authEnv = await resolveAuthEnv(context.worker, this.secretStore);
+    const { aborted, exitCode, stderr, stderrTruncated, stdout, stdoutTruncated, timedOut } =
+      await runSubprocess({
+        cmd: [
+          executable,
+          "exec",
+          "-C",
+          context.cwd,
+          "-m",
+          context.worker.backend.profile,
+          "-s",
+          "workspace-write",
+          // `codex exec` already runs non-interactively, so we stay on the flags it actually
+          // supports instead of carrying top-level approval options that make real runs fail.
+          "--skip-git-repo-check",
+          "--color",
+          "never",
+          "--ephemeral",
+          "--output-last-message",
+          outputPath,
+          "-",
+        ],
+        cwd: context.cwd,
+        env: buildProcessEnv({
+          ...context.worker.backend.env,
+          ...authEnv,
+          QUEST_RUN_ID: context.run.id,
+          QUEST_SLICE_ID: context.slice.id,
+          QUEST_WORKER_ID: context.worker.id,
+          QUEST_WORKSPACE: context.run.spec.workspace,
+          QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
+          QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
+        }),
+        signal: context.signal,
+        stdin: prompt,
+        timeoutMs: 20 * 60 * 1000,
+      });
+
+    if (timedOut) {
+      throw new QuestDomainError({
+        code: "quest_subprocess_timed_out",
+        details: {
+          executable,
+          workerId: context.worker.id,
+        },
+        message: `Codex execution timed out for ${context.worker.id}`,
+        statusCode: 1,
+      });
+    }
+
+    if (aborted || context.signal?.aborted) {
+      throw new QuestDomainError({
+        code: "quest_subprocess_aborted",
+        details: {
+          executable,
+          workerId: context.worker.id,
+        },
+        message: `Codex execution was aborted for ${context.worker.id}`,
+        statusCode: 1,
+      });
+    }
+
+    let summary = stdout.trim();
+    const outputFile = Bun.file(outputPath);
+    if (await outputFile.exists()) {
+      const lastMessage = (await outputFile.text()).trim();
+      if (lastMessage.length > 0) {
+        summary = lastMessage;
+      }
+    }
+
+    if (summary.length === 0) {
+      summary = `Codex completed slice ${context.slice.id}`;
+    }
+
+    if (exitCode !== 0) {
+      throw new QuestDomainError({
+        code: "quest_runner_command_failed",
+        details: {
+          command: [executable, "exec"],
+          exitCode,
+          stderr,
+          stderrTruncated,
+          stdout,
+          stdoutTruncated,
+          workerId: context.worker.id,
+        },
+        message: `Codex command failed for ${context.worker.id} with exit code ${exitCode}`,
+        statusCode: 1,
+      });
+    }
+
+    return {
+      exitCode,
+      stderr,
+      stdout,
+      summary,
     };
   }
 }
