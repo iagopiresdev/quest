@@ -11,29 +11,31 @@ CLI-first worker registry and quest planner for parallel agent execution.
 ## Commands
 
 ```sh
+bun run build
+
 # upsert a worker from stdin JSON
-cat worker.json | node dist/cli.js workers upsert --stdin
+cat worker.json | bun dist/cli.js workers upsert --stdin
 
 # list workers
-node dist/cli.js workers list
+bun dist/cli.js workers list
 
 # plan a quest from stdin JSON
-cat spec.json | node dist/cli.js plan --stdin
+cat spec.json | bun dist/cli.js plan --stdin
 
 # plan a quest from file
-node dist/cli.js plan --file ./spec.json
+bun dist/cli.js plan --file ./spec.json
 
 # create and persist a quest run
-cat spec.json | node dist/cli.js run --stdin
+cat spec.json | bun dist/cli.js run --stdin
 
 # list persisted quest runs
-node dist/cli.js runs list
+bun dist/cli.js runs list
 
 # inspect one persisted quest run
-node dist/cli.js runs status --id quest-abc12345-deadbeef
+bun dist/cli.js runs status --id quest-abc12345-deadbeef
 
 # execute a persisted run with the built-in dry-run adapter
-node dist/cli.js runs execute --id quest-abc12345-deadbeef --dry-run
+bun dist/cli.js runs execute --id quest-abc12345-deadbeef --dry-run
 ```
 
 ## State
@@ -65,8 +67,8 @@ Real runner adapters, git worktrees, tester lane, and integration are still pend
 ## Validation
 
 ```sh
-npm install
-npm run -s typecheck
-npm test
-npm run -s build
+bun install
+bun run typecheck
+bun run test
+bun run build
 ```
