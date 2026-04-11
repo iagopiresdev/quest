@@ -197,6 +197,9 @@ Calibration results are written back onto the worker record:
 # install a stable local quest command
 bun run install:local
 
+# bootstrap state paths and optionally create the first Codex worker
+quest setup --yes
+
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
 
@@ -236,11 +239,17 @@ quest workers list
 # plan a quest from stdin JSON
 cat spec.json | quest plan --stdin
 
+# plan using only one registered worker
+cat spec.json | quest plan --stdin --worker-id quest-codex
+
 # plan a quest from file
 quest plan --file ./spec.json
 
 # create and persist a quest run
 cat spec.json | quest run --stdin
+
+# force a run onto one registered worker
+cat spec.json | quest run --stdin --worker-id quest-codex
 
 # create a run that will materialize slice workspaces from a git repo
 cat spec.json | quest run --stdin --source-repo /abs/path/to/repo
@@ -288,6 +297,9 @@ quest runs abort --id quest-abc12345-deadbeef
 # create a fresh run from a prior run's spec
 quest runs rerun --id quest-abc12345-deadbeef
 
+# rerun a prior run but force a different worker
+quest runs rerun --id quest-abc12345-deadbeef --worker-id quest-codex
+
 # optional: compile a standalone Bun executable
 bun run build
 ./dist/quest runs list
@@ -328,7 +340,9 @@ Do not commit runtime state, tokens, or local config.
 ## Current v0 scope
 
 - typed worker registry
+- setup command for bootstrapping state paths and the first Codex worker
 - typed quest specs and conservative wave planning
+- explicit worker forcing for plan/run/rerun flows
 - persisted quest runs plus run events
 - dry-run execution path for exercising run state transitions
 - persisted slice output logs and basic control commands (`runs logs`, `runs abort`)

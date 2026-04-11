@@ -7,6 +7,7 @@ import {
   cleanupTempRoot,
   createCalibrationCommandScript,
   createCliContext,
+  createCodexMockExecutable,
   createCommand,
   createCommittedRepo,
   createLocalCommandWorkerJson,
@@ -111,6 +112,63 @@ test("quest cli adds a codex worker from flags", () => {
   const listed = runCli(context, ["workers", "list"]);
   expect(listed.code).toBe(0);
   expect(JSON.parse(listed.stdout).workers).toHaveLength(1);
+});
+
+test("quest cli setup bootstraps a codex worker from detected tooling", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
+
+  const setup = runCli(context, [
+    "setup",
+    "--yes",
+    "--codex-executable",
+    codexExecutable,
+    "--worker-name",
+    "Quest Codex",
+    "--profile",
+    "gpt-5.4-mini",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.doctor.ok).toBe(true);
+  expect(result.createdWorker.id).toBe("quest-codex");
+  expect(result.createdWorker.backend.adapter).toBe("codex-cli");
+  expect(result.workers).toHaveLength(1);
+});
+
+test("quest cli can force planning and runs to a specific worker", () => {
+  const context = trackContext();
+
+  expect(
+    runCli(context, ["workers", "upsert", "--stdin"], {
+      input: createWorkerJson({ id: "ember", name: "Ember" }),
+    }).code,
+  ).toBe(0);
+  expect(
+    runCli(context, ["workers", "upsert", "--stdin"], {
+      input: createWorkerJson({
+        id: "rook",
+        name: "Rook",
+        trust: { calibratedAt: "2026-04-11T00:00:00Z", rating: 0.2 },
+      }),
+    }).code,
+  ).toBe(0);
+
+  const plan = runCli(context, ["plan", "--worker-id", "rook", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Forced worker plan" })),
+  });
+  expect(plan.code).toBe(0);
+  expect(JSON.parse(plan.stdout).plan.waves[0].slices[0].assignedWorkerId).toBe("rook");
+
+  const run = runCli(context, ["run", "--worker-id", "rook", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Forced worker run" })),
+  });
+  expect(run.code).toBe(0);
+  const createdRun = JSON.parse(run.stdout).run;
+  expect(createdRun.plan.waves[0].slices[0].assignedWorkerId).toBe("rook");
+  expect(createdRun.spec.slices[0].preferredWorkerId).toBe("rook");
+  expect(createdRun.events[0].details.forcedWorkerId).toBe("rook");
 });
 
 test("quest cli configures webhook sinks and delivers run events", async () => {

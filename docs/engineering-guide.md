@@ -15,10 +15,13 @@ The project is small on purpose. The guidance below exists to keep it small, typ
 3. Plan parallel, integrate conservative.
    Execution may be parallel. Ownership, validation, and eventual integration must remain strict and inspectable.
 
-4. Treat agents as adapters.
+4. Operator overrides should compile down to normal domain inputs.
+   If the CLI offers setup defaults or forced worker routing, the persisted run/spec should still describe the real choice instead of hiding it in transport-only flags.
+
+5. Treat agents as adapters.
    OpenClaw, Hermes, Codex, Claude, and future backends belong behind runner interfaces. None of them should define the core domain model.
 
-5. Optimize for agents first.
+6. Optimize for agents first.
    CLI I/O must stay machine-readable. Errors must be structured. Side effects must be durable and easy to inspect from automation.
 
 ## System Design

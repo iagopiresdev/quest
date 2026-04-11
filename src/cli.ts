@@ -2,6 +2,7 @@
 
 import { unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 import { ZodError } from "zod";
 
@@ -65,6 +66,7 @@ type QuestCliCommand =
   | "secrets:delete"
   | "secrets:set"
   | "secrets:status"
+  | "setup"
   | "workers:add:codex"
   | "workers:calibrate"
   | "workers:list"
@@ -231,6 +233,39 @@ async function readJsonInput(args: string[]): Promise<unknown> {
   }
 
   throw new Error("Expected --file <path> or --stdin");
+}
+
+async function promptWithDefault(question: string, fallback: string): Promise<string> {
+  const cli = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    const answer = (await cli.question(`${question} [${fallback}]: `)).trim();
+    return answer.length > 0 ? answer : fallback;
+  } finally {
+    cli.close();
+  }
+}
+
+async function confirmWithDefault(question: string, fallback: boolean): Promise<boolean> {
+  const fallbackLabel = fallback ? "Y/n" : "y/N";
+  const cli = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    const answer = (await cli.question(`${question} [${fallbackLabel}]: `)).trim().toLowerCase();
+    if (answer.length === 0) {
+      return fallback;
+    }
+
+    return answer === "y" || answer === "yes";
+  } finally {
+    cli.close();
+  }
 }
 
 function buildCodexWorker(args: string[]): RegisteredWorker {
@@ -548,6 +583,131 @@ async function runDoctor(
   };
 }
 
+function checkOk(checks: DoctorCheck[], name: string): boolean {
+  return checks.find((check) => check.name === name)?.ok === true;
+}
+
+async function runSetup(
+  args: string[],
+  registry: WorkerRegistry,
+  secretStore: SecretStore,
+): Promise<Record<string, unknown>> {
+  const stateRoot = resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined);
+  const registryPath = resolveWorkerRegistryPath({
+    explicitRegistryPath: findOptionValue(args, "--registry") ?? undefined,
+    stateRoot,
+  });
+  const runsRoot = resolveQuestRunsRoot({
+    explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
+    stateRoot,
+  });
+  const workspacesRoot = resolveQuestWorkspacesRoot({
+    explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
+    stateRoot,
+  });
+  const calibrationsRoot = resolveQuestCalibrationsRoot({
+    explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
+    stateRoot,
+  });
+  const observabilityConfigPath = resolveQuestObservabilityConfigPath({
+    explicitObservabilityConfigPath: findOptionValue(args, "--observability-config") ?? undefined,
+    stateRoot,
+  });
+  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath({
+    explicitObservabilityDeliveriesPath:
+      findOptionValue(args, "--observability-deliveries") ?? undefined,
+    stateRoot,
+  });
+
+  const doctor = (await runDoctor(
+    args,
+    secretStore,
+    stateRoot,
+    calibrationsRoot,
+    observabilityConfigPath,
+    observabilityDeliveriesPath,
+    runsRoot,
+    workspacesRoot,
+    registryPath,
+  )) as {
+    checks: DoctorCheck[];
+    ok: boolean;
+  };
+
+  const shouldCreateWorker =
+    hasFlag(args, "--create-worker") ||
+    (!hasFlag(args, "--skip-worker") &&
+      checkOk(doctor.checks, "codex-binary") &&
+      checkOk(doctor.checks, "codex-login"));
+
+  const interactive = stdinIsTty() && !hasFlag(args, "--yes");
+  let createdWorker: RegisteredWorker | null = null;
+
+  if (shouldCreateWorker) {
+    let workerName = findOptionValue(args, "--worker-name") ?? "Codex Worker";
+    let profile = findOptionValue(args, "--profile") ?? "gpt-5.4";
+    let createWorker = true;
+
+    if (interactive) {
+      createWorker = await confirmWithDefault("Create a Codex worker now?", true);
+      if (createWorker) {
+        workerName = await promptWithDefault("Worker name", workerName);
+        profile = await promptWithDefault("Codex profile", profile);
+      }
+    }
+
+    if (createWorker) {
+      createdWorker = await registry.upsertWorker(
+        registeredWorkerSchema.parse(
+          buildCodexWorker([
+            "--name",
+            workerName,
+            "--profile",
+            profile,
+            "--auth-mode",
+            findOptionValue(args, "--auth-mode") ?? "native-login",
+            "--id",
+            findOptionValue(args, "--worker-id") ?? slugifyWorkerId(workerName),
+            ...(findOptionValue(args, "--title")
+              ? ["--title", findOptionValue(args, "--title") as string]
+              : []),
+            ...(findOptionValue(args, "--class")
+              ? ["--class", findOptionValue(args, "--class") as string]
+              : []),
+            ...(findOptionValue(args, "--voice")
+              ? ["--voice", findOptionValue(args, "--voice") as string]
+              : []),
+            ...(findOptionValue(args, "--approach")
+              ? ["--approach", findOptionValue(args, "--approach") as string]
+              : []),
+            ...(findOptionValue(args, "--prompt")
+              ? ["--prompt", findOptionValue(args, "--prompt") as string]
+              : []),
+            ...(findOptionValue(args, "--executable")
+              ? ["--executable", findOptionValue(args, "--executable") as string]
+              : []),
+          ]),
+        ),
+      );
+    }
+  }
+
+  return {
+    createdWorker,
+    doctor,
+    paths: {
+      calibrationsRoot,
+      observabilityConfigPath,
+      observabilityDeliveriesPath,
+      registryPath,
+      runsRoot,
+      stateRoot,
+      workspacesRoot,
+    },
+    workers: await registry.listWorkers(),
+  };
+}
+
 function writeJson(value: unknown): void {
   void Bun.write(Bun.stdout, `${JSON.stringify(value, null, 2)}\n`);
 }
@@ -599,6 +759,13 @@ function writeError(error: unknown): void {
 }
 
 const commandDefinitions: QuestCliCommandDefinition[] = [
+  {
+    id: "setup",
+    matches: (args) => args.length >= 1 && args[0] === "setup",
+    run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
+    usage:
+      "quest setup [--yes] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--codex-executable <path>] [--state-root <path>]",
+  },
   {
     id: "doctor",
     matches: (args) => args.length >= 1 && args[0] === "doctor",
@@ -815,9 +982,24 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "plan",
     run: async ({ args, registry }) => {
       const spec = questSpecSchema.parse(await readJsonInput(args));
-      return { plan: planQuest(spec, await registry.listWorkers()) };
+      const workerId = findOptionValue(args, "--worker-id");
+      const workers = await registry.listWorkers();
+      const plannedSpec = workerId
+        ? {
+            ...spec,
+            slices: spec.slices.map((slice) => ({ ...slice, preferredWorkerId: workerId })),
+          }
+        : spec;
+      const selectedWorkers = workerId
+        ? workers.filter((worker) => worker.id === workerId)
+        : workers;
+      if (workerId && selectedWorkers.length === 0) {
+        throw new Error(`Forced worker ${workerId} is not registered`);
+      }
+
+      return { plan: planQuest(plannedSpec, selectedWorkers) };
     },
-    usage: "quest plan --file <path> [--registry <path>]",
+    usage: "quest plan --file <path> [--worker-id <worker-id>] [--registry <path>]",
   },
   {
     id: "run",
@@ -826,12 +1008,13 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       const spec = questSpecSchema.parse(await readJsonInput(args));
       return {
         run: await runStore.createRun(spec, await registry.listWorkers(), {
+          forcedWorkerId: findOptionValue(args, "--worker-id") ?? undefined,
           sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
         }),
       };
     },
     usage:
-      "quest run --file <path> [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest run --file <path> [--worker-id <worker-id>] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:list",
@@ -876,13 +1059,14 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       const previousRun = await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>"));
       return {
         run: await runStore.createRun(previousRun.spec, await registry.listWorkers(), {
+          forcedWorkerId: findOptionValue(args, "--worker-id") ?? undefined,
           sourceRepositoryPath:
             findOptionValue(args, "--source-repo") ?? previousRun.sourceRepositoryPath,
         }),
       };
     },
     usage:
-      "quest runs rerun --id <run-id> [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest runs rerun --id <run-id> [--worker-id <worker-id>] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:execute",

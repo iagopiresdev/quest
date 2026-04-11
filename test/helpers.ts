@@ -113,6 +113,35 @@ export function createCalibrationCommandScript(root: string): string {
   return scriptPath;
 }
 
+export function createCodexMockExecutable(
+  root: string,
+  options: { loginOk?: boolean; version?: string } = {},
+): string {
+  const scriptPath = join(root, "codex-mock.sh");
+  const version = options.version ?? "codex 0.0.0-test";
+  const loginOk = options.loginOk ?? true;
+  writeFileSync(
+    scriptPath,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'if [ "$1" = "--version" ]; then',
+      `  printf '%s\\n' '${version}'`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "login" ] && [ "$2" = "status" ]; then',
+      loginOk ? "  printf 'logged in\\n'" : "  printf 'not logged in\\n' >&2",
+      loginOk ? "  exit 0" : "  exit 1",
+      "fi",
+      "printf 'unsupported codex mock command\\n' >&2",
+      "exit 1",
+      "",
+    ].join("\n"),
+    { encoding: "utf8", mode: 0o755 },
+  );
+  return scriptPath;
+}
+
 export function runCli(
   context: CliTestContext,
   args: string[],

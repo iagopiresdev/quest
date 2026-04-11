@@ -138,6 +138,41 @@ function hydrateWorkspacePaths(run: QuestRunDocument, workspacesRoot: string): Q
   return run;
 }
 
+function selectWorkersForRun(
+  workers: RegisteredWorker[],
+  forcedWorkerId?: string,
+): RegisteredWorker[] {
+  if (!forcedWorkerId) {
+    return workers;
+  }
+
+  const worker = workers.find((candidate) => candidate.id === forcedWorkerId) ?? null;
+  if (!worker?.enabled) {
+    throw new QuestDomainError({
+      code: "quest_worker_not_found",
+      details: { forcedWorkerId },
+      message: `Forced worker ${forcedWorkerId} is not registered or enabled`,
+      statusCode: 1,
+    });
+  }
+
+  return [worker];
+}
+
+function applyForcedWorkerToSpec(spec: QuestSpec, forcedWorkerId?: string): QuestSpec {
+  if (!forcedWorkerId) {
+    return spec;
+  }
+
+  return {
+    ...spec,
+    slices: spec.slices.map((slice) => ({
+      ...slice,
+      preferredWorkerId: forcedWorkerId,
+    })),
+  };
+}
+
 async function validateWorkspacePaths(
   run: QuestRunDocument,
   workspacesRoot: string,
@@ -182,15 +217,18 @@ export class QuestRunStore {
   async createRun(
     spec: QuestSpec,
     workers: RegisteredWorker[],
-    options: { sourceRepositoryPath?: string } = {},
+    options: { forcedWorkerId?: string; sourceRepositoryPath?: string } = {},
   ): Promise<QuestRunDocument> {
     const createdAt = nowIsoString();
-    const plan = planQuest(spec, workers);
+    const selectedWorkers = selectWorkersForRun(workers, options.forcedWorkerId);
+    const runSpec = applyForcedWorkerToSpec(spec, options.forcedWorkerId);
+    const plan = planQuest(runSpec, selectedWorkers);
     const runId = createQuestRunId();
     const events: QuestRunEvent[] = [
       {
         at: createdAt,
         details: {
+          forcedWorkerId: options.forcedWorkerId ?? null,
           unassignedCount: plan.unassigned.length,
           warningCount: plan.warnings.length,
           waveCount: plan.waves.length,
@@ -217,7 +255,7 @@ export class QuestRunStore {
       sourceRepositoryPath: options.sourceRepositoryPath
         ? resolve(options.sourceRepositoryPath)
         : undefined,
-      spec,
+      spec: runSpec,
       workspaceRoot: resolveRunWorkspaceRootForStore(runId, this.workspacesRoot),
     };
 
