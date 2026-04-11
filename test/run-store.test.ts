@@ -130,3 +130,31 @@ test("run store reports missing and invalid run documents as typed errors", asyn
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test("run store returns slice logs and supports aborting pending runs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root);
+
+  try {
+    const run = await store.createRun(createSpec(), [createWorker("ember")]);
+
+    const initialLogs = await store.getRunLogs(run.id);
+    expect(initialLogs.slices).toEqual([
+      {
+        sliceId: "parser",
+        status: "pending",
+        title: "Parser",
+        wave: 1,
+        lastError: undefined,
+        lastOutput: undefined,
+      },
+    ]);
+
+    const aborted = await store.abortRun(run.id);
+    expect(aborted.status).toBe("aborted");
+    expect(aborted.slices[0]?.status).toBe("aborted");
+    expect(aborted.events.some((event) => event.type === "run_aborted")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

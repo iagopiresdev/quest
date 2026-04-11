@@ -384,4 +384,94 @@ test("quest cli executes a planned run in dry-run mode", () => {
   const executedRun = JSON.parse(executed.stdout).run;
   expect(executedRun.status).toBe("completed");
   expect(executedRun.slices[0].status).toBe("completed");
+  expect(executedRun.slices[0].lastOutput.summary).toContain("Dry run completed slice");
+});
+
+test("quest cli returns logs and aborts a planned run", () => {
+  const context = createContext();
+  const workerJson = JSON.stringify({
+    id: "ember",
+    name: "Ember",
+    title: "Battle Engineer",
+    class: "engineer",
+    enabled: true,
+    backend: {
+      runner: "codex",
+      profile: "gpt-5.4",
+      adapter: "local-cli",
+      toolPolicy: { allow: ["git"], deny: [] },
+    },
+    persona: {
+      voice: "terse",
+      approach: "test-first",
+      prompt: "Keep diffs tight and explain tradeoffs briefly.",
+    },
+    stats: {
+      coding: 82,
+      testing: 77,
+      docs: 44,
+      research: 51,
+      speed: 63,
+      mergeSafety: 79,
+      contextEndurance: 58,
+    },
+    resources: {
+      cpuCost: 2,
+      memoryCost: 3,
+      gpuCost: 0,
+      maxParallel: 1,
+    },
+    trust: {
+      rating: 0.74,
+      calibratedAt: "2026-04-10T00:00:00Z",
+    },
+    progression: {
+      level: 7,
+      xp: 1840,
+    },
+    tags: ["typescript"],
+  });
+
+  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+
+  const created = runCli(
+    context,
+    ["run", "--stdin"],
+    {
+      input: JSON.stringify({
+        version: 1,
+        title: "Abort quest run",
+        workspace: "command-center",
+        maxParallel: 1,
+        acceptanceChecks: [],
+        hotspots: [],
+        featureDoc: { enabled: false },
+        slices: [
+          {
+            id: "parser",
+            title: "Parser",
+            goal: "Implement parser validation",
+            discipline: "coding",
+            owns: ["src/security/url.ts"],
+            dependsOn: [],
+            acceptanceChecks: [],
+            contextHints: [],
+          },
+        ],
+      }),
+    },
+  );
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const logs = runCli(context, ["runs", "logs", "--id", runId]);
+  expect(logs.code).toBe(0);
+  const initialLogs = JSON.parse(logs.stdout).logs;
+  expect(initialLogs.slices[0].status).toBe("pending");
+
+  const aborted = runCli(context, ["runs", "abort", "--id", runId]);
+  expect(aborted.code).toBe(0);
+  const abortedRun = JSON.parse(aborted.stdout).run;
+  expect(abortedRun.status).toBe("aborted");
+  expect(abortedRun.slices[0].status).toBe("aborted");
 });

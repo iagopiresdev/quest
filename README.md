@@ -35,6 +35,12 @@ bun ./src/cli.ts runs status --id quest-abc12345-deadbeef
 # execute a persisted run with the built-in dry-run adapter
 bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --dry-run
 
+# inspect persisted slice logs/output
+bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
+
+# abort a pending or running run
+bun ./src/cli.ts runs abort --id quest-abc12345-deadbeef
+
 # optional: compile a standalone Bun executable
 bun run build
 ./dist/quest runs list
@@ -63,6 +69,7 @@ Do not commit runtime state, tokens, or local config.
 - typed quest specs and conservative wave planning
 - persisted quest runs plus run events
 - dry-run execution path for exercising run state transitions
+- persisted slice output logs and basic control commands (`runs logs`, `runs abort`)
 
 Real runner adapters, git worktrees, tester lane, and integration are still pending.
 

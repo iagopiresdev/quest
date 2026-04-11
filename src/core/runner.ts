@@ -4,6 +4,9 @@ import { type QuestSliceSpec } from "./spec-schema";
 import { type RegisteredWorker } from "./worker-schema";
 
 export type RunnerExecutionResult = {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
   summary: string;
 };
 
@@ -29,6 +32,9 @@ export class DryRunRunnerAdapter implements RunnerAdapter {
 
   async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
     return {
+      exitCode: 0,
+      stderr: "",
+      stdout: "",
       summary: `Dry run completed slice ${context.slice.id} with worker ${context.worker.id}`,
     };
   }

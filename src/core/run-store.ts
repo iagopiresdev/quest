@@ -25,6 +25,18 @@ export type QuestRunSummary = Pick<QuestRunDocument, "createdAt" | "id" | "statu
   workspace: string;
 };
 
+export type QuestRunLogView = {
+  runId: string;
+  slices: Array<{
+    sliceId: string;
+    status: QuestRunSliceState["status"];
+    title: string;
+    wave: number;
+    lastError?: string;
+    lastOutput?: QuestRunSliceState["lastOutput"];
+  }>;
+};
+
 function nowIsoString(): string {
   return new Date().toISOString();
 }
@@ -195,5 +207,70 @@ export class QuestRunStore {
 
     await writeJsonFileAtomically(resolveQuestRunPath(run.id, { explicitRunsRoot: this.runsRoot }), parsed.data);
     return parsed.data;
+  }
+
+  async abortRun(runId: string): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+
+    if (run.status === "completed" || run.status === "failed") {
+      throw new QuestDomainError({
+        code: "quest_run_not_abortable",
+        details: { runId, status: run.status },
+        message: `Quest run ${runId} cannot be aborted from status ${run.status}`,
+        statusCode: 1,
+      });
+    }
+
+    if (run.status === "aborted") {
+      return run;
+    }
+
+    const eventAt = nowIsoString();
+    run.status = "aborted";
+
+    run.slices.forEach((slice) => {
+      if (slice.status === "completed" || slice.status === "failed" || slice.status === "blocked") {
+        return;
+      }
+
+      slice.status = "aborted";
+      slice.completedAt = eventAt;
+      slice.lastError = "Run aborted";
+      run.events.push({
+        at: eventAt,
+        details: {
+          sliceId: slice.sliceId,
+          workerId: slice.assignedWorkerId,
+        },
+        type: "slice_aborted",
+      });
+    });
+
+    run.events.push({
+      at: eventAt,
+      details: { runId },
+      type: "run_aborted",
+    });
+    run.updatedAt = eventAt;
+    return this.saveRun(run);
+  }
+
+  async getRunLogs(runId: string, sliceId?: string): Promise<QuestRunLogView> {
+    const run = await this.getRun(runId);
+    const filteredSlices = sliceId
+      ? run.slices.filter((slice) => slice.sliceId === sliceId)
+      : run.slices;
+
+    return {
+      runId: run.id,
+      slices: filteredSlices.map((slice) => ({
+        sliceId: slice.sliceId,
+        status: slice.status,
+        title: slice.title,
+        wave: slice.wave,
+        lastError: slice.lastError,
+        lastOutput: slice.lastOutput,
+      })),
+    };
   }
 }

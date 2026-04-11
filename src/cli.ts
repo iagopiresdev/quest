@@ -14,7 +14,9 @@ import { registeredWorkerSchema } from "./core/worker-schema";
 type QuestCliCommand =
   | "plan"
   | "run"
+  | "runs:abort"
   | "runs:execute"
+  | "runs:logs"
   | "runs:list"
   | "runs:status"
   | "workers:list"
@@ -32,7 +34,9 @@ function printUsage(): void {
       "  quest run --stdin [--registry <path>] [--runs-root <path>] [--state-root <path>]",
       "  quest plan --file <path> [--registry <path>]",
       "  quest plan --stdin [--registry <path>]",
+      "  quest runs abort --id <run-id> [--runs-root <path>] [--state-root <path>]",
       "  quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+      "  quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
       "  quest runs list [--runs-root <path>] [--state-root <path>]",
       "  quest runs status --id <run-id> [--runs-root <path>] [--state-root <path>]",
       "",
@@ -70,8 +74,16 @@ function resolveCommand(args: string[]): QuestCliCommand | null {
     return "runs:list";
   }
 
+  if (args.length >= 2 && args[0] === "runs" && args[1] === "abort") {
+    return "runs:abort";
+  }
+
   if (args.length >= 2 && args[0] === "runs" && args[1] === "execute") {
     return "runs:execute";
+  }
+
+  if (args.length >= 2 && args[0] === "runs" && args[1] === "logs") {
+    return "runs:logs";
   }
 
   if (args.length >= 2 && args[0] === "runs" && args[1] === "status") {
@@ -222,6 +234,16 @@ async function main(): Promise<number> {
       return 0;
     }
 
+    if (command === "runs:abort") {
+      const runId = findOptionValue(args, "--id");
+      if (!runId) {
+        throw new Error("Expected --id <run-id>");
+      }
+
+      writeJson({ run: await runStore.abortRun(runId) });
+      return 0;
+    }
+
     if (command === "runs:execute") {
       const runId = findOptionValue(args, "--id");
       if (!runId) {
@@ -232,6 +254,18 @@ async function main(): Promise<number> {
         run: await runExecutor.executeRun(runId, {
           dryRun: hasFlag(args, "--dry-run"),
         }),
+      });
+      return 0;
+    }
+
+    if (command === "runs:logs") {
+      const runId = findOptionValue(args, "--id");
+      if (!runId) {
+        throw new Error("Expected --id <run-id>");
+      }
+
+      writeJson({
+        logs: await runStore.getRunLogs(runId, findOptionValue(args, "--slice") ?? undefined),
       });
       return 0;
     }

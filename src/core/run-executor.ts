@@ -31,6 +31,15 @@ function requireExecutableRun(run: QuestRunDocument): void {
       statusCode: 1,
     });
   }
+
+  if (run.status === "aborted") {
+    throw new QuestDomainError({
+      code: "quest_run_not_executable",
+      details: { runId: run.id, status: run.status },
+      message: `Quest run ${run.id} is aborted and cannot be executed`,
+      statusCode: 1,
+    });
+  }
 }
 
 function findSliceState(run: QuestRunDocument, sliceId: string): QuestRunSliceState {
@@ -141,6 +150,12 @@ export class QuestRunExecutor {
           const eventAt = nowIsoString();
           sliceState.completedAt = eventAt;
           sliceState.lastError = undefined;
+          sliceState.lastOutput = {
+            exitCode: result.exitCode,
+            stderr: result.stderr,
+            stdout: result.stdout,
+            summary: result.summary,
+          };
           sliceState.status = "completed";
           appendEvent(run, {
             at: eventAt,
@@ -173,6 +188,7 @@ export class QuestRunExecutor {
       activeSliceStates.forEach((sliceState) => {
         sliceState.completedAt = eventAt;
         sliceState.lastError = error instanceof Error ? error.message : String(error);
+        sliceState.lastOutput = undefined;
         sliceState.status = "failed";
         appendEvent(run, {
           at: eventAt,

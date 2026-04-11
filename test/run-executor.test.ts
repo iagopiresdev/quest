@@ -97,6 +97,8 @@ test("run executor completes a planned run in dry-run mode", async () => {
     expect(
       executed.slices.every((slice) => slice.status === "completed"),
     ).toBe(true);
+    expect(executed.slices[0]?.lastOutput?.summary).toContain("Dry run completed slice");
+    expect(executed.slices[0]?.lastOutput?.exitCode).toBe(0);
     expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
     expect(executed.events.some((event) => event.type === "run_completed")).toBe(true);
   } finally {
