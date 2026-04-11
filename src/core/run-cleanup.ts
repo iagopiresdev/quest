@@ -15,6 +15,8 @@ function requireCleanupableRun(run: QuestRunDocument): void {
   }
 
   if (run.sourceRepositoryPath && !run.events.some((event) => event.type === "run_integrated")) {
+    // Source-backed runs still need their slice worktrees to freeze and replay results into the
+    // integration workspace, so cleanup must not delete them before integration completes.
     throw new QuestDomainError({
       code: "quest_run_not_cleanupable",
       details: { runId: run.id, status: run.status },

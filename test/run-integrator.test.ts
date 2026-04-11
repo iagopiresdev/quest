@@ -206,6 +206,50 @@ test("run integrator rejects resuming against a different target ref", async () 
   }
 });
 
+test("run integrator rejects resuming when the target ref name is unchanged but now points elsewhere", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    await executor.executeRun(run.id);
+    await integrator.integrateRun(run.id, { targetRef: "HEAD" });
+
+    writeFileSync(join(repositoryRoot, "tracked.txt"), "new-head-change\n", "utf8");
+    runCommandOrThrow(["git", "add", "tracked.txt"], repositoryRoot);
+    runCommandOrThrow(["git", "commit", "-m", "Move HEAD forward"], repositoryRoot);
+
+    const resumedRun = await runStore.getRun(run.id);
+    resumedRun.events = resumedRun.events.filter((event) => event.type !== "run_integrated");
+    await runStore.saveRun(resumedRun);
+
+    try {
+      await integrator.integrateRun(run.id, { targetRef: "HEAD" });
+      throw new Error("Expected quest_integration_failed");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_integration_failed");
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run integrator resumes from an existing clean integration workspace", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
   const repositoryRoot = createCommittedRepo(root);

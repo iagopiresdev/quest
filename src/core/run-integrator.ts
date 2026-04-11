@@ -172,6 +172,8 @@ async function prepareIntegrationWorkspace(
   await assertWorkspacePathWithinRoot(workspaceRoot, workspacePath, "Integration workspace");
 
   if (await directoryHasEntries(workspacePath)) {
+    // Resume is only safe when we can prove we're continuing against the same target intent and
+    // the same base revision. Reusing a clean but differently-targeted worktree is still wrong.
     if (run.targetRef && run.targetRef !== targetRef) {
       throw new QuestDomainError({
         code: "quest_integration_failed",

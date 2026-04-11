@@ -457,8 +457,115 @@ test("run executor fails when acceptance checks fail", async () => {
     expect(failedRun.status).toBe("failed");
     expect(failedRun.slices[0]?.status).toBe("failed");
     expect(failedRun.slices[0]?.lastChecks?.[0]?.exitCode).toBe(3);
+    expect(failedRun.slices[0]?.lastOutput?.summary).toContain("Acceptance check failed");
+    expect(failedRun.slices.some((slice) => slice.status === "testing")).toBe(false);
     expect(failedRun.events.some((event) => event.type === "slice_testing_failed")).toBe(true);
   } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor filters ambient env for workers but preserves explicit worker env", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const previousSecret = Bun.env.QUEST_RUNNER_SECRET_TEST;
+
+  try {
+    Bun.env.QUEST_RUNNER_SECRET_TEST = "top-secret";
+    const scriptPath = join(root, "worker-env.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "const inherited = process.env.QUEST_RUNNER_SECRET_TEST ?? 'missing';",
+        "const explicit = process.env.WORKER_FLAG ?? 'missing';",
+        "await Bun.write(Bun.stdout, inherited + ':' + explicit);",
+      ].join("\n"),
+    );
+
+    const workerWithEnv = createWorker("ember", "local-command", ["bun", scriptPath]);
+    workerWithEnv.backend.env = { WORKER_FLAG: "enabled" };
+    await workerRegistry.upsertWorker(workerWithEnv);
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+
+    expect(executed.slices[0]?.lastOutput?.stdout).toBe("missing:enabled");
+  } finally {
+    if (previousSecret === undefined) {
+      delete Bun.env.QUEST_RUNNER_SECRET_TEST;
+    } else {
+      Bun.env.QUEST_RUNNER_SECRET_TEST = previousSecret;
+    }
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor passes explicit env into acceptance checks without leaking ambient env", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const previousSecret = Bun.env.QUEST_RUNNER_SECRET_TEST;
+
+  try {
+    Bun.env.QUEST_RUNNER_SECRET_TEST = "top-secret";
+    const scriptPath = join(root, "worker-success.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "const input = JSON.parse(await Bun.stdin.text());",
+        "await Bun.write(Bun.stdout, 'completed:' + input.slice.id + ':' + input.worker.id);",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [
+            createCommand(
+              [
+                "bun",
+                "-e",
+                "process.exit(process.env.CHECK_FLAG === 'yes' && process.env.QUEST_RUNNER_SECRET_TEST === undefined ? 0 : 6)",
+              ],
+              { CHECK_FLAG: "yes" },
+            ),
+          ],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
+          title: "Parser",
+        },
+      ],
+      title: "Checks env pass",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastChecks?.[0]?.exitCode).toBe(0);
+  } finally {
+    if (previousSecret === undefined) {
+      delete Bun.env.QUEST_RUNNER_SECRET_TEST;
+    } else {
+      Bun.env.QUEST_RUNNER_SECRET_TEST = previousSecret;
+    }
     rmSync(root, { force: true, recursive: true });
   }
 });

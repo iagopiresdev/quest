@@ -37,6 +37,8 @@ export function buildProcessEnv(
 ): Record<string, string> {
   const baseEnv: Record<string, ProcessEnvValue> = {};
 
+  // Worker and git subprocesses should not inherit the caller's full environment by default.
+  // Keeping this allowlist narrow reduces accidental secret leakage and ambient behavior drift.
   for (const key of ALLOWED_HOST_ENV_KEYS) {
     baseEnv[key] = Bun.env[key];
   }

@@ -19,6 +19,8 @@ async function resolveExistingPath(path: string): Promise<string> {
   while (true) {
     try {
       const resolvedExistingPath = await realpath(currentPath);
+      // Canonicalize through the nearest existing ancestor so paths under /tmp and /private/tmp
+      // compare consistently even before the final child path exists on disk.
       return suffix.length === 0
         ? resolvedExistingPath
         : join(resolvedExistingPath, ...suffix.reverse());

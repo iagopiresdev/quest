@@ -87,6 +87,7 @@ Preferred patterns:
 - Schema-first validation with `zod`.
 - Narrow orchestration methods that delegate repeated state mutation to shared helpers.
 - Explicit domain errors with stable `code` values.
+- Sparse comments that explain why a boundary or invariant exists, not what the next line of code does.
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 
@@ -97,6 +98,7 @@ Avoid:
 - Throwing generic `Error` for domain failures that need structured output.
 - Adding framework-level dependencies for problems a small helper can solve.
 - Letting adapters leak into the core data model.
+- Comments that restate the code without adding the operational reason behind it.
 
 ## Typing Rules
 
@@ -249,6 +251,7 @@ Rules:
 - CLI tests should verify the stable JSON contract
 - executor tests should cover both success and failure state persistence
 - storage tests should assert typed error behavior for missing or invalid files
+- process and workspace boundary code should have direct unit coverage for edge cases like timeouts, truncation, env filtering, path canonicalization, and tampered persisted state
 
 Add tests for:
 
@@ -256,6 +259,7 @@ Add tests for:
 - new run or slice statuses
 - new adapter behavior
 - migration-sensitive persisted shapes
+- boundary failures that would otherwise only show up under real subprocess, filesystem, or git state
 
 ## File And Package Layout
 

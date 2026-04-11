@@ -193,3 +193,31 @@ test("run store rejects tampered workspace paths outside the configured workspac
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test("run store rejects tampered integration workspaces outside the run root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const store = new QuestRunStore(runsRoot, workspacesRoot);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    const runPath = join(runsRoot, `${run.id}.json`);
+    const rawRun = JSON.parse(readFileSync(runPath, "utf8")) as Record<string, unknown>;
+
+    rawRun.integrationWorkspacePath = "/tmp/quest-runner-evil/integration";
+    writeFileSync(runPath, `${JSON.stringify(rawRun, null, 2)}\n`, "utf8");
+
+    try {
+      await store.getRun(run.id);
+      throw new Error("Expected quest_workspace_materialization_failed");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_workspace_materialization_failed");
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

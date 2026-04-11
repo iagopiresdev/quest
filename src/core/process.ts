@@ -31,6 +31,8 @@ async function readPipe(
       continue;
     }
 
+    // Capping captured output keeps one noisy worker or git command from bloating run state
+    // enough to destabilize the orchestrator itself.
     if (totalBytes < maxBytes) {
       const remaining = maxBytes - totalBytes;
       if (value.byteLength <= remaining) {
@@ -91,6 +93,8 @@ export async function runSubprocess(options: {
   };
 
   options.signal?.addEventListener("abort", abortListener, { once: true });
+  // Timeouts are enforced in the helper so every caller gets the same failure mode instead of
+  // sprinkling ad hoc watchdog logic across adapters and git flows.
   const timeout =
     options.timeoutMs === undefined
       ? null

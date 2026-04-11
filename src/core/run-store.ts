@@ -142,6 +142,8 @@ async function validateWorkspacePaths(
   run: QuestRunDocument,
   workspacesRoot: string,
 ): Promise<QuestRunDocument> {
+  // Run JSON is persisted local state, not trusted code. Validate paths on load/save so a tampered
+  // document cannot trick cleanup or integration into walking outside the managed workspace tree.
   const workspaceRoot =
     run.workspaceRoot ?? resolveRunWorkspaceRootForStore(run.id, workspacesRoot);
   run.workspaceRoot = await assertWorkspacePathWithinRoot(
