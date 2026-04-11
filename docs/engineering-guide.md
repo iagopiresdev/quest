@@ -58,6 +58,9 @@ Current architectural layers:
 - `src/core/observability-*`
   Event schemas, sink config, delivery logs, and dispatch. This layer observes run state; it must not become a second execution path.
 
+- `src/core/observability/sinks/*`
+  Sink-specific schemas and delivery handlers. Telegram, webhook, and future sinks should live here instead of expanding the dispatcher file.
+
 - `src/core/run-lifecycle.ts`
   Shared lifecycle helpers for run and slice state mutation.
 
@@ -203,6 +206,7 @@ Future observability work should prefer:
 - sinks built on the same event model instead of sink-specific branching inside executors
 - delivery records that keep the exact payload snapshot needed for audit and safe replay
 - typed sink definitions so new integrations extend the sink union instead of rewriting config storage
+- sink-specific delivery handlers registered into the dispatcher instead of a growing sink-type switch
 
 When adding model-backed runners that are not local CLIs:
 - keep the external API call separate from the local file-application step

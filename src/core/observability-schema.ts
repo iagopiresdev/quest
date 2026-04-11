@@ -1,91 +1,35 @@
 import { z } from "zod";
 
+import {
+  type ObservableCalibrationEventType,
+  type ObservableEventType,
+  type ObservableRunEventType,
+  observableCalibrationEventTypeSchema,
+  observableEventTypeSchema,
+  observableRunEventTypeSchema,
+} from "./observability/event-types";
+import { sinkSchemas, telegramSinkSchema, webhookSinkSchema } from "./observability/sinks";
+import { nonEmptyString } from "./observability/sinks/schema-helpers";
+import type { TelegramSink } from "./observability/sinks/telegram-sink";
+import type { WebhookSink } from "./observability/sinks/webhook-sink";
 import type { QuestRunDocument, QuestRunEvent } from "./run-schema";
 
-const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
-const urlSchema = z.url().max(400);
-const secretRefSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/);
-
-export const observableRunEventTypeSchema = z.enum([
-  "run_created",
-  "run_blocked",
-  "run_started",
-  "run_completed",
-  "run_failed",
-  "run_aborted",
-  "run_integration_started",
-  "run_integration_checks_started",
-  "run_integration_checks_completed",
-  "run_integration_checks_failed",
-  "run_integrated",
-  "run_workspace_cleaned",
-  "slice_started",
-  "slice_integrated",
-  "slice_testing_started",
-  "slice_testing_completed",
-  "slice_testing_failed",
-  "slice_completed",
-  "slice_failed",
-  "slice_aborted",
-]);
-export type ObservableRunEventType = z.infer<typeof observableRunEventTypeSchema>;
-
-export const observableCalibrationEventTypeSchema = z.enum(["worker_calibration_recorded"]);
-export type ObservableCalibrationEventType = z.infer<typeof observableCalibrationEventTypeSchema>;
-
-export const observableEventTypeSchema = z.union([
-  observableRunEventTypeSchema,
+export type {
+  ObservableCalibrationEventType,
+  ObservableEventType,
+  ObservableRunEventType,
+  TelegramSink,
+  WebhookSink,
+};
+export {
   observableCalibrationEventTypeSchema,
-]);
-export type ObservableEventType = z.infer<typeof observableEventTypeSchema>;
-
-export const webhookSinkSchema = z
-  .object({
-    enabled: z.boolean().default(true),
-    eventTypes: z.array(observableEventTypeSchema).max(64).default([]),
-    headers: z.record(z.string(), nonEmptyString(400)).default({}),
-    id: nonEmptyString(80),
-    secretHeader: nonEmptyString(120).optional(),
-    secretRef: nonEmptyString(80).optional(),
-    type: z.literal("webhook"),
-    url: urlSchema,
-  })
-  .strict();
-export type WebhookSink = z.infer<typeof webhookSinkSchema>;
-
-export const telegramSinkSchema = z
-  .object({
-    apiBaseUrl: urlSchema.optional(),
-    botTokenEnv: nonEmptyString(120).optional(),
-    botTokenSecretRef: secretRefSchema.optional(),
-    chatId: nonEmptyString(120),
-    disableNotification: z.boolean().default(false),
-    enabled: z.boolean().default(true),
-    eventTypes: z.array(observableEventTypeSchema).max(64).default([]),
-    id: nonEmptyString(80),
-    messageThreadId: z.number().int().min(1).optional(),
-    parseMode: z.enum(["Markdown", "MarkdownV2", "HTML"]).optional(),
-    type: z.literal("telegram"),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (!value.botTokenEnv && !value.botTokenSecretRef) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "telegram sink requires botTokenEnv or botTokenSecretRef",
-        path: ["botTokenEnv"],
-      });
-    }
-  });
-export type TelegramSink = z.infer<typeof telegramSinkSchema>;
-
-export const observabilitySinkSchema = z.discriminatedUnion("type", [
-  webhookSinkSchema,
+  observableEventTypeSchema,
+  observableRunEventTypeSchema,
   telegramSinkSchema,
-]);
+  webhookSinkSchema,
+};
+
+export const observabilitySinkSchema = z.discriminatedUnion("type", [...sinkSchemas]);
 export type ObservabilitySink = z.infer<typeof observabilitySinkSchema>;
 
 export const observabilityConfigSchema = z
