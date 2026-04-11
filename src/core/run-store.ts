@@ -1,0 +1,198 @@
+import { randomBytes } from "node:crypto";
+import { readdir } from "node:fs/promises";
+
+import { QuestDomainError } from "./errors";
+import { planQuest } from "./planner";
+import {
+  questRunDocumentSchema,
+  type QuestRunDocument,
+  type QuestRunEvent,
+  type QuestRunSliceState,
+} from "./run-schema";
+import { type QuestSpec } from "./spec-schema";
+import {
+  readJsonFileOrDefault,
+  resolveQuestRunPath,
+  resolveQuestRunsRoot,
+  writeJsonFileAtomically,
+} from "./storage";
+import { type RegisteredWorker } from "./worker-schema";
+
+export type QuestRunSummary = Pick<QuestRunDocument, "createdAt" | "id" | "status" | "updatedAt"> & {
+  questTitle: string;
+  unassignedCount: number;
+  warningCount: number;
+  waveCount: number;
+  workspace: string;
+};
+
+function nowIsoString(): string {
+  return new Date().toISOString();
+}
+
+function createQuestRunId(): string {
+  const timePart = Date.now().toString(36).slice(-8).padStart(8, "0");
+  const randomPart = randomBytes(4).toString("hex");
+  return `quest-${timePart}-${randomPart}`;
+}
+
+function summarizeRun(run: QuestRunDocument): QuestRunSummary {
+  return {
+    createdAt: run.createdAt,
+    id: run.id,
+    questTitle: run.spec.title,
+    status: run.status,
+    unassignedCount: run.plan.unassigned.length,
+    updatedAt: run.updatedAt,
+    warningCount: run.plan.warnings.length,
+    waveCount: run.plan.waves.length,
+    workspace: run.spec.workspace,
+  };
+}
+
+function buildInitialSliceStates(run: Pick<QuestRunDocument, "plan" | "spec">): QuestRunSliceState[] {
+  const scheduledSlices = run.plan.waves.flatMap((wave) =>
+    wave.slices.map<QuestRunSliceState>((slice) => ({
+      assignedRunner: slice.assignedRunner,
+      assignedWorkerId: slice.assignedWorkerId,
+      sliceId: slice.id,
+      status: "pending",
+      title: slice.title,
+      wave: slice.wave,
+    })),
+  );
+
+  const blockedSlices = run.plan.unassigned.map<QuestRunSliceState>((slice) => ({
+    assignedRunner: null,
+    assignedWorkerId: null,
+    lastError: slice.message,
+    sliceId: slice.id,
+    status: "blocked",
+    title: slice.title,
+    wave: 0,
+  }));
+
+  const orderedSliceIds = run.spec.slices.map((slice) => slice.id);
+  const allSlices = [...scheduledSlices, ...blockedSlices];
+  return allSlices.sort(
+    (left, right) => orderedSliceIds.indexOf(left.sliceId) - orderedSliceIds.indexOf(right.sliceId),
+  );
+}
+
+export class QuestRunStore {
+  constructor(
+    private readonly runsRoot: string = resolveQuestRunsRoot(),
+  ) {}
+
+  async createRun(spec: QuestSpec, workers: RegisteredWorker[]): Promise<QuestRunDocument> {
+    const createdAt = nowIsoString();
+    const plan = planQuest(spec, workers);
+    const events: QuestRunEvent[] = [
+      {
+        at: createdAt,
+        details: {
+          unassignedCount: plan.unassigned.length,
+          warningCount: plan.warnings.length,
+          waveCount: plan.waves.length,
+        },
+        type: "run_created",
+      },
+    ];
+
+    if (plan.unassigned.length > 0) {
+      events.push({
+        at: createdAt,
+        details: {
+          sliceIds: plan.unassigned.map((slice) => slice.id),
+        },
+        type: "run_blocked",
+      });
+    }
+
+    const runBase = {
+      createdAt,
+      events,
+      id: createQuestRunId(),
+      plan,
+      spec,
+    };
+
+    const run: QuestRunDocument = {
+      ...runBase,
+      slices: buildInitialSliceStates(runBase),
+      status: plan.unassigned.length > 0 ? "blocked" : "planned",
+      updatedAt: createdAt,
+      version: 1,
+    };
+
+    return this.saveRun(run);
+  }
+
+  async getRun(runId: string): Promise<QuestRunDocument> {
+    const path = resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot });
+    const rawDocument = await readJsonFileOrDefault<QuestRunDocument | null>(path, null);
+    if (rawDocument === null) {
+      throw new QuestDomainError({
+        code: "quest_run_not_found",
+        details: { runId },
+        message: `Quest run ${runId} was not found`,
+        statusCode: 1,
+      });
+    }
+
+    const parsed = questRunDocumentSchema.safeParse(rawDocument);
+    if (!parsed.success) {
+      throw new QuestDomainError({
+        code: "invalid_quest_run",
+        details: parsed.error.flatten(),
+        message: `Quest run ${runId} is invalid`,
+        statusCode: 1,
+      });
+    }
+
+    return parsed.data;
+  }
+
+  async listRuns(): Promise<QuestRunSummary[]> {
+    let entries: string[];
+
+    try {
+      entries = await readdir(this.runsRoot);
+    } catch (error: unknown) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+        return [];
+      }
+
+      throw new QuestDomainError({
+        code: "quest_storage_failure",
+        details: { path: this.runsRoot, reason: error instanceof Error ? error.message : String(error) },
+        message: `Failed to list quest runs from ${this.runsRoot}`,
+        statusCode: 1,
+      });
+    }
+
+    const runIds = entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map((entry) => entry.slice(0, -".json".length));
+
+    const runs = await Promise.all(runIds.map((runId) => this.getRun(runId)));
+    return runs
+      .map(summarizeRun)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  async saveRun(run: QuestRunDocument): Promise<QuestRunDocument> {
+    const parsed = questRunDocumentSchema.safeParse(run);
+    if (!parsed.success) {
+      throw new QuestDomainError({
+        code: "invalid_quest_run",
+        details: parsed.error.flatten(),
+        message: `Quest run ${run.id} is invalid`,
+        statusCode: 1,
+      });
+    }
+
+    await writeJsonFileAtomically(resolveQuestRunPath(run.id, { explicitRunsRoot: this.runsRoot }), parsed.data);
+    return parsed.data;
+  }
+}

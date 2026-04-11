@@ -1,0 +1,28 @@
+{
+  "name": "quest-runner",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "CLI-first worker registry and quest planner for parallel agent execution",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "quest": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "quest": "npm run -s build && node dist/cli.js",
+    "test": "node --import ./node_modules/tsx/dist/loader.mjs --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "esbuild": "^0.27.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.7.3"
+  }
+}
