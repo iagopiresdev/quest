@@ -10,10 +10,11 @@ import type { QuestSpec } from "../src/core/spec-schema";
 import { WorkerRegistry } from "../src/core/worker-registry";
 import type { RegisteredWorker } from "../src/core/worker-schema";
 
-function createWorker(id: string, adapter = "local-cli"): RegisteredWorker {
+function createWorker(id: string, adapter = "local-cli", command?: string[]): RegisteredWorker {
   return {
     backend: {
       adapter,
+      command,
       profile: "gpt-5.4",
       runner: "codex",
       toolPolicy: { allow: [], deny: [] },
@@ -101,6 +102,118 @@ test("run executor completes a planned run in dry-run mode", async () => {
     expect(executed.slices[0]?.lastOutput?.exitCode).toBe(0);
     expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
     expect(executed.events.some((event) => event.type === "run_completed")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor completes a planned run with the local-command adapter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-success.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "const input = JSON.parse(await Bun.stdin.text());",
+        "await Bun.write(Bun.stdout, `completed:${input.slice.id}:${input.worker.id}`);",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
+          title: "Parser",
+        },
+      ],
+      title: "Local command run",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.stdout).toContain("completed:parser:ember");
+    expect(executed.slices[0]?.lastOutput?.exitCode).toBe(0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor records failure for a failing local-command adapter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-fail.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "await Bun.write(Bun.stderr, 'boom');",
+        "process.exit(2);",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
+          title: "Parser",
+        },
+      ],
+      title: "Local command failure",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_runner_unavailable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+    }
+
+    const failedRun = await runStore.getRun(run.id);
+    expect(failedRun.status).toBe("failed");
+    expect(failedRun.slices[0]?.status).toBe("failed");
+    expect(failedRun.slices[0]?.lastError).toContain("exit code 2");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

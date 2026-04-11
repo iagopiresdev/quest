@@ -36,6 +36,8 @@ export const workerResourceSchema = z
 export const workerBackendSchema = z
   .object({
     adapter: nonEmptyString(80),
+    command: z.array(nonEmptyString(240)).min(1).max(24).optional(),
+    env: z.record(z.string(), nonEmptyString(400)).optional(),
     gatewayAuthTokenEnv: nonEmptyString(120).optional(),
     gatewayUrl: nonEmptyString(240).optional(),
     profile: nonEmptyString(120),
@@ -47,8 +49,18 @@ export const workerBackendSchema = z
       })
       .strict()
       .default({ allow: [], deny: [] }),
+    workingDirectory: nonEmptyString(240).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.adapter === "local-command" && (!value.command || value.command.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "local-command adapter requires backend.command",
+        path: ["command"],
+      });
+    }
+  });
 
 export const workerPersonaSchema = z
   .object({

@@ -8,6 +8,62 @@ CLI-first worker registry and quest planner for parallel agent execution.
 - local state stored outside the repo
 - conservative planning around worker capacity and file ownership
 
+## Worker Backends
+
+Current adapters:
+- `dry-run` via `runs execute --dry-run`
+- `local-command` for real local subprocess execution
+
+Example `local-command` worker:
+
+```json
+{
+  "id": "ember",
+  "name": "Ember",
+  "title": "Battle Engineer",
+  "class": "engineer",
+  "enabled": true,
+  "backend": {
+    "runner": "codex",
+    "profile": "gpt-5.4",
+    "adapter": "local-command",
+    "command": ["bun", "./worker.ts"],
+    "toolPolicy": { "allow": ["git"], "deny": [] }
+  },
+  "persona": {
+    "voice": "terse",
+    "approach": "test-first",
+    "prompt": "Keep diffs tight and explicit."
+  },
+  "stats": {
+    "coding": 82,
+    "testing": 77,
+    "docs": 44,
+    "research": 51,
+    "speed": 63,
+    "mergeSafety": 79,
+    "contextEndurance": 58
+  },
+  "resources": {
+    "cpuCost": 2,
+    "memoryCost": 3,
+    "gpuCost": 0,
+    "maxParallel": 1
+  },
+  "trust": {
+    "rating": 0.74,
+    "calibratedAt": "2026-04-11T00:00:00Z"
+  },
+  "progression": {
+    "level": 7,
+    "xp": 1840
+  },
+  "tags": ["typescript"]
+}
+```
+
+The command receives a JSON payload on stdin with the run, slice, slice state, and worker metadata. Its stdout/stderr and exit code are persisted into run logs.
+
 ## Commands
 
 ```sh
@@ -70,6 +126,7 @@ Do not commit runtime state, tokens, or local config.
 - persisted quest runs plus run events
 - dry-run execution path for exercising run state transitions
 - persisted slice output logs and basic control commands (`runs logs`, `runs abort`)
+- real local subprocess execution through the `local-command` adapter
 
 Real runner adapters, git worktrees, tester lane, and integration are still pending.
 

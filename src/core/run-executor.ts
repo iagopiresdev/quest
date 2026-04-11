@@ -1,7 +1,7 @@
 import { QuestDomainError } from "./errors";
 import { QuestRunStore } from "./run-store";
 import { type QuestRunDocument, type QuestRunEvent, type QuestRunSliceState } from "./run-schema";
-import { DryRunRunnerAdapter, RunnerRegistry } from "./runner";
+import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
 import { WorkerRegistry } from "./worker-registry";
 
 function nowIsoString(): string {
@@ -57,7 +57,7 @@ function findSliceState(run: QuestRunDocument, sliceId: string): QuestRunSliceSt
 }
 
 export class QuestRunExecutor {
-  private readonly runnerRegistry = new RunnerRegistry([new DryRunRunnerAdapter()]);
+  private readonly runnerRegistry = new RunnerRegistry([new DryRunRunnerAdapter(), new LocalCommandRunnerAdapter()]);
 
   constructor(
     private readonly runStore: QuestRunStore,
