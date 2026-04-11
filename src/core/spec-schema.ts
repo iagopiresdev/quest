@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { workerDisciplineValues, workerRunnerValues } from "./worker-schema";
+import { workerDisciplineSchema, workerRunnerSchema } from "./worker-schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const sliceIdSchema = z
@@ -32,11 +32,11 @@ export const questSliceSchema = z
     acceptanceChecks: z.array(questCommandSchema).max(16).default([]),
     contextHints: z.array(nonEmptyString(200)).max(16).default([]),
     dependsOn: z.array(sliceIdSchema).max(16).default([]),
-    discipline: z.enum(workerDisciplineValues),
+    discipline: workerDisciplineSchema,
     goal: nonEmptyString(240),
     id: sliceIdSchema,
     owns: z.array(nonEmptyString(240)).min(1).max(24),
-    preferredRunner: z.enum(workerRunnerValues).optional(),
+    preferredRunner: workerRunnerSchema.optional(),
     preferredWorkerId: sliceIdSchema.optional(),
     title: nonEmptyString(120),
   })

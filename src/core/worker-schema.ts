@@ -1,23 +1,43 @@
 import { z } from "zod";
 
-const workerIdSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
-const statSchema = z.number().int().min(0).max(100);
-const secretRefSchema = z
-  .string()
-  .trim()
-  .regex(/^[a-z0-9][a-z0-9._-]{0,79}$/);
+const workerIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const secretRefPattern = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 
-export const workerRunnerValues = ["codex", "claude", "hermes", "openclaw", "custom"] as const;
-export type WorkerRunner = (typeof workerRunnerValues)[number];
+function nonEmptyString(max: number): z.ZodString {
+  return z.string().trim().min(1).max(max);
+}
 
-export const workerDisciplineValues = ["coding", "testing", "docs", "research"] as const;
-export type WorkerDiscipline = (typeof workerDisciplineValues)[number];
-export const workerCalibrationSuiteValues = ["training-grounds-v1"] as const;
-export type WorkerCalibrationSuite = (typeof workerCalibrationSuiteValues)[number];
+function constrainedString(
+  max: number,
+  predicate: (value: string) => boolean,
+  message: string,
+): z.ZodString {
+  return nonEmptyString(max).refine(predicate, message);
+}
+
+function boundedInt(min: number, max: number): z.ZodNumber {
+  return z.number().int().min(min).max(max);
+}
+
+export const workerIdSchema = constrainedString(
+  80,
+  (value) => workerIdPattern.test(value),
+  "Worker ids must be lowercase kebab-case",
+);
+const statSchema = boundedInt(0, 100);
+export const secretRefSchema = constrainedString(
+  80,
+  (value) => secretRefPattern.test(value),
+  "Secret references must start with a lowercase letter or digit and may include ., _, and -",
+);
+
+export const workerRunnerSchema = z.enum(["codex", "claude", "hermes", "openclaw", "custom"]);
+export type WorkerRunner = z.infer<typeof workerRunnerSchema>;
+
+export const workerDisciplineSchema = z.enum(["coding", "testing", "docs", "research"]);
+export type WorkerDiscipline = z.infer<typeof workerDisciplineSchema>;
+export const workerCalibrationSuiteSchema = z.enum(["training-grounds-v1"]);
+export type WorkerCalibrationSuite = z.infer<typeof workerCalibrationSuiteSchema>;
 
 export const workerStatsSchema = z
   .object({
@@ -35,10 +55,10 @@ export type WorkerStats = z.infer<typeof workerStatsSchema>;
 
 export const workerResourceSchema = z
   .object({
-    cpuCost: z.number().int().min(0).max(8),
-    memoryCost: z.number().int().min(0).max(8),
-    gpuCost: z.number().int().min(0).max(8),
-    maxParallel: z.number().int().min(1).max(8),
+    cpuCost: boundedInt(0, 8),
+    memoryCost: boundedInt(0, 8),
+    gpuCost: boundedInt(0, 8),
+    maxParallel: boundedInt(1, 8),
   })
   .strict();
 
@@ -78,7 +98,7 @@ export const workerBackendSchema = z
     gatewayAuthTokenEnv: nonEmptyString(120).optional(),
     gatewayUrl: nonEmptyString(240).optional(),
     profile: nonEmptyString(120),
-    runner: z.enum(workerRunnerValues),
+    runner: workerRunnerSchema,
     toolPolicy: z
       .object({
         allow: z.array(nonEmptyString(80)).max(24).default([]),
@@ -133,7 +153,7 @@ export const workerCalibrationRecordSchema = z
   .object({
     at: nonEmptyString(80),
     checkPassRate: z.number().min(0).max(1),
-    completedSliceCount: z.number().int().min(0).max(64),
+    completedSliceCount: boundedInt(0, 64),
     disciplineScores: z
       .object({
         coding: statSchema.optional(),
@@ -142,15 +162,15 @@ export const workerCalibrationRecordSchema = z
         research: statSchema.optional(),
       })
       .strict(),
-    passedCheckCount: z.number().int().min(0).max(128),
+    passedCheckCount: boundedInt(0, 128),
     runId: nonEmptyString(80),
     score: statSchema,
     status: z.enum(["passed", "failed"]),
-    suiteId: z.enum(workerCalibrationSuiteValues),
-    totalCheckCount: z.number().int().min(0).max(128),
-    totalSliceCount: z.number().int().min(1).max(64),
+    suiteId: workerCalibrationSuiteSchema,
+    totalCheckCount: boundedInt(0, 128),
+    totalSliceCount: boundedInt(1, 64),
     workspacePath: nonEmptyString(400),
-    xpAwarded: z.number().int().min(0).max(5000),
+    xpAwarded: boundedInt(0, 5000),
   })
   .strict();
 
