@@ -131,6 +131,7 @@ Use TypeScript as a modeling tool, not just linting.
 - Validate external input at the boundary, then pass typed data internally.
 - When a value is optional because of lifecycle timing, make that explicit in the schema.
 - Do not widen persisted status types just to describe transient CLI or dispatcher outcomes; model those separately.
+- Normalize unbounded runner text before persisting it into bounded schema fields so a verbose model cannot make stored run state invalid.
 
 Good:
 

@@ -538,6 +538,10 @@ async function checkPathWritable(path: string): Promise<DoctorCheck> {
   }
 }
 
+function dedupePaths(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
 async function checkCodexExecutable(executable: string): Promise<DoctorCheck> {
   try {
     const result = await runSubprocess({
@@ -639,6 +643,17 @@ async function runDoctor(
     findOptionValue(args, "--codex-executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE ?? "codex";
   const hermesBaseUrl =
     findOptionValue(args, "--hermes-base-url") ?? Bun.env.QUEST_RUNNER_HERMES_BASE_URL ?? null;
+  const writableChecks = await Promise.all(
+    dedupePaths([
+      stateRoot,
+      calibrationsRoot,
+      runsRoot,
+      workspacesRoot,
+      dirname(registryPath),
+      dirname(observabilityConfigPath),
+      dirname(observabilityDeliveriesPath),
+    ]).map((path) => checkPathWritable(path)),
+  );
   const checks: DoctorCheck[] = [
     {
       details: {
@@ -653,13 +668,7 @@ async function runDoctor(
       name: "bun",
       ok: true,
     },
-    await checkPathWritable(stateRoot),
-    await checkPathWritable(calibrationsRoot),
-    await checkPathWritable(runsRoot),
-    await checkPathWritable(workspacesRoot),
-    await checkPathWritable(dirname(registryPath)),
-    await checkPathWritable(dirname(observabilityConfigPath)),
-    await checkPathWritable(dirname(observabilityDeliveriesPath)),
+    ...writableChecks,
     await checkCodexExecutable(codexExecutable),
   ];
 

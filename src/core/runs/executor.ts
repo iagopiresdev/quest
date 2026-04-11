@@ -15,7 +15,12 @@ import {
   LocalCommandRunnerAdapter,
   RunnerRegistry,
 } from "./runner";
-import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./schema";
+import {
+  QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH,
+  type QuestRunCheckResult,
+  type QuestRunDocument,
+  type QuestRunSliceState,
+} from "./schema";
 import type { QuestRunStore } from "./store";
 import { prepareExecutionWorkspace } from "./workspace-materializer";
 
@@ -106,6 +111,16 @@ async function runAcceptanceChecks(
   }
 
   return results;
+}
+
+function truncatePersistedMessage(message: string): string {
+  if (message.length <= QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH) {
+    return message;
+  }
+
+  // Runner output can be arbitrarily long, but persisted run state must stay loadable even when a
+  // model returns a verbose summary or error string.
+  return `${message.slice(0, QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH - 3)}...`;
 }
 
 type WaveExecutionSuccess = {
@@ -312,15 +327,18 @@ export class QuestRunExecutor {
 
           const failedCheck = checkResults.find((check) => check.exitCode !== 0);
           if (failedCheck) {
+            const failureSummary = truncatePersistedMessage(
+              `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
+            );
             const eventAt = nowIsoString();
             setSliceStatus(sliceState, "failed", {
               completedAt: eventAt,
-              lastError: `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
+              lastError: failureSummary,
               lastOutput: {
                 exitCode: failedCheck.exitCode,
                 stderr: failedCheck.stderr,
                 stdout: failedCheck.stdout,
-                summary: `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
+                summary: failureSummary,
               },
             });
             appendEvent(
@@ -366,7 +384,7 @@ export class QuestRunExecutor {
               exitCode: result.exitCode,
               stderr: result.stderr,
               stdout: result.stdout,
-              summary: result.summary,
+              summary: truncatePersistedMessage(result.summary),
             },
           });
           appendEvent(
@@ -385,7 +403,9 @@ export class QuestRunExecutor {
           const eventAt = nowIsoString();
           setSliceStatus(sliceState, "failed", {
             completedAt: eventAt,
-            lastError: error instanceof Error ? error.message : String(error),
+            lastError: truncatePersistedMessage(
+              error instanceof Error ? error.message : String(error),
+            ),
             lastOutput: sliceState.lastOutput,
           });
           appendEvent(
@@ -423,7 +443,9 @@ export class QuestRunExecutor {
       activeSliceStates.forEach((sliceState) => {
         setSliceStatus(sliceState, "failed", {
           completedAt: eventAt,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: truncatePersistedMessage(
+            error instanceof Error ? error.message : String(error),
+          ),
           lastOutput: undefined,
         });
         appendEvent(

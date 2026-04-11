@@ -10,6 +10,7 @@ import {
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const isoDateStringSchema = z.string().datetime({ offset: true });
+export const QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH = 400;
 const questRunIdSchema = z
   .string()
   .trim()
@@ -127,7 +128,7 @@ export const questRunSliceOutputSchema = z
     exitCode: z.number().int(),
     stderr: z.string(),
     stdout: z.string(),
-    summary: nonEmptyString(400),
+    summary: nonEmptyString(QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH),
   })
   .strict();
 
@@ -149,7 +150,7 @@ export const questRunSliceStateSchema = z
     driftedFromBase: z.boolean().optional(),
     integratedCommit: nonEmptyString(80).optional(),
     integrationStatus: z.enum(["pending", "noop", "integrated", "failed"]).optional(),
-    lastError: nonEmptyString(400).optional(),
+    lastError: nonEmptyString(QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH).optional(),
     lastChecks: z.array(questRunCheckResultSchema).optional(),
     lastOutput: questRunSliceOutputSchema.optional(),
     resultRevision: nonEmptyString(80).optional(),

@@ -987,6 +987,51 @@ test("quest cli doctor reports codex and storage health", () => {
   );
 });
 
+test("quest cli doctor dedupes duplicate writable paths", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
+  const sharedRoot = join(context.stateRoot, "shared");
+
+  const doctor = runCli(
+    context,
+    [
+      "doctor",
+      "--state-root",
+      sharedRoot,
+      "--calibrations-root",
+      sharedRoot,
+      "--runs-root",
+      sharedRoot,
+      "--workspaces-root",
+      sharedRoot,
+      "--registry",
+      join(sharedRoot, "workers.json"),
+      "--observability-config",
+      join(sharedRoot, "observability.json"),
+      "--observability-deliveries",
+      join(sharedRoot, "deliveries.json"),
+    ],
+    {
+      env: { QUEST_RUNNER_CODEX_EXECUTABLE: codexExecutable },
+    },
+  );
+
+  expect(doctor.code).toBe(0);
+  const report = JSON.parse(doctor.stdout) as {
+    checks: Array<{ details?: { path?: string }; name: string; ok: boolean }>;
+    ok: boolean;
+  };
+  expect(report.ok).toBe(true);
+
+  const writableChecks = report.checks.filter((check) => check.name.startsWith("writable:"));
+  expect(writableChecks).toHaveLength(1);
+  expect(writableChecks[0]).toMatchObject({
+    details: { path: sharedRoot },
+    name: `writable:${sharedRoot}`,
+    ok: true,
+  });
+});
+
 test("quest cli pretty prints doctor output when requested", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);

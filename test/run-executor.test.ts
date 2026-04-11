@@ -644,6 +644,58 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
   }
 });
 
+test("run executor truncates oversized codex summaries before persisting run state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "fake-codex");
+    const longSummary = "x".repeat(900);
+    writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bun",
+        "const args = process.argv.slice(2);",
+        "if (args.length === 1 && args[0] === '--version') {",
+        "  await Bun.write(Bun.stdout, 'codex 0.0.0-test');",
+        "  process.exit(0);",
+        "}",
+        "if (args[0] === 'login' && args[1] === 'status') {",
+        "  await Bun.write(Bun.stdout, 'logged in');",
+        "  process.exit(0);",
+        "}",
+        "const outputIndex = args.indexOf('--output-last-message');",
+        "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
+        `if (outputPath) await Bun.write(outputPath, '${longSummary}');`,
+        "await Bun.write(Bun.stdout, 'fake-codex-stdout');",
+      ].join("\n"),
+      "utf8",
+    );
+    Bun.spawnSync({ cmd: ["chmod", "+x", scriptPath], cwd: root });
+
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "codex-cli", undefined, {
+        executable: scriptPath,
+        profile: "gpt-5.4",
+      }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+    const summary = executed.slices[0]?.lastOutput?.summary ?? "";
+
+    expect(executed.status).toBe("completed");
+    expect(summary.length).toBeLessThanOrEqual(400);
+    expect(summary.endsWith("...")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor completes a planned run with the hermes-api adapter", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");
