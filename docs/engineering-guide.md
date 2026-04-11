@@ -122,6 +122,7 @@ Use TypeScript as a modeling tool, not just linting.
 - Avoid clever conditional types when a direct named type is available.
 - Validate external input at the boundary, then pass typed data internally.
 - When a value is optional because of lifecycle timing, make that explicit in the schema.
+- Do not widen persisted status types just to describe transient CLI or dispatcher outcomes; model those separately.
 
 Good:
 

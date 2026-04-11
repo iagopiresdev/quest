@@ -12,12 +12,16 @@ import type { ObservabilityStore } from "./observability-store";
 import type { QuestRunDocument } from "./run-schema";
 import type { SecretStore } from "./secret-store";
 
+// Persisted delivery records should only describe actual delivery states. Dispatcher results also
+// need to represent "we intentionally did not try", so that runtime-only outcome stays separate.
+type DeliveryAttemptStatus = DeliveryStatus | "skipped";
+
 type DeliveryAttempt = {
   eventId: string;
   eventType: string;
   ok: boolean;
   sinkId: string;
-  status: DeliveryStatus | "skipped";
+  status: DeliveryAttemptStatus;
   reason?: string;
 };
 
