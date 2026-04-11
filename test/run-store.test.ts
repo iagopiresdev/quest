@@ -1,18 +1,20 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
 import { QuestRunStore } from "../src/core/run-store";
-import { createSpec, createWorkerForRunner } from "./helpers";
+import { createSlice, createSpec, createWorkerForRunner } from "./helpers";
 
 test("run store creates a planned run and lists it", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root);
 
   try {
-    const run = await store.createRun(createSpec({ maxParallel: 2 }), [createWorkerForRunner("ember")]);
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
     expect(run.status).toBe("planned");
     expect(run.events.length).toBe(1);
     expect(run.events[0]?.type).toBe("run_created");
@@ -37,7 +39,7 @@ test("run store marks blocked runs when planning leaves slices unassigned", asyn
     const run = await store.createRun(
       createSpec({
         maxParallel: 2,
-        slices: [{ ...createSpec().slices[0]!, preferredRunner: "openclaw" }],
+        slices: [createSlice({ preferredRunner: "openclaw" })],
       }),
       [createWorkerForRunner("ember", "codex")],
     );
@@ -82,7 +84,9 @@ test("run store returns slice logs and supports aborting pending runs", async ()
   const store = new QuestRunStore(root);
 
   try {
-    const run = await store.createRun(createSpec({ maxParallel: 2 }), [createWorkerForRunner("ember")]);
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
 
     const initialLogs = await store.getRunLogs(run.id);
     expect(initialLogs.slices).toEqual([

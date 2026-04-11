@@ -1,10 +1,14 @@
 import { QuestDomainError } from "./errors";
-import { readJsonFileOrDefault, resolveWorkerRegistryPath, writeJsonFileAtomically } from "./storage";
 import {
-  registeredWorkerSchema,
+  readJsonFileOrDefault,
+  resolveWorkerRegistryPath,
+  writeJsonFileAtomically,
+} from "./storage";
+import {
   type RegisteredWorker,
-  workerRegistrySchema,
+  registeredWorkerSchema,
   type WorkerRegistryDocument,
+  workerRegistrySchema,
 } from "./worker-schema";
 
 const EMPTY_WORKER_REGISTRY: WorkerRegistryDocument = {
@@ -13,12 +17,13 @@ const EMPTY_WORKER_REGISTRY: WorkerRegistryDocument = {
 };
 
 export class WorkerRegistry {
-  constructor(
-    private readonly registryPath: string = resolveWorkerRegistryPath(),
-  ) {}
+  constructor(private readonly registryPath: string = resolveWorkerRegistryPath()) {}
 
   async read(): Promise<WorkerRegistryDocument> {
-    const rawDocument = await readJsonFileOrDefault<WorkerRegistryDocument>(this.registryPath, EMPTY_WORKER_REGISTRY);
+    const rawDocument = await readJsonFileOrDefault<WorkerRegistryDocument>(
+      this.registryPath,
+      EMPTY_WORKER_REGISTRY,
+    );
     const parsed = workerRegistrySchema.safeParse(rawDocument);
 
     if (!parsed.success) {
@@ -50,7 +55,9 @@ export class WorkerRegistry {
     }
 
     const document = await this.read();
-    const existingIndex = document.workers.findIndex((worker) => worker.id === parsedWorker.data.id);
+    const existingIndex = document.workers.findIndex(
+      (worker) => worker.id === parsedWorker.data.id,
+    );
     const nextWorkers = [...document.workers];
 
     if (existingIndex >= 0) {

@@ -14,6 +14,9 @@
   },
   "scripts": {
     "build": "mkdir -p dist && bun build --compile ./src/cli.ts --outfile ./dist/quest",
+    "format": "biome format . --write",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
     "quest": "bun ./src/cli.ts",
     "test": "bun test",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit"
@@ -22,6 +25,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
     "@types/bun": "^1.3.12",
     "typescript": "^6.0.2"
   }

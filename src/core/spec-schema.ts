@@ -3,7 +3,10 @@ import { z } from "zod";
 import { workerDisciplineValues, workerRunnerValues } from "./worker-schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
-const sliceIdSchema = z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const sliceIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 
 export const questFeatureDocSchema = z
   .object({

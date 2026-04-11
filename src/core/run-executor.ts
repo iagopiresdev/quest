@@ -1,10 +1,10 @@
 import { QuestDomainError } from "./errors";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
-import { QuestRunStore } from "./run-store";
-import { type QuestRunCheckResult, type QuestRunDocument, type QuestRunSliceState } from "./run-schema";
+import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
+import type { QuestRunStore } from "./run-store";
 import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
-import { WorkerRegistry } from "./worker-registry";
-import { type RegisteredWorker } from "./worker-schema";
+import type { WorkerRegistry } from "./worker-registry";
+import type { RegisteredWorker } from "./worker-schema";
 
 function requireExecutableRun(run: QuestRunDocument): void {
   if (run.status === "blocked") {
@@ -49,7 +49,10 @@ function findSliceState(run: QuestRunDocument, sliceId: string): QuestRunSliceSt
   return sliceState;
 }
 
-function resolveExecutionCwd(sliceState: QuestRunSliceState, workers: Map<string, RegisteredWorker>): string {
+function resolveExecutionCwd(
+  sliceState: QuestRunSliceState,
+  workers: Map<string, RegisteredWorker>,
+): string {
   const workerId = sliceState.assignedWorkerId;
   if (!workerId) {
     return Bun.env.PWD ?? ".";
@@ -79,7 +82,10 @@ function runAcceptanceChecks(commands: string[], cwd: string): QuestRunCheckResu
 }
 
 export class QuestRunExecutor {
-  private readonly runnerRegistry = new RunnerRegistry([new DryRunRunnerAdapter(), new LocalCommandRunnerAdapter()]);
+  private readonly runnerRegistry = new RunnerRegistry([
+    new DryRunRunnerAdapter(),
+    new LocalCommandRunnerAdapter(),
+  ]);
 
   constructor(
     private readonly runStore: QuestRunStore,
@@ -101,7 +107,9 @@ export class QuestRunExecutor {
 
     try {
       for (const wave of run.plan.waves) {
-        const waveSliceStates = wave.slices.map((plannedSlice) => findSliceState(run, plannedSlice.id));
+        const waveSliceStates = wave.slices.map((plannedSlice) =>
+          findSliceState(run, plannedSlice.id),
+        );
 
         waveSliceStates.forEach((sliceState) => {
           const eventAt = nowIsoString();
@@ -151,7 +159,9 @@ export class QuestRunExecutor {
               });
             }
 
-            const adapter = this.runnerRegistry.resolve(worker, { forceDryRun: options.dryRun === true });
+            const adapter = this.runnerRegistry.resolve(worker, {
+              forceDryRun: options.dryRun === true,
+            });
             return {
               result: await adapter.execute({
                 run,
@@ -291,7 +301,12 @@ export class QuestRunExecutor {
         );
       });
 
-      appendEvent(run, "run_failed", { error: error instanceof Error ? error.message : String(error) }, eventAt);
+      appendEvent(
+        run,
+        "run_failed",
+        { error: error instanceof Error ? error.message : String(error) },
+        eventAt,
+      );
       await this.runStore.saveRun(run);
       throw error;
     }

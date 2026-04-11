@@ -1,12 +1,12 @@
-import {
-  type QuestRunCheckResult,
-  type QuestRunDocument,
-  type QuestRunEvent,
-  type QuestRunEventType,
-  type QuestRunSliceOutput,
-  type QuestRunSliceState,
-  type QuestRunSliceStatus,
-  type QuestRunStatus,
+import type {
+  QuestRunCheckResult,
+  QuestRunDocument,
+  QuestRunEvent,
+  QuestRunEventType,
+  QuestRunSliceOutput,
+  QuestRunSliceState,
+  QuestRunSliceStatus,
+  QuestRunStatus,
 } from "./run-schema";
 
 export function nowIsoString(): string {

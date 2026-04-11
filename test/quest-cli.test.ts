@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 type TestContext = {
   stateRoot: string;
@@ -111,50 +111,47 @@ test("quest cli upserts, lists, and plans from stdin", () => {
   expect(listed.code).toBe(0);
   expect(JSON.parse(listed.stdout).workers.length).toBe(1);
 
-  const plan = runCli(
-    context,
-    ["plan", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Add SSRF protection",
-        workspace: "command-center",
-        maxParallel: 2,
-        acceptanceChecks: ["npm test"],
-        hotspots: [],
-        featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement SSRF parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-          {
-            id: "docs",
-            title: "Docs",
-            goal: "Draft feature notes",
-            discipline: "docs",
-            owns: ["docs/features/**"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const plan = runCli(context, ["plan", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Add SSRF protection",
+      workspace: "command-center",
+      maxParallel: 2,
+      acceptanceChecks: ["npm test"],
+      hotspots: [],
+      featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement SSRF parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+        {
+          id: "docs",
+          title: "Docs",
+          goal: "Draft feature notes",
+          discipline: "docs",
+          owns: ["docs/features/**"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
 
   expect(plan.code).toBe(0);
   const planned = JSON.parse(plan.stdout).plan;
-  expect(planned.waves.map((wave: { slices: Array<{ id: string }> }) => wave.slices.map((slice) => slice.id))).toEqual([
-    ["parser"],
-    ["docs"],
-  ]);
+  expect(
+    planned.waves.map((wave: { slices: Array<{ id: string }> }) =>
+      wave.slices.map((slice) => slice.id),
+    ),
+  ).toEqual([["parser"], ["docs"]]);
   expect(planned.unassigned).toEqual([]);
 });
 
@@ -203,11 +200,14 @@ test("quest cli plans from file and reports unassigned slices", () => {
   const plan = JSON.parse(planned.stdout).plan;
   expect(plan.waves).toEqual([]);
   expect(
-    plan.unassigned.map((slice: { id: string; reasonCode: string }) => ({ id: slice.id, reasonCode: slice.reasonCode })),
+    plan.unassigned.map((slice: { id: string; reasonCode: string }) => ({
+      id: slice.id,
+      reasonCode: slice.reasonCode,
+    })),
   ).toEqual([
-      { id: "parser", reasonCode: "no_worker_available" },
-      { id: "tests", reasonCode: "dependency_blocked" },
-    ]);
+    { id: "parser", reasonCode: "no_worker_available" },
+    { id: "tests", reasonCode: "dependency_blocked" },
+  ]);
 });
 
 test("quest cli creates persisted runs and reads them back", () => {
@@ -258,33 +258,29 @@ test("quest cli creates persisted runs and reads them back", () => {
   const upsert = runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson });
   expect(upsert.code).toBe(0);
 
-  const created = runCli(
-    context,
-    ["run", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Create quest run",
-        workspace: "command-center",
-        maxParallel: 1,
-        acceptanceChecks: [],
-        hotspots: [],
-        featureDoc: { enabled: false },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Create quest run",
+      workspace: "command-center",
+      maxParallel: 1,
+      acceptanceChecks: [],
+      hotspots: [],
+      featureDoc: { enabled: false },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
 
   expect(created.code).toBe(0);
   const createdRun = JSON.parse(created.stdout).run;
@@ -349,33 +345,29 @@ test("quest cli executes a planned run in dry-run mode", () => {
 
   expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
 
-  const created = runCli(
-    context,
-    ["run", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Execute quest run",
-        workspace: "command-center",
-        maxParallel: 1,
-        acceptanceChecks: [],
-        hotspots: [],
-        featureDoc: { enabled: false },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Execute quest run",
+      workspace: "command-center",
+      maxParallel: 1,
+      acceptanceChecks: [],
+      hotspots: [],
+      featureDoc: { enabled: false },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
 
@@ -434,33 +426,29 @@ test("quest cli returns logs and aborts a planned run", () => {
 
   expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
 
-  const created = runCli(
-    context,
-    ["run", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Abort quest run",
-        workspace: "command-center",
-        maxParallel: 1,
-        acceptanceChecks: [],
-        hotspots: [],
-        featureDoc: { enabled: false },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Abort quest run",
+      workspace: "command-center",
+      maxParallel: 1,
+      acceptanceChecks: [],
+      hotspots: [],
+      featureDoc: { enabled: false },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
 
@@ -483,7 +471,7 @@ test("quest cli executes a real local-command worker", () => {
     scriptPath,
     [
       "const input = JSON.parse(await Bun.stdin.text());",
-      "await Bun.write(Bun.stdout, `real:${input.slice.id}:${input.worker.id}`);",
+      "await Bun.write(Bun.stdout, 'real:' + input.slice.id + ':' + input.worker.id);",
     ].join("\n"),
     "utf8",
   );
@@ -534,33 +522,29 @@ test("quest cli executes a real local-command worker", () => {
 
   expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
 
-  const created = runCli(
-    context,
-    ["run", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Execute real local command run",
-        workspace: "command-center",
-        maxParallel: 1,
-        acceptanceChecks: [],
-        hotspots: [],
-        featureDoc: { enabled: false },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Execute real local command run",
+      workspace: "command-center",
+      maxParallel: 1,
+      acceptanceChecks: [],
+      hotspots: [],
+      featureDoc: { enabled: false },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
 
@@ -578,7 +562,7 @@ test("quest cli fails a run when acceptance checks fail", () => {
     scriptPath,
     [
       "const input = JSON.parse(await Bun.stdin.text());",
-      "await Bun.write(Bun.stdout, `real:${input.slice.id}:${input.worker.id}`);",
+      "await Bun.write(Bun.stdout, 'real:' + input.slice.id + ':' + input.worker.id);",
     ].join("\n"),
     "utf8",
   );
@@ -629,33 +613,29 @@ test("quest cli fails a run when acceptance checks fail", () => {
 
   expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
 
-  const created = runCli(
-    context,
-    ["run", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Execute failing check run",
-        workspace: "command-center",
-        maxParallel: 1,
-        acceptanceChecks: [],
-        hotspots: [],
-        featureDoc: { enabled: false },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: ["bun -e \"process.exit(4)\""],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Execute failing check run",
+      workspace: "command-center",
+      maxParallel: 1,
+      acceptanceChecks: [],
+      hotspots: [],
+      featureDoc: { enabled: false },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: ['bun -e "process.exit(4)"'],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
 
@@ -715,33 +695,29 @@ test("quest cli reruns a prior run by cloning its spec", () => {
 
   expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
 
-  const created = runCli(
-    context,
-    ["run", "--stdin"],
-    {
-      input: JSON.stringify({
-        version: 1,
-        title: "Rerun quest run",
-        workspace: "command-center",
-        maxParallel: 1,
-        acceptanceChecks: [],
-        hotspots: [],
-        featureDoc: { enabled: false },
-        slices: [
-          {
-            id: "parser",
-            title: "Parser",
-            goal: "Implement parser validation",
-            discipline: "coding",
-            owns: ["src/security/url.ts"],
-            dependsOn: [],
-            acceptanceChecks: [],
-            contextHints: [],
-          },
-        ],
-      }),
-    },
-  );
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify({
+      version: 1,
+      title: "Rerun quest run",
+      workspace: "command-center",
+      maxParallel: 1,
+      acceptanceChecks: [],
+      hotspots: [],
+      featureDoc: { enabled: false },
+      slices: [
+        {
+          id: "parser",
+          title: "Parser",
+          goal: "Implement parser validation",
+          discipline: "coding",
+          owns: ["src/security/url.ts"],
+          dependsOn: [],
+          acceptanceChecks: [],
+          contextHints: [],
+        },
+      ],
+    }),
+  });
   expect(created.code).toBe(0);
   const firstRun = JSON.parse(created.stdout).run;
 

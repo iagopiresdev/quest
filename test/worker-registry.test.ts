@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
 import { WorkerRegistry } from "../src/core/worker-registry";
@@ -21,9 +21,7 @@ test("worker registry upserts and lists workers in stable order", async () => {
 
     const workers = await registry.listWorkers();
     expect(workers.length).toBe(2);
-    expect(
-      workers.map((worker) => worker.id),
-    ).toEqual(["atlas", "ember"]);
+    expect(workers.map((worker) => worker.id)).toEqual(["atlas", "ember"]);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

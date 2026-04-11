@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { planQuest } from "../src/core/planner";
 import type { QuestSpec } from "../src/core/spec-schema";
 import type { RegisteredWorker } from "../src/core/worker-schema";
-import { createSpec, createSlice, createWorker } from "./helpers";
+import { createSlice, createSpec, createWorker } from "./helpers";
 
 const workers: RegisteredWorker[] = [
   createWorker({
@@ -91,12 +91,8 @@ test("planner assigns independent slices into the same wave and respects depende
 
   const plan = planQuest(spec, workers);
   expect(plan.waves.length).toBe(2);
-  expect(
-    plan.waves[0]?.slices.map((slice) => slice.id),
-  ).toEqual(["parser", "docs"]);
-  expect(
-    plan.waves[1]?.slices.map((slice) => slice.id),
-  ).toEqual(["tests"]);
+  expect(plan.waves[0]?.slices.map((slice) => slice.id)).toEqual(["parser", "docs"]);
+  expect(plan.waves[1]?.slices.map((slice) => slice.id)).toEqual(["tests"]);
   expect(plan.waves[1]?.slices[0]?.assignedWorkerId).toBe("sable");
 });
 

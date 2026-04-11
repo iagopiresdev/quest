@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-const workerIdSchema = z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const workerIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const statSchema = z.number().int().min(0).max(100);
 

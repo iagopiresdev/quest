@@ -1,7 +1,7 @@
 import { QuestDomainError } from "./errors";
-import { type QuestRunDocument, type QuestRunSliceState } from "./run-schema";
-import { type QuestSliceSpec } from "./spec-schema";
-import { type RegisteredWorker } from "./worker-schema";
+import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
+import type { QuestSliceSpec } from "./spec-schema";
+import type { RegisteredWorker } from "./worker-schema";
 
 export type RunnerExecutionResult = {
   exitCode: number;
@@ -107,7 +107,11 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
   readonly name = "local-command";
 
   supports(worker: RegisteredWorker): boolean {
-    return worker.backend.adapter === this.name && Array.isArray(worker.backend.command) && worker.backend.command.length > 0;
+    return (
+      worker.backend.adapter === this.name &&
+      Array.isArray(worker.backend.command) &&
+      worker.backend.command.length > 0
+    );
   }
 
   async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
@@ -155,15 +159,16 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
       exitCode,
       stderr,
       stdout,
-      summary: stdout.trim().length > 0 ? stdout.trim() : `Local command completed slice ${context.slice.id}`,
+      summary:
+        stdout.trim().length > 0
+          ? stdout.trim()
+          : `Local command completed slice ${context.slice.id}`,
     };
   }
 }
 
 export class RunnerRegistry {
-  constructor(
-    private readonly adapters: RunnerAdapter[],
-  ) {}
+  constructor(private readonly adapters: RunnerAdapter[]) {}
 
   resolve(worker: RegisteredWorker, options: { forceDryRun?: boolean } = {}): RunnerAdapter {
     if (options.forceDryRun) {
@@ -180,7 +185,9 @@ export class RunnerRegistry {
       return dryRun;
     }
 
-    const adapter = this.adapters.find((candidate) => candidate.name === worker.backend.adapter && candidate.supports(worker));
+    const adapter = this.adapters.find(
+      (candidate) => candidate.name === worker.backend.adapter && candidate.supports(worker),
+    );
     if (!adapter) {
       throw new QuestDomainError({
         code: "quest_runner_unavailable",

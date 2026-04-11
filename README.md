@@ -151,7 +151,18 @@ Additional runner adapters, git worktrees, merge/integration, notifications, and
 
 ```sh
 bun install
+bun run lint
 bun run typecheck
 bun test
 bun run build
+```
+
+## Linting
+
+This repo uses Biome for formatting, import organization, and linting.
+
+```sh
+bun run lint
+bun run lint:fix
+bun run format
 ```

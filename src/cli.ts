@@ -3,11 +3,15 @@
 import { ZodError } from "zod";
 
 import { isQuestDomainError } from "./core/errors";
-import { QuestRunExecutor } from "./core/run-executor";
 import { planQuest } from "./core/planner";
+import { QuestRunExecutor } from "./core/run-executor";
 import { QuestRunStore } from "./core/run-store";
 import { questSpecSchema } from "./core/spec-schema";
-import { resolveQuestRunsRoot, resolveQuestStateRoot, resolveWorkerRegistryPath } from "./core/storage";
+import {
+  resolveQuestRunsRoot,
+  resolveQuestStateRoot,
+  resolveWorkerRegistryPath,
+} from "./core/storage";
 import { WorkerRegistry } from "./core/worker-registry";
 import { registeredWorkerSchema } from "./core/worker-schema";
 
@@ -40,21 +44,23 @@ type QuestCliCommandDefinition = {
 function printUsage(): void {
   void Bun.write(
     Bun.stdout,
-    [
+    `${[
       "Usage:",
       ...commandDefinitions.map((definition) => `  ${definition.usage}`),
       "",
       "Output is always JSON.",
-    ].join("\n") + "\n",
+    ].join("\n")}\n`,
   );
 }
 
 function stdinIsTty(): boolean {
-  return Bun.spawnSync({
-    cmd: ["/bin/sh", "-lc", "test -t 0"],
-    stderr: "ignore",
-    stdout: "ignore",
-  }).exitCode === 0;
+  return (
+    Bun.spawnSync({
+      cmd: ["/bin/sh", "-lc", "test -t 0"],
+      stderr: "ignore",
+      stdout: "ignore",
+    }).exitCode === 0
+  );
 }
 
 function findOptionValue(args: string[], flag: string): string | null {
@@ -204,7 +210,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       const previousRun = await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>"));
       return { run: await runStore.createRun(previousRun.spec, await registry.listWorkers()) };
     },
-    usage: "quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+    usage:
+      "quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:execute",
@@ -214,7 +221,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         dryRun: hasFlag(args, "--dry-run"),
       }),
     }),
-    usage: "quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+    usage:
+      "quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:logs",
@@ -225,7 +233,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         findOptionValue(args, "--slice") ?? undefined,
       ),
     }),
-    usage: "quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
+    usage:
+      "quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:status",

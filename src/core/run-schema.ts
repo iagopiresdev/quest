@@ -1,16 +1,34 @@
 import { z } from "zod";
 
-import { type QuestPlan } from "./planner";
-import { questSpecSchema, type QuestSpec } from "./spec-schema";
+import type { QuestPlan } from "./planner";
+import { type QuestSpec, questSpecSchema } from "./spec-schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const isoDateStringSchema = z.string().datetime({ offset: true });
-const questRunIdSchema = z.string().trim().regex(/^quest-[a-z0-9]{8}-[a-z0-9]{8}$/);
+const questRunIdSchema = z
+  .string()
+  .trim()
+  .regex(/^quest-[a-z0-9]{8}-[a-z0-9]{8}$/);
 
-export const questRunSliceStatusValues = ["pending", "blocked", "running", "testing", "completed", "failed", "aborted"] as const;
+export const questRunSliceStatusValues = [
+  "pending",
+  "blocked",
+  "running",
+  "testing",
+  "completed",
+  "failed",
+  "aborted",
+] as const;
 export type QuestRunSliceStatus = (typeof questRunSliceStatusValues)[number];
 
-export const questRunStatusValues = ["planned", "blocked", "running", "completed", "failed", "aborted"] as const;
+export const questRunStatusValues = [
+  "planned",
+  "blocked",
+  "running",
+  "completed",
+  "failed",
+  "aborted",
+] as const;
 export type QuestRunStatus = (typeof questRunStatusValues)[number];
 
 export const questRunEventTypeValues = [
@@ -53,7 +71,11 @@ const questPlanWaveSchema = z
 
 const questPlanWarningSchema = z
   .object({
-    code: z.enum(["preferred_worker_missing", "preferred_worker_incompatible", "no_worker_available"]),
+    code: z.enum([
+      "preferred_worker_missing",
+      "preferred_worker_incompatible",
+      "no_worker_available",
+    ]),
     message: nonEmptyString(240),
     sliceId: nonEmptyString(80),
   })

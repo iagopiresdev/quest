@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
-import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 import { QuestDomainError } from "./errors";
 
@@ -11,11 +11,11 @@ export function resolveQuestStateRoot(explicitPath?: string): string {
   return configuredPath ? resolve(configuredPath) : DEFAULT_STATE_ROOT;
 }
 
-export function resolveWorkerRegistryPath(options: {
-  explicitRegistryPath?: string;
-  stateRoot?: string;
-} = {}): string {
-  const configuredPath = options.explicitRegistryPath?.trim() || Bun.env.QUEST_RUNNER_WORKER_REGISTRY_PATH?.trim();
+export function resolveWorkerRegistryPath(
+  options: { explicitRegistryPath?: string; stateRoot?: string } = {},
+): string {
+  const configuredPath =
+    options.explicitRegistryPath?.trim() || Bun.env.QUEST_RUNNER_WORKER_REGISTRY_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -23,10 +23,9 @@ export function resolveWorkerRegistryPath(options: {
   return join(resolveQuestStateRoot(options.stateRoot), "workers.json");
 }
 
-export function resolveQuestRunsRoot(options: {
-  explicitRunsRoot?: string;
-  stateRoot?: string;
-} = {}): string {
+export function resolveQuestRunsRoot(
+  options: { explicitRunsRoot?: string; stateRoot?: string } = {},
+): string {
   const configuredPath = options.explicitRunsRoot?.trim() || Bun.env.QUEST_RUNNER_RUNS_ROOT?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
@@ -35,10 +34,13 @@ export function resolveQuestRunsRoot(options: {
   return join(resolveQuestStateRoot(options.stateRoot), "runs");
 }
 
-export function resolveQuestRunPath(runId: string, options: {
-  explicitRunsRoot?: string;
-  stateRoot?: string;
-} = {}): string {
+export function resolveQuestRunPath(
+  runId: string,
+  options: {
+    explicitRunsRoot?: string;
+    stateRoot?: string;
+  } = {},
+): string {
   return join(resolveQuestRunsRoot(options), `${runId}.json`);
 }
 

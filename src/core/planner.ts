@@ -1,6 +1,6 @@
 import { QuestDomainError } from "./errors";
-import { type QuestSliceSpec, type QuestSpec } from "./spec-schema";
-import { type RegisteredWorker, type WorkerDiscipline } from "./worker-schema";
+import type { QuestSliceSpec, QuestSpec } from "./spec-schema";
+import type { RegisteredWorker, WorkerDiscipline } from "./worker-schema";
 
 type QuestPlanWarningCode =
   | "preferred_worker_missing"
@@ -62,7 +62,12 @@ const disciplineToStatKey: Record<WorkerDiscipline, keyof RegisteredWorker["stat
 };
 
 function normalizePattern(pattern: string): string {
-  return pattern.trim().replaceAll("\\", "/").replace(/\/+$/, "").replace(/\/\*\*$/, "").replace(/\/\*$/, "");
+  return pattern
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "")
+    .replace(/\/\*\*$/, "")
+    .replace(/\/\*$/, "");
 }
 
 export function patternsConflict(left: string, right: string): boolean {
@@ -77,10 +82,17 @@ export function patternsConflict(left: string, right: string): boolean {
     return true;
   }
 
-  return normalizedLeft.startsWith(`${normalizedRight}/`) || normalizedRight.startsWith(`${normalizedLeft}/`);
+  return (
+    normalizedLeft.startsWith(`${normalizedRight}/`) ||
+    normalizedRight.startsWith(`${normalizedLeft}/`)
+  );
 }
 
-function collectConflictPaths(slice: QuestSliceSpec, allSlices: QuestSliceSpec[], hotspots: string[]): string[] {
+function collectConflictPaths(
+  slice: QuestSliceSpec,
+  allSlices: QuestSliceSpec[],
+  hotspots: string[],
+): string[] {
   const conflicts = new Set<string>();
 
   for (const ownPattern of slice.owns) {
@@ -120,7 +132,10 @@ function buildWorkerCandidates(
 
   const sortCandidates = (candidates: RegisteredWorker[]): WorkerAssignment[] =>
     [...candidates]
-      .sort((left, right) => scoreWorkerForSlice(right, slice, false) - scoreWorkerForSlice(left, slice, false))
+      .sort(
+        (left, right) =>
+          scoreWorkerForSlice(right, slice, false) - scoreWorkerForSlice(left, slice, false),
+      )
       .map((worker) => ({
         score: scoreWorkerForSlice(worker, slice, false),
         worker,
@@ -141,7 +156,9 @@ function buildWorkerCandidates(
         sliceId: slice.id,
       });
     } else {
-      const fallbackWorkers = compatibleWorkers.filter((worker) => worker.id !== preferredWorker.id);
+      const fallbackWorkers = compatibleWorkers.filter(
+        (worker) => worker.id !== preferredWorker.id,
+      );
       return [
         {
           score: scoreWorkerForSlice(preferredWorker, slice, true),
@@ -178,7 +195,17 @@ function scoreWorkerForSlice(
     worker.resources.cpuCost * 1.5 + worker.resources.memoryCost * 2 + worker.resources.gpuCost * 3;
   const preferredBonus = preferredWorker ? 15 : 0;
 
-  return Number((disciplineScore + trustScore + speedScore + mergeScore + contextScore + preferredBonus - resourcePenalty).toFixed(2));
+  return Number(
+    (
+      disciplineScore +
+      trustScore +
+      speedScore +
+      mergeScore +
+      contextScore +
+      preferredBonus -
+      resourcePenalty
+    ).toFixed(2),
+  );
 }
 
 function assertNoDependencyCycles(spec: QuestSpec): void {
@@ -241,7 +268,9 @@ function assertNoDependencyCycles(spec: QuestSpec): void {
 }
 
 function slicesConflict(left: QuestSliceSpec, right: QuestSliceSpec): boolean {
-  return left.owns.some((leftPattern) => right.owns.some((rightPattern) => patternsConflict(leftPattern, rightPattern)));
+  return left.owns.some((leftPattern) =>
+    right.owns.some((rightPattern) => patternsConflict(leftPattern, rightPattern)),
+  );
 }
 
 function waveHasWorkerCapacity(
@@ -269,10 +298,7 @@ function selectWorkerForWave(
   return null;
 }
 
-export function planQuest(
-  spec: QuestSpec,
-  workers: RegisteredWorker[],
-): QuestPlan {
+export function planQuest(spec: QuestSpec, workers: RegisteredWorker[]): QuestPlan {
   assertNoDependencyCycles(spec);
 
   const warnings: QuestPlanWarning[] = [];
@@ -306,7 +332,9 @@ export function planQuest(
 
       if (dependencyBlockedSlices.length > 0) {
         dependencyBlockedSlices.forEach((slice) => {
-          const blockedDependencies = slice.dependsOn.filter((dependencyId) => unassigned.has(dependencyId));
+          const blockedDependencies = slice.dependsOn.filter((dependencyId) =>
+            unassigned.has(dependencyId),
+          );
           unassigned.set(slice.id, {
             dependsOn: slice.dependsOn,
             id: slice.id,
@@ -356,7 +384,9 @@ export function planQuest(
         assignedWorkerId: assignment.worker.id,
         conflictPaths: collectConflictPaths(slice, spec.slices, spec.hotspots),
         dependsOn: slice.dependsOn,
-        hot: slice.owns.some((pattern) => spec.hotspots.some((hotspot) => patternsConflict(pattern, hotspot))),
+        hot: slice.owns.some((pattern) =>
+          spec.hotspots.some((hotspot) => patternsConflict(pattern, hotspot)),
+        ),
         id: slice.id,
         score: assignment.score,
         title: slice.title,
@@ -365,7 +395,9 @@ export function planQuest(
     }
 
     if (waveSlices.length === 0) {
-      const workerlessSlices = availableSlices.filter((slice) => (assignments.get(slice.id) ?? []).length === 0);
+      const workerlessSlices = availableSlices.filter(
+        (slice) => (assignments.get(slice.id) ?? []).length === 0,
+      );
       if (workerlessSlices.length > 0) {
         workerlessSlices.forEach((slice) => {
           unassigned.set(slice.id, {
@@ -389,7 +421,9 @@ export function planQuest(
       });
     }
 
-    waveSlices.forEach((slice) => scheduled.add(slice.id));
+    waveSlices.forEach((slice) => {
+      scheduled.add(slice.id);
+    });
     waves.push({
       index: waveIndex,
       slices: waveSlices,

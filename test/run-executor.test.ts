@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
 import { QuestRunExecutor } from "../src/core/run-executor";
@@ -95,9 +95,7 @@ test("run executor completes a planned run in dry-run mode", async () => {
     const executed = await executor.executeRun(run.id, { dryRun: true });
 
     expect(executed.status).toBe("completed");
-    expect(
-      executed.slices.every((slice) => slice.status === "completed"),
-    ).toBe(true);
+    expect(executed.slices.every((slice) => slice.status === "completed")).toBe(true);
     expect(executed.slices[0]?.lastOutput?.summary).toContain("Dry run completed slice");
     expect(executed.slices[0]?.lastOutput?.exitCode).toBe(0);
     expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
@@ -121,7 +119,7 @@ test("run executor completes a planned run with the local-command adapter", asyn
       scriptPath,
       [
         "const input = JSON.parse(await Bun.stdin.text());",
-        "await Bun.write(Bun.stdout, `completed:${input.slice.id}:${input.worker.id}`);",
+        "await Bun.write(Bun.stdout, 'completed:' + input.slice.id + ':' + input.worker.id);",
       ].join("\n"),
     );
 
@@ -169,13 +167,7 @@ test("run executor records failure for a failing local-command adapter", async (
 
   try {
     const scriptPath = join(root, "worker-fail.ts");
-    Bun.write(
-      scriptPath,
-      [
-        "await Bun.write(Bun.stderr, 'boom');",
-        "process.exit(2);",
-      ].join("\n"),
-    );
+    Bun.write(scriptPath, ["await Bun.write(Bun.stderr, 'boom');", "process.exit(2);"].join("\n"));
 
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
@@ -233,7 +225,7 @@ test("run executor persists passing acceptance checks", async () => {
       scriptPath,
       [
         "const input = JSON.parse(await Bun.stdin.text());",
-        "await Bun.write(Bun.stdout, `completed:${input.slice.id}:${input.worker.id}`);",
+        "await Bun.write(Bun.stdout, 'completed:' + input.slice.id + ':' + input.worker.id);",
       ].join("\n"),
     );
 
@@ -284,7 +276,7 @@ test("run executor fails when acceptance checks fail", async () => {
       scriptPath,
       [
         "const input = JSON.parse(await Bun.stdin.text());",
-        "await Bun.write(Bun.stdout, `completed:${input.slice.id}:${input.worker.id}`);",
+        "await Bun.write(Bun.stdout, 'completed:' + input.slice.id + ':' + input.worker.id);",
       ].join("\n"),
     );
 
@@ -296,7 +288,7 @@ test("run executor fails when acceptance checks fail", async () => {
       maxParallel: 1,
       slices: [
         {
-          acceptanceChecks: ["bun -e \"process.exit(3)\""],
+          acceptanceChecks: ['bun -e "process.exit(3)"'],
           contextHints: [],
           dependsOn: [],
           discipline: "coding",
@@ -344,8 +336,15 @@ test("run executor refuses blocked runs", async () => {
       ...createSpec(),
       slices: [
         {
-          ...createSpec().slices[0]!,
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
           preferredRunner: "openclaw",
+          title: "Parser",
         },
       ],
     };
