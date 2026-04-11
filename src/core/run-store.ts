@@ -1,6 +1,7 @@
 import { readdir } from "fs/promises";
 
 import { QuestDomainError } from "./errors";
+import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
 import { planQuest } from "./planner";
 import {
   questRunDocumentSchema,
@@ -36,10 +37,6 @@ export type QuestRunLogView = {
     lastOutput?: QuestRunSliceState["lastOutput"];
   }>;
 };
-
-function nowIsoString(): string {
-  return new Date().toISOString();
-}
 
 function createQuestRunId(): string {
   const timePart = Date.now().toString(36).slice(-8).padStart(8, "0");
@@ -226,32 +223,29 @@ export class QuestRunStore {
     }
 
     const eventAt = nowIsoString();
-    run.status = "aborted";
+    setRunStatus(run, "aborted");
 
     run.slices.forEach((slice) => {
       if (slice.status === "completed" || slice.status === "failed" || slice.status === "blocked") {
         return;
       }
 
-      slice.status = "aborted";
-      slice.completedAt = eventAt;
-      slice.lastError = "Run aborted";
-      run.events.push({
-        at: eventAt,
-        details: {
+      setSliceStatus(slice, "aborted", {
+        completedAt: eventAt,
+        lastError: "Run aborted",
+      });
+      appendEvent(
+        run,
+        "slice_aborted",
+        {
           sliceId: slice.sliceId,
           workerId: slice.assignedWorkerId,
         },
-        type: "slice_aborted",
-      });
+        eventAt,
+      );
     });
 
-    run.events.push({
-      at: eventAt,
-      details: { runId },
-      type: "run_aborted",
-    });
-    run.updatedAt = eventAt;
+    appendEvent(run, "run_aborted", { runId }, eventAt);
     return this.saveRun(run);
   }
 

@@ -5,6 +5,7 @@ export const QUEST_ERROR_CODES = [
   "invalid_quest_run",
   "invalid_quest_spec",
   "quest_dependency_cycle",
+  "quest_runner_command_failed",
   "quest_run_not_executable",
   "quest_run_not_found",
   "quest_run_not_abortable",

@@ -5,52 +5,7 @@ import { expect, test } from "bun:test";
 
 import { QuestDomainError } from "../src/core/errors";
 import { WorkerRegistry } from "../src/core/worker-registry";
-import type { RegisteredWorker } from "../src/core/worker-schema";
-
-function createWorker(id: string): RegisteredWorker {
-  return {
-    backend: {
-      adapter: "local-cli",
-      profile: "gpt-5.4",
-      runner: "codex",
-      toolPolicy: { allow: ["git", "npm"], deny: [] },
-    },
-    class: "engineer",
-    enabled: true,
-    id,
-    name: `Worker ${id}`,
-    persona: {
-      approach: "test-first and explicit",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-      voice: "terse",
-    },
-    progression: {
-      level: 2,
-      xp: 120,
-    },
-    resources: {
-      cpuCost: 2,
-      gpuCost: 0,
-      maxParallel: 1,
-      memoryCost: 2,
-    },
-    stats: {
-      coding: 80,
-      contextEndurance: 60,
-      docs: 40,
-      mergeSafety: 75,
-      research: 45,
-      speed: 70,
-      testing: 65,
-    },
-    tags: ["typescript"],
-    title: "Battle Engineer",
-    trust: {
-      calibratedAt: "2026-04-10T00:00:00Z",
-      rating: 0.72,
-    },
-  };
-}
+import { createWorker } from "./helpers";
 
 test("worker registry upserts and lists workers in stable order", async () => {
   const root = mkdtempSync(join(tmpdir(), "grind-worker-registry-"));
@@ -58,9 +13,9 @@ test("worker registry upserts and lists workers in stable order", async () => {
   const registry = new WorkerRegistry(registryPath);
 
   try {
-    await registry.upsertWorker(createWorker("ember"));
+    await registry.upsertWorker(createWorker({ id: "ember", name: "Worker ember" }));
     await registry.upsertWorker({
-      ...createWorker("atlas"),
+      ...createWorker({ id: "atlas", name: "Atlas" }),
       name: "Atlas",
     });
 

@@ -1,17 +1,10 @@
 import { QuestDomainError } from "./errors";
+import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
 import { QuestRunStore } from "./run-store";
-import { type QuestRunCheckResult, type QuestRunDocument, type QuestRunEvent, type QuestRunSliceState } from "./run-schema";
+import { type QuestRunCheckResult, type QuestRunDocument, type QuestRunSliceState } from "./run-schema";
 import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
 import { WorkerRegistry } from "./worker-registry";
-
-function nowIsoString(): string {
-  return new Date().toISOString();
-}
-
-function appendEvent(run: QuestRunDocument, event: QuestRunEvent): void {
-  run.events.push(event);
-  run.updatedAt = event.at;
-}
+import { type RegisteredWorker } from "./worker-schema";
 
 function requireExecutableRun(run: QuestRunDocument): void {
   if (run.status === "blocked") {
@@ -56,7 +49,7 @@ function findSliceState(run: QuestRunDocument, sliceId: string): QuestRunSliceSt
   return sliceState;
 }
 
-function resolveExecutionCwd(sliceState: QuestRunSliceState, workers: Map<string, ReturnType<WorkerRegistry["listWorkers"]> extends Promise<(infer T)[]> ? T : never>): string {
+function resolveExecutionCwd(sliceState: QuestRunSliceState, workers: Map<string, RegisteredWorker>): string {
   const workerId = sliceState.assignedWorkerId;
   if (!workerId) {
     return Bun.env.PWD ?? ".";
@@ -102,12 +95,8 @@ export class QuestRunExecutor {
     const specSliceMap = new Map(run.spec.slices.map((slice) => [slice.id, slice]));
     const startedAt = nowIsoString();
 
-    run.status = "running";
-    appendEvent(run, {
-      at: startedAt,
-      details: { dryRun: options.dryRun === true },
-      type: "run_started",
-    });
+    setRunStatus(run, "running");
+    appendEvent(run, "run_started", { dryRun: options.dryRun === true }, startedAt);
     await this.runStore.saveRun(run);
 
     try {
@@ -116,17 +105,17 @@ export class QuestRunExecutor {
 
         waveSliceStates.forEach((sliceState) => {
           const eventAt = nowIsoString();
-          sliceState.status = "running";
-          sliceState.startedAt = eventAt;
-          appendEvent(run, {
-            at: eventAt,
-            details: {
+          setSliceStatus(sliceState, "running", { startedAt: eventAt });
+          appendEvent(
+            run,
+            "slice_started",
+            {
               sliceId: sliceState.sliceId,
               wave: sliceState.wave,
               workerId: sliceState.assignedWorkerId,
             },
-            type: "slice_started",
-          });
+            eventAt,
+          );
         });
         await this.runStore.saveRun(run);
 
@@ -189,15 +178,16 @@ export class QuestRunExecutor {
 
           if (sliceSpec.acceptanceChecks.length > 0) {
             const eventAt = nowIsoString();
-            sliceState.status = "testing";
-            appendEvent(run, {
-              at: eventAt,
-              details: {
+            setSliceStatus(sliceState, "testing");
+            appendEvent(
+              run,
+              "slice_testing_started",
+              {
                 checkCount: sliceSpec.acceptanceChecks.length,
                 sliceId: sliceState.sliceId,
               },
-              type: "slice_testing_started",
-            });
+              eventAt,
+            );
           }
 
           const checkResults = runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd);
@@ -206,24 +196,26 @@ export class QuestRunExecutor {
           const failedCheck = checkResults.find((check) => check.exitCode !== 0);
           if (failedCheck) {
             const eventAt = nowIsoString();
-            sliceState.completedAt = eventAt;
-            sliceState.lastError = `Acceptance check failed: ${failedCheck.command}`;
-            sliceState.lastOutput = {
-              exitCode: result.exitCode,
-              stderr: result.stderr,
-              stdout: result.stdout,
-              summary: result.summary,
-            };
-            sliceState.status = "failed";
-            appendEvent(run, {
-              at: eventAt,
-              details: {
+            setSliceStatus(sliceState, "failed", {
+              completedAt: eventAt,
+              lastError: `Acceptance check failed: ${failedCheck.command}`,
+              lastOutput: {
+                exitCode: result.exitCode,
+                stderr: result.stderr,
+                stdout: result.stdout,
+                summary: result.summary,
+              },
+            });
+            appendEvent(
+              run,
+              "slice_testing_failed",
+              {
                 command: failedCheck.command,
                 exitCode: failedCheck.exitCode,
                 sliceId: sliceState.sliceId,
               },
-              type: "slice_testing_failed",
-            });
+              eventAt,
+            );
             throw new QuestDomainError({
               code: "quest_acceptance_check_failed",
               details: {
@@ -239,75 +231,67 @@ export class QuestRunExecutor {
           }
 
           if (sliceSpec.acceptanceChecks.length > 0) {
-            appendEvent(run, {
-              at: nowIsoString(),
-              details: {
-                checkCount: sliceSpec.acceptanceChecks.length,
-                sliceId: sliceState.sliceId,
-              },
-              type: "slice_testing_completed",
+            appendEvent(run, "slice_testing_completed", {
+              checkCount: sliceSpec.acceptanceChecks.length,
+              sliceId: sliceState.sliceId,
             });
           }
 
           const eventAt = nowIsoString();
-          sliceState.completedAt = eventAt;
-          sliceState.lastError = undefined;
-          sliceState.lastOutput = {
-            exitCode: result.exitCode,
-            stderr: result.stderr,
-            stdout: result.stdout,
-            summary: result.summary,
-          };
-          sliceState.status = "completed";
-          appendEvent(run, {
-            at: eventAt,
-            details: {
+          setSliceStatus(sliceState, "completed", {
+            completedAt: eventAt,
+            lastError: undefined,
+            lastOutput: {
+              exitCode: result.exitCode,
+              stderr: result.stderr,
+              stdout: result.stdout,
+              summary: result.summary,
+            },
+          });
+          appendEvent(
+            run,
+            "slice_completed",
+            {
               sliceId: sliceState.sliceId,
               summary: result.summary,
               workerId: sliceState.assignedWorkerId,
             },
-            type: "slice_completed",
-          });
+            eventAt,
+          );
         });
         await this.runStore.saveRun(run);
       }
 
-      run.status = "completed";
-      appendEvent(run, {
-        at: nowIsoString(),
-        details: {
-          completedSliceCount: run.slices.filter((slice) => slice.status === "completed").length,
-        },
-        type: "run_completed",
+      setRunStatus(run, "completed");
+      appendEvent(run, "run_completed", {
+        completedSliceCount: run.slices.filter((slice) => slice.status === "completed").length,
       });
       await this.runStore.saveRun(run);
       return run;
     } catch (error: unknown) {
       const eventAt = nowIsoString();
-      run.status = "failed";
+      setRunStatus(run, "failed");
 
       const activeSliceStates = run.slices.filter((slice) => slice.status === "running");
       activeSliceStates.forEach((sliceState) => {
-        sliceState.completedAt = eventAt;
-        sliceState.lastError = error instanceof Error ? error.message : String(error);
-        sliceState.lastOutput = undefined;
-        sliceState.status = "failed";
-        appendEvent(run, {
-          at: eventAt,
-          details: {
+        setSliceStatus(sliceState, "failed", {
+          completedAt: eventAt,
+          lastError: error instanceof Error ? error.message : String(error),
+          lastOutput: undefined,
+        });
+        appendEvent(
+          run,
+          "slice_failed",
+          {
             error: sliceState.lastError,
             sliceId: sliceState.sliceId,
             workerId: sliceState.assignedWorkerId,
           },
-          type: "slice_failed",
-        });
+          eventAt,
+        );
       });
 
-      appendEvent(run, {
-        at: eventAt,
-        details: { error: error instanceof Error ? error.message : String(error) },
-        type: "run_failed",
-      });
+      appendEvent(run, "run_failed", { error: error instanceof Error ? error.message : String(error) }, eventAt);
       await this.runStore.saveRun(run);
       throw error;
     }

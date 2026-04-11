@@ -17,6 +17,42 @@ export type RunnerExecutionContext = {
   worker: RegisteredWorker;
 };
 
+async function readPipe(stream: ReadableStream<Uint8Array> | null): Promise<string> {
+  if (!stream) {
+    return "";
+  }
+
+  return await new Response(stream).text();
+}
+
+async function runCommand(options: {
+  cmd: string[];
+  cwd: string;
+  env: Record<string, string | undefined>;
+  stdin: string;
+}): Promise<{ exitCode: number; stderr: string; stdout: string }> {
+  const process = Bun.spawn({
+    cmd: options.cmd,
+    cwd: options.cwd,
+    env: options.env,
+    stdin: new TextEncoder().encode(options.stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [exitCode, stdout, stderr] = await Promise.all([
+    process.exited,
+    readPipe(process.stdout),
+    readPipe(process.stderr),
+  ]);
+
+  return {
+    exitCode,
+    stderr,
+    stdout,
+  };
+}
+
 function buildLocalCommandPayload(context: RunnerExecutionContext): string {
   return JSON.stringify(
     {
@@ -86,7 +122,7 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
     }
 
     const payload = buildLocalCommandPayload(context);
-    const result = Bun.spawnSync({
+    const { exitCode, stderr, stdout } = await runCommand({
       cmd: command,
       cwd: context.worker.backend.workingDirectory ?? Bun.env.PWD ?? ".",
       env: {
@@ -97,18 +133,12 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
         QUEST_WORKER_ID: context.worker.id,
         QUEST_WORKSPACE: context.run.spec.workspace,
       },
-      stdin: new TextEncoder().encode(payload),
-      stdout: "pipe",
-      stderr: "pipe",
+      stdin: payload,
     });
-
-    const stdout = new TextDecoder().decode(result.stdout);
-    const stderr = new TextDecoder().decode(result.stderr);
-    const exitCode = result.exitCode;
 
     if (exitCode !== 0) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_runner_command_failed",
         details: {
           command,
           exitCode,

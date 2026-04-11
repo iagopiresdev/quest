@@ -23,24 +23,26 @@ type QuestCliCommand =
   | "workers:list"
   | "workers:upsert";
 
+type QuestCliContext = {
+  args: string[];
+  registry: WorkerRegistry;
+  runExecutor: QuestRunExecutor;
+  runStore: QuestRunStore;
+};
+
+type QuestCliCommandDefinition = {
+  id: QuestCliCommand;
+  matches(args: string[]): boolean;
+  usage: string;
+  run(context: QuestCliContext): Promise<unknown>;
+};
+
 function printUsage(): void {
   void Bun.write(
     Bun.stdout,
     [
       "Usage:",
-      "  quest workers list [--registry <path>]",
-      "  quest workers upsert --file <path> [--registry <path>]",
-      "  quest workers upsert --stdin [--registry <path>]",
-      "  quest run --file <path> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
-      "  quest run --stdin [--registry <path>] [--runs-root <path>] [--state-root <path>]",
-      "  quest plan --file <path> [--registry <path>]",
-      "  quest plan --stdin [--registry <path>]",
-      "  quest runs abort --id <run-id> [--runs-root <path>] [--state-root <path>]",
-      "  quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
-      "  quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
-      "  quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
-      "  quest runs list [--runs-root <path>] [--state-root <path>]",
-      "  quest runs status --id <run-id> [--runs-root <path>] [--state-root <path>]",
+      ...commandDefinitions.map((definition) => `  ${definition.usage}`),
       "",
       "Output is always JSON.",
     ].join("\n") + "\n",
@@ -55,50 +57,6 @@ function stdinIsTty(): boolean {
   }).exitCode === 0;
 }
 
-function resolveCommand(args: string[]): QuestCliCommand | null {
-  if (args.length >= 2 && args[0] === "workers" && args[1] === "list") {
-    return "workers:list";
-  }
-
-  if (args.length >= 2 && args[0] === "workers" && args[1] === "upsert") {
-    return "workers:upsert";
-  }
-
-  if (args.length >= 1 && args[0] === "plan") {
-    return "plan";
-  }
-
-  if (args.length >= 1 && args[0] === "run") {
-    return "run";
-  }
-
-  if (args.length >= 2 && args[0] === "runs" && args[1] === "list") {
-    return "runs:list";
-  }
-
-  if (args.length >= 2 && args[0] === "runs" && args[1] === "abort") {
-    return "runs:abort";
-  }
-
-  if (args.length >= 2 && args[0] === "runs" && args[1] === "rerun") {
-    return "runs:rerun";
-  }
-
-  if (args.length >= 2 && args[0] === "runs" && args[1] === "execute") {
-    return "runs:execute";
-  }
-
-  if (args.length >= 2 && args[0] === "runs" && args[1] === "logs") {
-    return "runs:logs";
-  }
-
-  if (args.length >= 2 && args[0] === "runs" && args[1] === "status") {
-    return "runs:status";
-  }
-
-  return null;
-}
-
 function findOptionValue(args: string[], flag: string): string | null {
   const index = args.indexOf(flag);
   if (index < 0) {
@@ -110,6 +68,15 @@ function findOptionValue(args: string[], flag: string): string | null {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+function requireOptionValue(args: string[], flag: string, label: string): string {
+  const value = findOptionValue(args, flag);
+  if (!value) {
+    throw new Error(`Expected ${label}`);
+  }
+
+  return value;
 }
 
 async function readStdin(): Promise<string> {
@@ -182,6 +149,94 @@ function writeError(error: unknown): void {
   );
 }
 
+const commandDefinitions: QuestCliCommandDefinition[] = [
+  {
+    id: "workers:list",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "list",
+    run: async ({ registry }) => ({ workers: await registry.listWorkers() }),
+    usage: "quest workers list [--registry <path>]",
+  },
+  {
+    id: "workers:upsert",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "upsert",
+    run: async ({ args, registry }) => {
+      const payload = registeredWorkerSchema.parse(await readJsonInput(args));
+      return { worker: await registry.upsertWorker(payload) };
+    },
+    usage: "quest workers upsert --file <path> [--registry <path>]",
+  },
+  {
+    id: "plan",
+    matches: (args) => args.length >= 1 && args[0] === "plan",
+    run: async ({ args, registry }) => {
+      const spec = questSpecSchema.parse(await readJsonInput(args));
+      return { plan: planQuest(spec, await registry.listWorkers()) };
+    },
+    usage: "quest plan --file <path> [--registry <path>]",
+  },
+  {
+    id: "run",
+    matches: (args) => args.length >= 1 && args[0] === "run",
+    run: async ({ args, registry, runStore }) => {
+      const spec = questSpecSchema.parse(await readJsonInput(args));
+      return { run: await runStore.createRun(spec, await registry.listWorkers()) };
+    },
+    usage: "quest run --file <path> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:list",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "list",
+    run: async ({ runStore }) => ({ runs: await runStore.listRuns() }),
+    usage: "quest runs list [--runs-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:abort",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "abort",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.abortRun(requireOptionValue(args, "--id", "--id <run-id>")),
+    }),
+    usage: "quest runs abort --id <run-id> [--runs-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:rerun",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rerun",
+    run: async ({ args, registry, runStore }) => {
+      const previousRun = await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>"));
+      return { run: await runStore.createRun(previousRun.spec, await registry.listWorkers()) };
+    },
+    usage: "quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:execute",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "execute",
+    run: async ({ args, runExecutor }) => ({
+      run: await runExecutor.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
+        dryRun: hasFlag(args, "--dry-run"),
+      }),
+    }),
+    usage: "quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:logs",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "logs",
+    run: async ({ args, runStore }) => ({
+      logs: await runStore.getRunLogs(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+        findOptionValue(args, "--slice") ?? undefined,
+      ),
+    }),
+    usage: "quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:status",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "status",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>")),
+    }),
+    usage: "quest runs status --id <run-id> [--runs-root <path>] [--state-root <path>]",
+  },
+];
+
 async function main(): Promise<number> {
   const args = Bun.argv.slice(2);
 
@@ -190,7 +245,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const command = resolveCommand(args);
+  const command = commandDefinitions.find((definition) => definition.matches(args)) ?? null;
   if (!command) {
     printUsage();
     return 1;
@@ -210,99 +265,12 @@ async function main(): Promise<number> {
   const runExecutor = new QuestRunExecutor(runStore, registry);
 
   try {
-    if (command === "workers:list") {
-      writeJson({ workers: await registry.listWorkers() });
-      return 0;
-    }
-
-    if (command === "workers:upsert") {
-      const payload = registeredWorkerSchema.parse(await readJsonInput(args));
-      writeJson({ worker: await registry.upsertWorker(payload) });
-      return 0;
-    }
-
-    if (command === "plan") {
-      const spec = questSpecSchema.parse(await readJsonInput(args));
-      const workers = await registry.listWorkers();
-      writeJson({ plan: planQuest(spec, workers) });
-      return 0;
-    }
-
-    if (command === "run") {
-      const spec = questSpecSchema.parse(await readJsonInput(args));
-      const workers = await registry.listWorkers();
-      writeJson({ run: await runStore.createRun(spec, workers) });
-      return 0;
-    }
-
-    if (command === "runs:list") {
-      writeJson({ runs: await runStore.listRuns() });
-      return 0;
-    }
-
-    if (command === "runs:abort") {
-      const runId = findOptionValue(args, "--id");
-      if (!runId) {
-        throw new Error("Expected --id <run-id>");
-      }
-
-      writeJson({ run: await runStore.abortRun(runId) });
-      return 0;
-    }
-
-    if (command === "runs:rerun") {
-      const runId = findOptionValue(args, "--id");
-      if (!runId) {
-        throw new Error("Expected --id <run-id>");
-      }
-
-      const previousRun = await runStore.getRun(runId);
-      const workers = await registry.listWorkers();
-      writeJson({ run: await runStore.createRun(previousRun.spec, workers) });
-      return 0;
-    }
-
-    if (command === "runs:execute") {
-      const runId = findOptionValue(args, "--id");
-      if (!runId) {
-        throw new Error("Expected --id <run-id>");
-      }
-
-      writeJson({
-        run: await runExecutor.executeRun(runId, {
-          dryRun: hasFlag(args, "--dry-run"),
-        }),
-      });
-      return 0;
-    }
-
-    if (command === "runs:logs") {
-      const runId = findOptionValue(args, "--id");
-      if (!runId) {
-        throw new Error("Expected --id <run-id>");
-      }
-
-      writeJson({
-        logs: await runStore.getRunLogs(runId, findOptionValue(args, "--slice") ?? undefined),
-      });
-      return 0;
-    }
-
-    if (command === "runs:status") {
-      const runId = findOptionValue(args, "--id");
-      if (!runId) {
-        throw new Error("Expected --id <run-id>");
-      }
-
-      writeJson({ run: await runStore.getRun(runId) });
-      return 0;
-    }
+    writeJson(await command.run({ args, registry, runExecutor, runStore }));
+    return 0;
   } catch (error: unknown) {
     writeError(error);
     return 1;
   }
-
-  return 0;
 }
 
 const exitCode = await main();

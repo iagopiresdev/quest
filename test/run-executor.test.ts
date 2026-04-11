@@ -204,10 +204,10 @@ test("run executor records failure for a failing local-command adapter", async (
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_unavailable");
+      throw new Error("Expected quest_runner_command_failed");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(QuestDomainError);
-      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+      expect((error as QuestDomainError).code).toBe("quest_runner_command_failed");
     }
 
     const failedRun = await runStore.getRun(run.id);

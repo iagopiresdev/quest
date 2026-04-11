@@ -3,19 +3,11 @@ import { expect, test } from "bun:test";
 import { planQuest } from "../src/core/planner";
 import type { QuestSpec } from "../src/core/spec-schema";
 import type { RegisteredWorker } from "../src/core/worker-schema";
+import { createSpec, createSlice, createWorker } from "./helpers";
 
 const workers: RegisteredWorker[] = [
-  {
-    backend: {
-      adapter: "local-cli",
-      profile: "gpt-5.4",
-      runner: "codex",
-      toolPolicy: { allow: [], deny: [] },
-    },
-    class: "engineer",
-    enabled: true,
+  createWorker({
     id: "ember",
-    name: "Ember",
     persona: {
       approach: "test-first",
       prompt: "Prefer narrow diffs.",
@@ -33,72 +25,57 @@ const workers: RegisteredWorker[] = [
       testing: 61,
     },
     tags: ["hotfiles"],
-    title: "Battle Engineer",
     trust: { calibratedAt: "2026-04-10T00:00:00Z", rating: 0.82 },
-  },
-  {
-    backend: {
-      adapter: "local-cli",
+  }),
+  createWorker(
+    {
+      class: "tester",
+      id: "sable",
+      name: "Sable",
+      persona: {
+        approach: "verification-heavy",
+        prompt: "Focus on tests and regressions first.",
+        voice: "calm",
+      },
+      progression: { level: 3, xp: 340 },
+      resources: { cpuCost: 1, gpuCost: 1, maxParallel: 1, memoryCost: 2 },
+      stats: {
+        coding: 50,
+        contextEndurance: 48,
+        docs: 42,
+        mergeSafety: 68,
+        research: 44,
+        speed: 55,
+        testing: 89,
+      },
+      tags: ["tests"],
+      title: "Trial Warden",
+      trust: { calibratedAt: "2026-04-10T00:00:00Z", rating: 0.77 },
+    },
+    {
       profile: "qwen3.5-27b",
       runner: "hermes",
-      toolPolicy: { allow: [], deny: [] },
     },
-    class: "tester",
-    enabled: true,
-    id: "sable",
-    name: "Sable",
-    persona: {
-      approach: "verification-heavy",
-      prompt: "Focus on tests and regressions first.",
-      voice: "calm",
-    },
-    progression: { level: 3, xp: 340 },
-    resources: { cpuCost: 1, gpuCost: 1, maxParallel: 1, memoryCost: 2 },
-    stats: {
-      coding: 50,
-      contextEndurance: 48,
-      docs: 42,
-      mergeSafety: 68,
-      research: 44,
-      speed: 55,
-      testing: 89,
-    },
-    tags: ["tests"],
-    title: "Trial Warden",
-    trust: { calibratedAt: "2026-04-10T00:00:00Z", rating: 0.77 },
-  },
+  ),
 ];
 
 test("planner assigns independent slices into the same wave and respects dependencies", () => {
-  const spec: QuestSpec = {
+  const spec: QuestSpec = createSpec({
     acceptanceChecks: ["npm test"],
     featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
     hotspots: ["src/orchestration/**"],
     maxParallel: 2,
     slices: [
-      {
-        acceptanceChecks: [],
-        contextHints: [],
-        dependsOn: [],
-        discipline: "coding",
-        goal: "Implement SSRF parser validation",
-        id: "parser",
-        owns: ["src/security/url.ts"],
-        title: "Parser",
-      },
-      {
-        acceptanceChecks: [],
-        contextHints: [],
-        dependsOn: [],
+      createSlice({ goal: "Implement SSRF parser validation", id: "parser", title: "Parser" }),
+      createSlice({
         discipline: "docs",
         goal: "Draft notes for the feature doc",
         id: "docs",
         owns: ["docs/features/**"],
         title: "Docs",
-      },
-      {
+      }),
+      createSlice({
         acceptanceChecks: ["npm test -- ssrf"],
-        contextHints: [],
         dependsOn: ["parser"],
         discipline: "testing",
         goal: "Write SSRF regression tests",
@@ -106,13 +83,11 @@ test("planner assigns independent slices into the same wave and respects depende
         owns: ["src/**/*.test.ts"],
         preferredRunner: "hermes",
         title: "Tests",
-      },
+      }),
     ],
     summary: "Protect outbound fetches from SSRF.",
     title: "Add SSRF protection",
-    version: 1,
-    workspace: "command-center",
-  };
+  });
 
   const plan = planQuest(spec, workers);
   expect(plan.waves.length).toBe(2);
