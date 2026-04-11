@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { runSubprocess } from "../src/core/process";
+import { runSubprocess } from "../src/core/runs/process";
 
 test("runSubprocess truncates oversized stdout and marks it as truncated", async () => {
   const result = await runSubprocess({

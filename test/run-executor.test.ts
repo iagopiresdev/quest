@@ -11,12 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
-import { QuestRunExecutor } from "../src/core/run-executor";
-import { QuestRunStore } from "../src/core/run-store";
+import type { QuestSpec } from "../src/core/planning/spec-schema";
+import { QuestRunExecutor } from "../src/core/runs/executor";
+import { QuestRunStore } from "../src/core/runs/store";
 import { SecretStore } from "../src/core/secret-store";
-import type { QuestSpec } from "../src/core/spec-schema";
-import { WorkerRegistry } from "../src/core/worker-registry";
-import type { RegisteredWorker } from "../src/core/worker-schema";
+import { WorkerRegistry } from "../src/core/workers/registry";
+import type { RegisteredWorker } from "../src/core/workers/schema";
 import { createCommand, createCommittedRepo } from "./helpers";
 
 function createWorker(

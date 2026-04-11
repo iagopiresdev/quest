@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { QuestCommandSpec, QuestSliceSpec, QuestSpec } from "../src/core/spec-schema";
-import type { RegisteredWorker, WorkerRunner } from "../src/core/worker-schema";
+import type { QuestCommandSpec, QuestSliceSpec, QuestSpec } from "../src/core/planning/spec-schema";
+import type { RegisteredWorker, WorkerRunner } from "../src/core/workers/schema";
 
 export type CliTestContext = {
   secretServiceName: string;

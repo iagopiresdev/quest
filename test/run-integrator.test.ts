@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
-import { QuestRunExecutor } from "../src/core/run-executor";
-import { QuestRunIntegrator } from "../src/core/run-integrator";
-import { QuestRunStore } from "../src/core/run-store";
-import { WorkerRegistry } from "../src/core/worker-registry";
+import { QuestRunExecutor } from "../src/core/runs/executor";
+import { QuestRunIntegrator } from "../src/core/runs/integrator";
+import { QuestRunStore } from "../src/core/runs/store";
+import { WorkerRegistry } from "../src/core/workers/registry";
 import {
   createCommand,
   createCommittedRepo,

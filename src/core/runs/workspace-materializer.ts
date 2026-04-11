@@ -1,11 +1,10 @@
 import { readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
+import { ensureDirectory } from "../storage";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
-import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
-import { ensureDirectory } from "./storage";
+import type { QuestRunDocument, QuestRunSliceState } from "./schema";
 import {
   assertWorkspacePathWithinRoot,
   resolveIntegrationWorkspacePathForRunRoot,

@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
-import { QuestRunCleanup } from "../src/core/run-cleanup";
-import { QuestRunExecutor } from "../src/core/run-executor";
-import { QuestRunIntegrator } from "../src/core/run-integrator";
-import { QuestRunStore } from "../src/core/run-store";
-import { WorkerRegistry } from "../src/core/worker-registry";
+import { QuestRunCleanup } from "../src/core/runs/cleanup";
+import { QuestRunExecutor } from "../src/core/runs/executor";
+import { QuestRunIntegrator } from "../src/core/runs/integrator";
+import { QuestRunStore } from "../src/core/runs/store";
+import { WorkerRegistry } from "../src/core/workers/registry";
 import { createCommittedRepo, createSpec, createWorker } from "./helpers";
 
 test("run cleanup removes a completed plain workspace root", async () => {

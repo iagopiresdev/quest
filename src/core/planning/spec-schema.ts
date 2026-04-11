@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { workerDisciplineSchema, workerRunnerSchema } from "./worker-schema";
+import { workerDisciplineSchema, workerRunnerSchema } from "../workers/schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const sliceIdSchema = z

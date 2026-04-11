@@ -1,6 +1,6 @@
 import { QuestDomainError } from "./errors";
-import { runSubprocess } from "./process";
-import { buildProcessEnv } from "./process-env";
+import { runSubprocess } from "./runs/process";
+import { buildProcessEnv } from "./runs/process-env";
 
 type SecretStoreCommandResult = Awaited<ReturnType<typeof runSubprocess>>;
 const keychainItemMissingExitCode = 44;

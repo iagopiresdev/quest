@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
 
 function isPathWithinRoot(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);

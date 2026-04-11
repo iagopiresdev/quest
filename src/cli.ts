@@ -5,10 +5,8 @@ import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { ZodError } from "zod";
-
-import { listCalibrationSuites, WorkerCalibrator } from "./core/calibration";
 import { isQuestDomainError } from "./core/errors";
-import { EventDispatcher } from "./core/event-dispatcher";
+import { EventDispatcher } from "./core/observability/event-dispatcher";
 import {
   type DeliveryStatus,
   deliveryStatusSchema,
@@ -16,18 +14,18 @@ import {
   observableEventTypeSchema,
   telegramSinkSchema,
   webhookSinkSchema,
-} from "./core/observability-schema";
-import { ObservabilityStore } from "./core/observability-store";
-import { planQuest } from "./core/planner";
-import { runSubprocess } from "./core/process";
-import { buildProcessEnv } from "./core/process-env";
-import { QuestRunCleanup } from "./core/run-cleanup";
-import { QuestRunExecutor } from "./core/run-executor";
-import { QuestRunIntegrator } from "./core/run-integrator";
-import type { QuestRunDocument, QuestRunSliceState } from "./core/run-schema";
-import { QuestRunStore } from "./core/run-store";
+} from "./core/observability/schema";
+import { ObservabilityStore } from "./core/observability/store";
+import { planQuest } from "./core/planning/planner";
+import { questSpecSchema } from "./core/planning/spec-schema";
+import { QuestRunCleanup } from "./core/runs/cleanup";
+import { QuestRunExecutor } from "./core/runs/executor";
+import { QuestRunIntegrator } from "./core/runs/integrator";
+import { runSubprocess } from "./core/runs/process";
+import { buildProcessEnv } from "./core/runs/process-env";
+import type { QuestRunDocument, QuestRunSliceState } from "./core/runs/schema";
+import { QuestRunStore } from "./core/runs/store";
 import { SecretStore } from "./core/secret-store";
-import { questSpecSchema } from "./core/spec-schema";
 import {
   ensureDirectory,
   resolveQuestCalibrationsRoot,
@@ -38,17 +36,18 @@ import {
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
+import { listCalibrationSuites, WorkerCalibrator } from "./core/workers/calibration";
 import {
   createCodexWorkerPreset,
   createHermesWorkerPreset,
   slugifyWorkerId,
-} from "./core/worker-presets";
-import { WorkerRegistry } from "./core/worker-registry";
+} from "./core/workers/presets";
+import { WorkerRegistry } from "./core/workers/registry";
 import {
   type RegisteredWorker,
   registeredWorkerSchema,
   type WorkerCalibrationSuite,
-} from "./core/worker-schema";
+} from "./core/workers/schema";
 
 type QuestCliCommand =
   | "doctor"

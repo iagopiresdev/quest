@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
-import { WorkerRegistry } from "../src/core/worker-registry";
+import { WorkerRegistry } from "../src/core/workers/registry";
 import { createWorker } from "./helpers";
 
 test("worker registry upserts and lists workers in stable order", async () => {

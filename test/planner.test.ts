@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { planQuest } from "../src/core/planner";
-import type { QuestSpec } from "../src/core/spec-schema";
-import type { RegisteredWorker } from "../src/core/worker-schema";
+import { planQuest } from "../src/core/planning/planner";
+import type { QuestSpec } from "../src/core/planning/spec-schema";
+import type { RegisteredWorker } from "../src/core/workers/schema";
 import { createCommand, createSlice, createSpec, createWorker } from "./helpers";
 
 const workers: RegisteredWorker[] = [

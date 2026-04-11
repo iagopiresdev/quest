@@ -1,5 +1,5 @@
-import { defaultEventSinkHandlers } from "./observability/sinks";
-import type { EventSinkHandler } from "./observability/sinks/handler";
+import type { QuestRunDocument } from "../runs/schema";
+import type { SecretStore } from "../secret-store";
 import {
   createObservableCalibrationEvent,
   type DeliveryRecord,
@@ -8,10 +8,10 @@ import {
   type ObservableEvent,
   type ObservableEventType,
   shouldDeliverEvent,
-} from "./observability-schema";
-import type { ObservabilityStore } from "./observability-store";
-import type { QuestRunDocument } from "./run-schema";
-import type { SecretStore } from "./secret-store";
+} from "./schema";
+import { defaultEventSinkHandlers } from "./sinks";
+import type { EventSinkHandler } from "./sinks/handler";
+import type { ObservabilityStore } from "./store";
 
 // Persisted delivery records should only describe actual delivery states. Dispatcher results also
 // need to represent "we intentionally did not try", so that runtime-only outcome stays separate.

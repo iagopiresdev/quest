@@ -17,6 +17,7 @@ CLI output modes:
 - `bun run lint` now also fails on circular imports in `src/**`
 
 Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
+Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.md](./docs/design-system.md).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.md](./docs/specs/training-grounds-v2.md).
 
 ## Worker Backends

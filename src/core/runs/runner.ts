@@ -2,14 +2,13 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 
 import { z } from "zod";
-
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
+import type { QuestSliceSpec } from "../planning/spec-schema";
+import type { SecretStore } from "../secret-store";
+import type { RegisteredWorker } from "../workers/schema";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
-import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
-import type { SecretStore } from "./secret-store";
-import type { QuestSliceSpec } from "./spec-schema";
-import type { RegisteredWorker } from "./worker-schema";
+import type { QuestRunDocument, QuestRunSliceState } from "./schema";
 
 export type RunnerExecutionResult = {
   exitCode: number;

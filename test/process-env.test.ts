@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { buildProcessEnv } from "../src/core/process-env";
+import { buildProcessEnv } from "../src/core/runs/process-env";
 
 const originalEnv = {
   PATH: Bun.env.PATH,

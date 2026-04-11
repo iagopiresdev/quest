@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { EventDispatcher } from "../src/core/event-dispatcher";
+import { EventDispatcher } from "../src/core/observability/event-dispatcher";
+import type { DeliveryRecord, WebhookSink } from "../src/core/observability/schema";
 import type { EventSinkHandler } from "../src/core/observability/sinks/handler";
-import type { DeliveryRecord, WebhookSink } from "../src/core/observability-schema";
-import { ObservabilityStore } from "../src/core/observability-store";
+import { ObservabilityStore } from "../src/core/observability/store";
 import { SecretStore } from "../src/core/secret-store";
 
 function createObservabilityHarness() {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { QuestRunDocument, QuestRunEvent } from "../run-schema";
+import type { QuestRunDocument, QuestRunEvent } from "../runs/schema";
 import {
   type ObservableRunEventType,
   observableCalibrationEventTypeSchema,

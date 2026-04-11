@@ -7,7 +7,7 @@ import type {
   QuestRunSliceState,
   QuestRunSliceStatus,
   QuestRunStatus,
-} from "./run-schema";
+} from "./schema";
 
 export function nowIsoString(): string {
   return new Date().toISOString();

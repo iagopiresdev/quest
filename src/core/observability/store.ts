@@ -1,4 +1,11 @@
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
+import type { QuestRunDocument } from "../runs/schema";
+import {
+  readJsonFileOrDefault,
+  resolveQuestObservabilityConfigPath,
+  resolveQuestObservabilityDeliveriesPath,
+  writeJsonFileAtomically,
+} from "../storage";
 import {
   createObservableRunEvent,
   type DeliveryRecord,
@@ -18,14 +25,7 @@ import {
   telegramSinkSchema,
   type WebhookSink,
   webhookSinkSchema,
-} from "./observability-schema";
-import type { QuestRunDocument } from "./run-schema";
-import {
-  readJsonFileOrDefault,
-  resolveQuestObservabilityConfigPath,
-  resolveQuestObservabilityDeliveriesPath,
-  writeJsonFileAtomically,
-} from "./storage";
+} from "./schema";
 
 const EMPTY_CONFIG: ObservabilityConfigDocument = {
   sinks: [],

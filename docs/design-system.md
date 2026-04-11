@@ -1,0 +1,243 @@
+# Design System
+
+This document defines how `quest-runner` should be designed, specified, documented, and evolved.
+
+Use it for:
+- structuring new features
+- writing and reviewing specs
+- deciding where code and docs belong
+- keeping the project spec-driven instead of implementation-led
+
+Do not use this document for:
+- low-level coding rules that already live in [`docs/engineering-guide.md`](./engineering-guide.md)
+- feature-specific behavior that belongs in [`docs/specs/*`](./specs)
+- operator-facing usage examples that belong in [`README.md`](../README.md)
+
+## Operating Model
+
+`quest-runner` is built with spec-driven development.
+
+That means:
+- research happens before implementation
+- plans narrow the work before code is written
+- implementation follows an explicit spec
+- acceptance checks and tests are derived from the spec
+- feature docs and operator docs are updated as part of the same change
+
+The implementation is allowed to teach us something new, but it must not become the primary design artifact.
+
+## Documentation Hierarchy
+
+Use progressive disclosure.
+
+Start with the smallest document that can orient the next reader, then link outward:
+- [`README.md`](../README.md)
+  install, operator workflow, common commands
+- [`docs/design-system.md`](./design-system.md)
+  project-wide design and documentation rules
+- [`docs/engineering-guide.md`](./engineering-guide.md)
+  coding rules, typing, errors, observability, runtime invariants
+- [`docs/specs/*.md`](./specs)
+  feature specs, proposals, future versions, and large changes
+
+Rules:
+- `README.md` explains what the system is and how to operate it.
+- `design-system.md` explains how the project should be shaped.
+- `engineering-guide.md` explains how code should be written and validated.
+- `docs/specs/*` explain one feature, proposal, or versioned change at a time.
+
+Do not bury product or architectural behavior only in code.
+
+## Research, Plan, Implement
+
+Every non-trivial feature should follow this sequence:
+
+1. Research
+   Gather the local codebase context, external constraints, and integration facts.
+2. Plan
+   Reduce the work to a narrow, explicit execution plan.
+3. Implement
+   Make the smallest change that satisfies the plan, then validate it.
+
+Rules:
+- Research should name the existing boundary that is being changed.
+- Plans should identify scope, non-goals, risks, and validation.
+- Implementation should trace back to the plan, not wander into adjacent cleanup unless it is required for correctness.
+- If the plan changes materially, the spec or proposal must change too.
+
+## Spec-Driven Development
+
+Specs are first-class project artifacts.
+
+Every meaningful feature spec should define:
+- problem statement
+- goal
+- non-goals
+- user or operator impact
+- domain changes
+- state changes
+- command or API surface changes
+- observability events and delivery implications
+- acceptance checks
+- test plan
+- rollout or migration notes
+- rollback or recovery notes
+
+Specs must be written so that a reviewer can answer:
+- what is changing
+- where the boundary is
+- how correctness is validated
+- what is intentionally not being built
+
+## Domain-Driven Design
+
+Use DDD where it adds clarity, not ceremony.
+
+Current bounded contexts:
+- `planning`
+  spec parsing, slice modeling, worker selection, wave construction
+- `workers`
+  worker contracts, presets, calibration, trust/progression
+- `runs`
+  execution, lifecycle, runner adapters, workspaces, integration
+- `observability`
+  event contracts, sink config, delivery attempts, sink handlers
+
+Shared infrastructure:
+- `storage`
+- `secret-store`
+- `errors`
+
+Rules:
+- Put domain rules inside the context that owns them.
+- Prefer ubiquitous language from the domain model:
+  `quest`, `slice`, `worker`, `run`, `integration`, `sink`, `delivery`
+- Avoid generic names like `utils`, `manager`, or `service` when a domain concept exists.
+- Shared code must stay small and boring. If it starts collecting domain rules, move it back into the owning context.
+
+## Feature Folders And Vertical Slices
+
+The repo should prefer concern folders and vertical slices over layer dumps.
+
+Current source shape:
+- `src/cli.ts`
+  transport layer only
+- `src/core/planning/*`
+- `src/core/workers/*`
+- `src/core/runs/*`
+- `src/core/observability/*`
+
+Rules:
+- Put related schemas, lifecycle helpers, and orchestration code near the feature they belong to.
+- A vertical slice may touch CLI, core, docs, and tests, but it should still map back to one bounded context.
+- Do not add a new top-level folder for one file.
+- Do not keep empty scaffolding folders around unless they are intentionally reserved and documented.
+
+For tests:
+- keep helpers shared only when they are truly cross-slice
+- otherwise prefer test files that sit close to the feature behavior they validate conceptually
+
+## Progressive Disclosure In Code And Docs
+
+The project should be readable in layers.
+
+That means:
+- high-level commands and docs should link to deeper detail
+- schemas should define external contracts before orchestration code uses them
+- orchestration code should delegate repeated mutation to shared helpers
+- comments should explain why a boundary, invariant, or odd choice exists
+
+Do not make readers understand the whole system before they can understand one feature.
+
+## Skills, Rules, And Gates
+
+Project skills and rules should be treated as explicit artifacts.
+
+Rules:
+- local skills belong in the repo-local or user-local `skills/` workspace, not hidden in random notes
+- a rule becomes a hard gate only when the repo enforces it through lint, tests, typecheck, build, or a documented review rule
+- skill usage should be referenced from specs only when it changes how work is done, not as decoration
+- documentation should distinguish between:
+  - guidance
+  - required rule
+  - enforced gate
+
+Examples:
+- “comments explain why, not what” is guidance plus review rule
+- “no circular imports in `src/**`” is a hard gate because lint enforces it
+
+## Traceability
+
+Every meaningful change should be traceable.
+
+Traceability chain:
+- proposal or spec
+- implementation slice
+- acceptance checks
+- automated tests
+- operator-facing docs
+- observability changes
+
+A good change makes it easy to answer:
+- which spec introduced this behavior
+- which tests prove it
+- which events show it at runtime
+- which docs explain it to operators
+
+## Feature Spec Template
+
+Use this structure for future specs in `docs/specs/*`:
+
+```md
+# <Feature Name>
+
+## Context
+## Problem
+## Goal
+## Non-Goals
+## Domain Impact
+## User Or Operator Workflow
+## Data And State Changes
+## Command Surface
+## Observability
+## Acceptance Checks
+## Test Plan
+## Rollout / Migration
+## Rollback / Recovery
+```
+
+Keep the spec concise. Long specs should grow by linking to focused sub-docs, not by turning one file into a dump.
+
+## Documentation Rules
+
+When adding or changing behavior:
+- update `README.md` if the operator workflow changes
+- update `engineering-guide.md` if the coding rule or architectural invariant changes
+- add or update a spec when the feature surface or design intent changes materially
+- add rationale comments in code only where the reason is not obvious from the code itself
+
+Do not:
+- duplicate the same explanation in every document
+- leave the spec stale after the implementation changed
+- hide a user-visible or operator-visible behavior change inside a commit without doc updates
+
+## Review Checklist
+
+Before merging a meaningful feature, check:
+- the boundary is named and documented
+- the code lives in the correct concern folder
+- the spec matches the implementation
+- acceptance checks map to the stated goal
+- tests cover both happy path and edge cases
+- observability events or delivery behavior are updated when needed
+- docs were updated at the right depth, not just somewhere
+
+## Maintenance
+
+Update this document when:
+- a new bounded context is introduced
+- the documentation hierarchy changes
+- the preferred workflow changes
+- the project adopts a new hard gate or architectural rule
+
+When a section becomes obsolete, deprecate it explicitly instead of silently drifting away from it.

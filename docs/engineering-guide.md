@@ -4,6 +4,8 @@ This document sets the baseline for how `quest-runner` should evolve from v0 onw
 
 The project is small on purpose. The guidance below exists to keep it small, typed, observable, and extractable as the feature surface grows.
 
+Read [`docs/design-system.md`](./design-system.md) first when the question is about project shape, spec-driven workflow, bounded contexts, or documentation hierarchy. Use this guide for implementation rules and runtime invariants.
+
 ## Design Principles
 
 1. Keep the correctness boundary local.
@@ -31,38 +33,20 @@ Current architectural layers:
 - `src/cli.ts`
   CLI transport only. Parse input, resolve paths, invoke domain services, emit JSON.
 
-- `src/core/spec-schema.ts`
-  Quest and slice contracts.
+- `src/core/planning/*`
+  Quest and slice contracts plus pure planning logic.
 
-- `src/core/worker-schema.ts`
-  Worker contracts and backend metadata.
+- `src/core/workers/*`
+  Worker contracts, backend presets, registry, and calibration.
 
-- `src/core/worker-presets.ts`
-  Backend-specific worker presets and defaults. The CLI may choose among them, but transport code should not own backend templates.
+- `src/core/runs/*`
+  Execution lifecycle, runner adapters, workspaces, cleanup, and integration.
 
-- `src/core/planner.ts`
-  Pure planning logic. No filesystem or process execution.
+- `src/core/observability/*`
+  Event schemas, sink config, delivery logs, and sink handlers. This layer observes run state; it must not become a second execution path.
 
-- `src/core/run-store.ts`
-  Persistent run storage and retrieval.
-
-- `src/core/run-executor.ts`
-  Runtime orchestration of planned runs.
-
-- `src/core/runner.ts`
-  Runner adapter boundary.
-
-- `src/core/calibration.ts`
-  Built-in worker evaluation suites that must reuse normal run planning and execution instead of inventing a parallel orchestration model.
-
-- `src/core/observability-*`
-  Event schemas, sink config, delivery logs, and dispatch. This layer observes run state; it must not become a second execution path.
-
-- `src/core/observability/sinks/*`
-  Sink-specific schemas and delivery handlers. Telegram, webhook, and future sinks should live here instead of expanding the dispatcher file.
-
-- `src/core/run-lifecycle.ts`
-  Shared lifecycle helpers for run and slice state mutation.
+- `src/core/errors.ts`, `src/core/storage.ts`, `src/core/secret-store.ts`
+  Shared infrastructure. Keep these small. If they start owning domain rules, the boundary is wrong.
 
 Recommended future layers:
 
@@ -80,6 +64,8 @@ Keep the dependency direction one-way:
 `cli -> core services -> storage / adapters`
 
 Core planning and schema code must not import CLI concerns.
+
+Prefer concern folders and vertical slices over flat growth in `src/core`. If a feature needs more than one file, it should usually live under the context folder that owns the behavior.
 
 ## Domain Rules
 

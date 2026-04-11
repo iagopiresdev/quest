@@ -1,4 +1,4 @@
-import type { RegisteredWorker } from "./worker-schema";
+import type { RegisteredWorker } from "./schema";
 
 export type CodexWorkerPresetInput = {
   approach?: string;

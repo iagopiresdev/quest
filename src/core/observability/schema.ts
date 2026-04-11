@@ -7,7 +7,7 @@ import {
   deliveryStatusSchema,
   type ObservabilityDeliveriesDocument,
   observabilityDeliveriesSchema,
-} from "./observability/delivery-schema";
+} from "./delivery-schema";
 import {
   type ObservableCalibrationEventType,
   type ObservableEventType,
@@ -15,7 +15,7 @@ import {
   observableCalibrationEventTypeSchema,
   observableEventTypeSchema,
   observableRunEventTypeSchema,
-} from "./observability/event-types";
+} from "./event-types";
 import {
   createObservableCalibrationEvent,
   createObservableRunEvent,
@@ -25,10 +25,10 @@ import {
   observableCalibrationEventSchema,
   observableEventSchema,
   observableRunEventSchema,
-} from "./observability/observable-events";
-import { sinkSchemas, telegramSinkSchema, webhookSinkSchema } from "./observability/sinks";
-import type { TelegramSink } from "./observability/sinks/telegram-sink";
-import type { WebhookSink } from "./observability/sinks/webhook-sink";
+} from "./observable-events";
+import { sinkSchemas, telegramSinkSchema, webhookSinkSchema } from "./sinks";
+import type { TelegramSink } from "./sinks/telegram-sink";
+import type { WebhookSink } from "./sinks/webhook-sink";
 
 export type {
   DeliveryRecord,

@@ -1,11 +1,13 @@
 import { resolve } from "node:path";
-
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
+import type { QuestCommandSpec } from "../planning/spec-schema";
+import { SecretStore } from "../secret-store";
+import { ensureDirectory } from "../storage";
+import type { WorkerRegistry } from "../workers/registry";
+import type { RegisteredWorker } from "../workers/schema";
+import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
-import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
-import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
-import type { QuestRunStore } from "./run-store";
 import {
   CodexCliRunnerAdapter,
   DryRunRunnerAdapter,
@@ -13,11 +15,8 @@ import {
   LocalCommandRunnerAdapter,
   RunnerRegistry,
 } from "./runner";
-import { SecretStore } from "./secret-store";
-import type { QuestCommandSpec } from "./spec-schema";
-import { ensureDirectory } from "./storage";
-import type { WorkerRegistry } from "./worker-registry";
-import type { RegisteredWorker } from "./worker-schema";
+import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./schema";
+import type { QuestRunStore } from "./store";
 import { prepareExecutionWorkspace } from "./workspace-materializer";
 
 function requireExecutableRun(run: QuestRunDocument): void {

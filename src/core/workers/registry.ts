@@ -1,15 +1,15 @@
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
 import {
   readJsonFileOrDefault,
   resolveWorkerRegistryPath,
   writeJsonFileAtomically,
-} from "./storage";
+} from "../storage";
 import {
   type RegisteredWorker,
   registeredWorkerSchema,
   type WorkerRegistryDocument,
   workerRegistrySchema,
-} from "./worker-schema";
+} from "./schema";
 
 const EMPTY_WORKER_REGISTRY: WorkerRegistryDocument = {
   version: 1,

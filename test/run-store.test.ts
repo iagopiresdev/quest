@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
-import { QuestRunStore } from "../src/core/run-store";
+import { QuestRunStore } from "../src/core/runs/store";
 import { createSlice, createSpec, createWorkerForRunner } from "./helpers";
 
 test("run store creates a planned run and lists it", async () => {

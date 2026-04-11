@@ -1,24 +1,23 @@
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
-
-import { QuestDomainError } from "./errors";
-import { planQuest } from "./planner";
-import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-lifecycle";
-import {
-  type QuestRunDocument,
-  type QuestRunEvent,
-  type QuestRunSliceState,
-  questRunDocumentSchema,
-} from "./run-schema";
-import type { QuestSpec } from "./spec-schema";
+import { QuestDomainError } from "../errors";
+import { planQuest } from "../planning/planner";
+import type { QuestSpec } from "../planning/spec-schema";
 import {
   readJsonFileOrDefault,
   resolveQuestRunPath,
   resolveQuestRunsRoot,
   resolveQuestWorkspacesRoot,
   writeJsonFileAtomically,
-} from "./storage";
-import type { RegisteredWorker } from "./worker-schema";
+} from "../storage";
+import type { RegisteredWorker } from "../workers/schema";
+import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
+import {
+  type QuestRunDocument,
+  type QuestRunEvent,
+  type QuestRunSliceState,
+  questRunDocumentSchema,
+} from "./schema";
 import {
   assertWorkspacePathWithinRoot,
   resolveRunWorkspaceRootPath,

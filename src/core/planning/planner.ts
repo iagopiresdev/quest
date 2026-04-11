@@ -1,6 +1,6 @@
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
+import type { RegisteredWorker, WorkerDiscipline } from "../workers/schema";
 import type { QuestSliceSpec, QuestSpec } from "./spec-schema";
-import type { RegisteredWorker, WorkerDiscipline } from "./worker-schema";
 
 type QuestPlanWarningCode =
   | "preferred_worker_missing"

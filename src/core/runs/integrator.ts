@@ -1,13 +1,12 @@
 import { readdir, realpath } from "node:fs/promises";
-
-import { QuestDomainError } from "./errors";
+import { QuestDomainError } from "../errors";
+import type { QuestCommandSpec } from "../planning/spec-schema";
+import { ensureDirectory } from "../storage";
+import { appendEvent } from "./lifecycle";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
-import { appendEvent } from "./run-lifecycle";
-import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
-import type { QuestRunStore } from "./run-store";
-import type { QuestCommandSpec } from "./spec-schema";
-import { ensureDirectory } from "./storage";
+import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./schema";
+import type { QuestRunStore } from "./store";
 import {
   assertWorkspacePathWithinRoot,
   resolveIntegrationWorkspacePathForRunRoot,

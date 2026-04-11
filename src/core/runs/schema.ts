@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-import type { QuestPlan } from "./planner";
+import type { QuestPlan } from "../planning/planner";
 import {
   type QuestCommandSpec,
   type QuestSpec,
   questCommandSchema,
   questSpecSchema,
-} from "./spec-schema";
+} from "../planning/spec-schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const isoDateStringSchema = z.string().datetime({ offset: true });

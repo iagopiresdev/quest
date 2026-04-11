@@ -1,21 +1,21 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { QuestDomainError } from "./errors";
-import { runSubprocess } from "./process";
-import { buildProcessEnv } from "./process-env";
-import type { QuestRunExecutor } from "./run-executor";
-import type { QuestRunDocument } from "./run-schema";
-import type { QuestRunStore } from "./run-store";
-import { type QuestSliceSpec, type QuestSpec, questSpecSchema } from "./spec-schema";
-import { ensureDirectory } from "./storage";
-import type { WorkerRegistry } from "./worker-registry";
+import { QuestDomainError } from "../errors";
+import { type QuestSliceSpec, type QuestSpec, questSpecSchema } from "../planning/spec-schema";
+import type { QuestRunExecutor } from "../runs/executor";
+import { runSubprocess } from "../runs/process";
+import { buildProcessEnv } from "../runs/process-env";
+import type { QuestRunDocument } from "../runs/schema";
+import type { QuestRunStore } from "../runs/store";
+import { ensureDirectory } from "../storage";
+import type { WorkerRegistry } from "./registry";
 import type {
   RegisteredWorker,
   WorkerCalibrationRecord,
   WorkerCalibrationSuite,
   WorkerDiscipline,
-} from "./worker-schema";
+} from "./schema";
 
 type CalibrationFixture = {
   repositoryPath: string;
