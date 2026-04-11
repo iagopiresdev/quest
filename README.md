@@ -154,6 +154,7 @@ bun install
 bun run lint
 bun run typecheck
 bun test
+bun run test:coverage
 bun run build
 ```
 
@@ -165,4 +166,5 @@ This repo uses Biome for formatting, import organization, and linting.
 bun run lint
 bun run lint:fix
 bun run format
+bun run test:coverage
 ```

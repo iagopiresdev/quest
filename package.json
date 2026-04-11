@@ -18,6 +18,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
     "quest": "bun ./src/cli.ts",
+    "test:coverage": "bun test --coverage",
+    "test:ci": "bun test",
     "test": "bun test",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
