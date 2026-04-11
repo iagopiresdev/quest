@@ -62,10 +62,10 @@ export async function runSubprocess(options: {
   cmd: string[];
   cwd: string;
   env: Record<string, string | undefined>;
-  maxOutputBytes?: number;
-  signal?: AbortSignal;
-  stdin?: string;
-  timeoutMs?: number;
+  maxOutputBytes?: number | undefined;
+  signal?: AbortSignal | undefined;
+  stdin?: string | undefined;
+  timeoutMs?: number | undefined;
 }): Promise<SubprocessResult> {
   const maxOutputBytes = options.maxOutputBytes ?? 256 * 1024;
   let aborted = options.signal?.aborted === true;

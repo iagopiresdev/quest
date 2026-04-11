@@ -159,13 +159,13 @@ function stdoutIsTty(): boolean {
   return process.stdout.isTTY === true;
 }
 
-function findOptionValue(args: string[], flag: string): string | null {
+function findOptionValue(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   if (index < 0) {
-    return null;
+    return undefined;
   }
 
-  return args[index + 1] ?? null;
+  return args[index + 1] ?? undefined;
 }
 
 function hasFlag(args: string[], flag: string): boolean {
@@ -181,7 +181,7 @@ function requireOptionValue(args: string[], flag: string, label: string): string
   return value;
 }
 
-function parseCommaSeparatedValues(value: string | null): string[] {
+function parseCommaSeparatedValues(value: string | undefined): string[] {
   if (!value) {
     return [];
   }
@@ -192,7 +192,7 @@ function parseCommaSeparatedValues(value: string | null): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-function parseKeyValuePairs(value: string | null): Record<string, string> {
+function parseKeyValuePairs(value: string | undefined): Record<string, string> {
   const entries = parseCommaSeparatedValues(value);
   return Object.fromEntries(
     entries.map((entry) => {
@@ -212,15 +212,15 @@ function parseKeyValuePairs(value: string | null): Record<string, string> {
   );
 }
 
-function parseObservableEventTypes(value: string | null): ObservableEventType[] {
+function parseObservableEventTypes(value: string | undefined): ObservableEventType[] {
   return parseCommaSeparatedValues(value).map((entry) => observableEventTypeSchema.parse(entry));
 }
 
-function parseObservableEventType(value: string | null): ObservableEventType | undefined {
+function parseObservableEventType(value: string | undefined): ObservableEventType | undefined {
   return value ? observableEventTypeSchema.parse(value) : undefined;
 }
 
-function parseDeliveryStatus(value: string | null): DeliveryStatus | undefined {
+function parseDeliveryStatus(value: string | undefined): DeliveryStatus | undefined {
   return value ? deliveryStatusSchema.parse(value) : undefined;
 }
 
@@ -323,72 +323,93 @@ async function confirmWithDefault(question: string, fallback: boolean): Promise<
 function buildCodexWorker(args: string[]): RegisteredWorker {
   const name = findOptionValue(args, "--name") ?? "Codex Worker";
   const authMode = findOptionValue(args, "--auth-mode") ?? "native-login";
+  const targetEnvVar = findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY";
+  let auth: Parameters<typeof createCodexWorkerPreset>[0]["auth"];
+  if (authMode === "env-var") {
+    auth = {
+      envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
+      mode: "env-var",
+      targetEnvVar,
+    };
+  } else if (authMode === "secret-store") {
+    auth = {
+      mode: "secret-store",
+      secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
+      targetEnvVar,
+    };
+  } else {
+    auth = {
+      mode: "native-login",
+      targetEnvVar,
+    };
+  }
 
-  const auth =
-    authMode === "env-var"
-      ? {
-          envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
-          mode: "env-var" as const,
-          targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
-        }
-      : authMode === "secret-store"
-        ? {
-            mode: "secret-store" as const,
-            secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
-            targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
-          }
-        : {
-            mode: "native-login" as const,
-            targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
-          };
-
-  return createCodexWorkerPreset({
-    approach: findOptionValue(args, "--approach") ?? undefined,
+  const input: Parameters<typeof createCodexWorkerPreset>[0] = {
     auth,
     executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "codex-worker"),
     name,
-    profile: findOptionValue(args, "--profile") ?? undefined,
-    prompt: findOptionValue(args, "--prompt") ?? undefined,
     tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")),
-    title: findOptionValue(args, "--title") ?? undefined,
     toolAllow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
     toolDeny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
-    voice: findOptionValue(args, "--voice") ?? undefined,
-    workerClass: findOptionValue(args, "--class") ?? undefined,
-  });
+  };
+  const approach = findOptionValue(args, "--approach");
+  const profile = findOptionValue(args, "--profile");
+  const prompt = findOptionValue(args, "--prompt");
+  const title = findOptionValue(args, "--title");
+  const voice = findOptionValue(args, "--voice");
+  const workerClass = findOptionValue(args, "--class");
+
+  if (approach) input.approach = approach;
+  if (profile) input.profile = profile;
+  if (prompt) input.prompt = prompt;
+  if (title) input.title = title;
+  if (voice) input.voice = voice;
+  if (workerClass) input.workerClass = workerClass;
+
+  return createCodexWorkerPreset(input);
 }
 
 function buildHermesWorker(args: string[]): RegisteredWorker {
   const name = findOptionValue(args, "--name") ?? "Hermes Worker";
   const authMode = findOptionValue(args, "--auth-mode");
-  const auth =
-    authMode === "env-var"
-      ? {
-          envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
-          mode: "env-var" as const,
-          targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
-        }
-      : authMode === "secret-store"
-        ? {
-            mode: "secret-store" as const,
-            secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
-            targetEnvVar: findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY",
-          }
-        : undefined;
+  const targetEnvVar = findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY";
+  let auth: Parameters<typeof createHermesWorkerPreset>[0]["auth"];
+  if (authMode === "env-var") {
+    auth = {
+      envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
+      mode: "env-var",
+      targetEnvVar,
+    };
+  } else if (authMode === "secret-store") {
+    auth = {
+      mode: "secret-store",
+      secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
+      targetEnvVar,
+    };
+  }
 
-  return createHermesWorkerPreset({
-    approach: findOptionValue(args, "--approach") ?? undefined,
-    auth,
+  const input: Parameters<typeof createHermesWorkerPreset>[0] = {
     baseUrl: findOptionValue(args, "--base-url") ?? "http://127.0.0.1:8000/v1",
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "hermes-worker"),
     name,
-    profile: findOptionValue(args, "--profile") ?? undefined,
-    prompt: findOptionValue(args, "--prompt") ?? undefined,
-    title: findOptionValue(args, "--title") ?? undefined,
-    voice: findOptionValue(args, "--voice") ?? undefined,
-    workerClass: findOptionValue(args, "--class") ?? undefined,
-  });
+  };
+  const approach = findOptionValue(args, "--approach");
+  const profile = findOptionValue(args, "--profile");
+  const prompt = findOptionValue(args, "--prompt");
+  const title = findOptionValue(args, "--title");
+  const voice = findOptionValue(args, "--voice");
+  const workerClass = findOptionValue(args, "--class");
+
+  if (auth) input.auth = auth;
+  if (approach) input.approach = approach;
+  if (profile) input.profile = profile;
+  if (prompt) input.prompt = prompt;
+  if (title) input.title = title;
+  if (voice) input.voice = voice;
+  if (workerClass) input.workerClass = workerClass;
+
+  return createHermesWorkerPreset(input);
 }
 
 function summarizeSliceState(slice: QuestRunSliceState): RunSliceSummary {
@@ -414,13 +435,14 @@ function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
     return counts;
   }, {});
 
-  const integrationStatus = run.events.some((event) => event.type === "run_integrated")
-    ? "integrated"
-    : run.events.some((event) => event.type === "run_integration_checks_failed")
-      ? "failed"
-      : run.integrationWorkspacePath
-        ? "started"
-        : "not_started";
+  let integrationStatus: RunDetailSummary["integration"]["status"] = "not_started";
+  if (run.events.some((event) => event.type === "run_integrated")) {
+    integrationStatus = "integrated";
+  } else if (run.events.some((event) => event.type === "run_integration_checks_failed")) {
+    integrationStatus = "failed";
+  } else if (run.integrationWorkspacePath) {
+    integrationStatus = "started";
+  }
 
   return {
     counts: {
@@ -674,37 +696,75 @@ function checkOk(checks: DoctorCheck[], name: string): boolean {
   return checks.find((check) => check.name === name)?.ok === true;
 }
 
+function definedPathOptions<
+  T extends
+    | "explicitRegistryPath"
+    | "explicitRunsRoot"
+    | "explicitWorkspacesRoot"
+    | "explicitCalibrationsRoot"
+    | "explicitObservabilityConfigPath"
+    | "explicitObservabilityDeliveriesPath",
+>(
+  stateRoot: string | undefined,
+  key: T,
+  value: string | undefined,
+): { stateRoot?: string } & Partial<Record<T, string>> {
+  const partial: Partial<Record<T, string>> = {};
+  if (value) {
+    partial[key] = value;
+  }
+  return stateRoot ? { stateRoot, ...partial } : partial;
+}
+
+function pushOption(args: string[], flag: string, value: string | undefined): void {
+  if (!value) {
+    return;
+  }
+
+  args.push(flag, value);
+}
+
 async function runSetup(
   args: string[],
   registry: WorkerRegistry,
   secretStore: SecretStore,
 ): Promise<Record<string, unknown>> {
-  const stateRoot = resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined);
-  const registryPath = resolveWorkerRegistryPath({
-    explicitRegistryPath: findOptionValue(args, "--registry") ?? undefined,
-    stateRoot,
-  });
-  const runsRoot = resolveQuestRunsRoot({
-    explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
-    stateRoot,
-  });
-  const workspacesRoot = resolveQuestWorkspacesRoot({
-    explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
-    stateRoot,
-  });
-  const calibrationsRoot = resolveQuestCalibrationsRoot({
-    explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
-    stateRoot,
-  });
-  const observabilityConfigPath = resolveQuestObservabilityConfigPath({
-    explicitObservabilityConfigPath: findOptionValue(args, "--observability-config") ?? undefined,
-    stateRoot,
-  });
-  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath({
-    explicitObservabilityDeliveriesPath:
-      findOptionValue(args, "--observability-deliveries") ?? undefined,
-    stateRoot,
-  });
+  const stateRootOption = findOptionValue(args, "--state-root");
+  const stateRoot = resolveQuestStateRoot(stateRootOption);
+  const registryPath = resolveWorkerRegistryPath(
+    definedPathOptions(stateRoot, "explicitRegistryPath", findOptionValue(args, "--registry")),
+  );
+  const runsRoot = resolveQuestRunsRoot(
+    definedPathOptions(stateRoot, "explicitRunsRoot", findOptionValue(args, "--runs-root")),
+  );
+  const workspacesRoot = resolveQuestWorkspacesRoot(
+    definedPathOptions(
+      stateRoot,
+      "explicitWorkspacesRoot",
+      findOptionValue(args, "--workspaces-root"),
+    ),
+  );
+  const calibrationsRoot = resolveQuestCalibrationsRoot(
+    definedPathOptions(
+      stateRoot,
+      "explicitCalibrationsRoot",
+      findOptionValue(args, "--calibrations-root"),
+    ),
+  );
+  const observabilityConfigPath = resolveQuestObservabilityConfigPath(
+    definedPathOptions(
+      stateRoot,
+      "explicitObservabilityConfigPath",
+      findOptionValue(args, "--observability-config"),
+    ),
+  );
+  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath(
+    definedPathOptions(
+      stateRoot,
+      "explicitObservabilityDeliveriesPath",
+      findOptionValue(args, "--observability-deliveries"),
+    ),
+  );
 
   const doctor = (await runDoctor(
     args,
@@ -757,49 +817,35 @@ async function runSetup(
     }
 
     if (createWorker) {
+      const workerArgs = [
+        "--name",
+        workerName,
+        "--profile",
+        profile,
+        "--id",
+        findOptionValue(args, "--worker-id") ?? slugifyWorkerId(workerName),
+      ];
+      if (backend === "hermes") {
+        workerArgs.push("--base-url", baseUrl);
+      }
+      if (backend === "codex") {
+        workerArgs.push("--auth-mode", findOptionValue(args, "--auth-mode") ?? "native-login");
+      } else {
+        pushOption(workerArgs, "--auth-mode", findOptionValue(args, "--auth-mode"));
+      }
+      pushOption(workerArgs, "--env-var", findOptionValue(args, "--env-var"));
+      pushOption(workerArgs, "--secret-ref", findOptionValue(args, "--secret-ref"));
+      pushOption(workerArgs, "--target-env-var", findOptionValue(args, "--target-env-var"));
+      pushOption(workerArgs, "--title", findOptionValue(args, "--title"));
+      pushOption(workerArgs, "--class", findOptionValue(args, "--class"));
+      pushOption(workerArgs, "--voice", findOptionValue(args, "--voice"));
+      pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
+      pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
+      pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
+
       createdWorker = await registry.upsertWorker(
         registeredWorkerSchema.parse(
-          (backend === "hermes" ? buildHermesWorker : buildCodexWorker)([
-            "--name",
-            workerName,
-            "--profile",
-            profile,
-            "--id",
-            findOptionValue(args, "--worker-id") ?? slugifyWorkerId(workerName),
-            ...(backend === "hermes" ? ["--base-url", baseUrl] : []),
-            ...(backend === "codex"
-              ? ["--auth-mode", findOptionValue(args, "--auth-mode") ?? "native-login"]
-              : findOptionValue(args, "--auth-mode")
-                ? ["--auth-mode", findOptionValue(args, "--auth-mode") as string]
-                : []),
-            ...(findOptionValue(args, "--env-var")
-              ? ["--env-var", findOptionValue(args, "--env-var") as string]
-              : []),
-            ...(findOptionValue(args, "--secret-ref")
-              ? ["--secret-ref", findOptionValue(args, "--secret-ref") as string]
-              : []),
-            ...(findOptionValue(args, "--target-env-var")
-              ? ["--target-env-var", findOptionValue(args, "--target-env-var") as string]
-              : []),
-            ...(findOptionValue(args, "--title")
-              ? ["--title", findOptionValue(args, "--title") as string]
-              : []),
-            ...(findOptionValue(args, "--class")
-              ? ["--class", findOptionValue(args, "--class") as string]
-              : []),
-            ...(findOptionValue(args, "--voice")
-              ? ["--voice", findOptionValue(args, "--voice") as string]
-              : []),
-            ...(findOptionValue(args, "--approach")
-              ? ["--approach", findOptionValue(args, "--approach") as string]
-              : []),
-            ...(findOptionValue(args, "--prompt")
-              ? ["--prompt", findOptionValue(args, "--prompt") as string]
-              : []),
-            ...(findOptionValue(args, "--executable")
-              ? ["--executable", findOptionValue(args, "--executable") as string]
-              : []),
-          ]),
+          (backend === "hermes" ? buildHermesWorker : buildCodexWorker)(workerArgs),
         ),
       );
     }
@@ -1203,33 +1249,49 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       await runDoctor(
         args,
         secretStore,
-        resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined),
-        resolveQuestCalibrationsRoot({
-          explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
-          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
-        }),
-        resolveQuestObservabilityConfigPath({
-          explicitObservabilityConfigPath:
-            findOptionValue(args, "--observability-config") ?? undefined,
-          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
-        }),
-        resolveQuestObservabilityDeliveriesPath({
-          explicitObservabilityDeliveriesPath:
-            findOptionValue(args, "--observability-deliveries") ?? undefined,
-          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
-        }),
-        resolveQuestRunsRoot({
-          explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
-          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
-        }),
-        resolveQuestWorkspacesRoot({
-          explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
-          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
-        }),
-        resolveWorkerRegistryPath({
-          explicitRegistryPath: findOptionValue(args, "--registry") ?? undefined,
-          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
-        }),
+        resolveQuestStateRoot(findOptionValue(args, "--state-root")),
+        resolveQuestCalibrationsRoot(
+          definedPathOptions(
+            findOptionValue(args, "--state-root"),
+            "explicitCalibrationsRoot",
+            findOptionValue(args, "--calibrations-root"),
+          ),
+        ),
+        resolveQuestObservabilityConfigPath(
+          definedPathOptions(
+            findOptionValue(args, "--state-root"),
+            "explicitObservabilityConfigPath",
+            findOptionValue(args, "--observability-config"),
+          ),
+        ),
+        resolveQuestObservabilityDeliveriesPath(
+          definedPathOptions(
+            findOptionValue(args, "--state-root"),
+            "explicitObservabilityDeliveriesPath",
+            findOptionValue(args, "--observability-deliveries"),
+          ),
+        ),
+        resolveQuestRunsRoot(
+          definedPathOptions(
+            findOptionValue(args, "--state-root"),
+            "explicitRunsRoot",
+            findOptionValue(args, "--runs-root"),
+          ),
+        ),
+        resolveQuestWorkspacesRoot(
+          definedPathOptions(
+            findOptionValue(args, "--state-root"),
+            "explicitWorkspacesRoot",
+            findOptionValue(args, "--workspaces-root"),
+          ),
+        ),
+        resolveWorkerRegistryPath(
+          definedPathOptions(
+            findOptionValue(args, "--state-root"),
+            "explicitRegistryPath",
+            findOptionValue(args, "--registry"),
+          ),
+        ),
       ),
     usage:
       "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
@@ -1264,8 +1326,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, observabilityStore }) => ({
       deliveries: await observabilityStore.listDeliveries({
         eventType: parseObservableEventType(findOptionValue(args, "--event-type")),
-        runId: findOptionValue(args, "--run-id") ?? undefined,
-        sinkId: findOptionValue(args, "--sink-id") ?? undefined,
+        runId: findOptionValue(args, "--run-id"),
+        sinkId: findOptionValue(args, "--sink-id"),
         status: parseDeliveryStatus(findOptionValue(args, "--status")),
       }),
     }),
@@ -1282,8 +1344,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, dispatcher }) => ({
       attempts: await dispatcher.retryDeliveries({
         eventType: parseObservableEventType(findOptionValue(args, "--event-type")),
-        runId: findOptionValue(args, "--run-id") ?? undefined,
-        sinkId: findOptionValue(args, "--sink-id") ?? undefined,
+        runId: findOptionValue(args, "--run-id"),
+        sinkId: findOptionValue(args, "--sink-id"),
         status: parseDeliveryStatus(findOptionValue(args, "--status")) ?? "failed",
       }),
     }),
@@ -1530,9 +1592,9 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       const previousRun = await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>"));
       return {
         run: await runStore.createRun(previousRun.spec, await registry.listWorkers(), {
-          forcedWorkerId: findOptionValue(args, "--worker-id") ?? undefined,
+          forcedWorkerId: findOptionValue(args, "--worker-id") || undefined,
           sourceRepositoryPath:
-            findOptionValue(args, "--source-repo") ?? previousRun.sourceRepositoryPath,
+            findOptionValue(args, "--source-repo") || previousRun.sourceRepositoryPath,
         }),
       };
     },
@@ -1545,7 +1607,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, runExecutor }) => ({
       run: await runExecutor.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
         dryRun: hasFlag(args, "--dry-run"),
-        sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
+        sourceRepositoryPath: findOptionValue(args, "--source-repo") || undefined,
       }),
     }),
     usage:
@@ -1604,32 +1666,42 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const stateRoot = resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined);
-  const registryPath = resolveWorkerRegistryPath({
-    explicitRegistryPath: findOptionValue(args, "--registry") ?? undefined,
-    stateRoot,
-  });
-  const runsRoot = resolveQuestRunsRoot({
-    explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
-    stateRoot,
-  });
-  const workspacesRoot = resolveQuestWorkspacesRoot({
-    explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
-    stateRoot,
-  });
-  const calibrationsRoot = resolveQuestCalibrationsRoot({
-    explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
-    stateRoot,
-  });
-  const observabilityConfigPath = resolveQuestObservabilityConfigPath({
-    explicitObservabilityConfigPath: findOptionValue(args, "--observability-config") ?? undefined,
-    stateRoot,
-  });
-  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath({
-    explicitObservabilityDeliveriesPath:
-      findOptionValue(args, "--observability-deliveries") ?? undefined,
-    stateRoot,
-  });
+  const stateRootOption = findOptionValue(args, "--state-root");
+  const stateRoot = resolveQuestStateRoot(stateRootOption);
+  const registryPath = resolveWorkerRegistryPath(
+    definedPathOptions(stateRoot, "explicitRegistryPath", findOptionValue(args, "--registry")),
+  );
+  const runsRoot = resolveQuestRunsRoot(
+    definedPathOptions(stateRoot, "explicitRunsRoot", findOptionValue(args, "--runs-root")),
+  );
+  const workspacesRoot = resolveQuestWorkspacesRoot(
+    definedPathOptions(
+      stateRoot,
+      "explicitWorkspacesRoot",
+      findOptionValue(args, "--workspaces-root"),
+    ),
+  );
+  const calibrationsRoot = resolveQuestCalibrationsRoot(
+    definedPathOptions(
+      stateRoot,
+      "explicitCalibrationsRoot",
+      findOptionValue(args, "--calibrations-root"),
+    ),
+  );
+  const observabilityConfigPath = resolveQuestObservabilityConfigPath(
+    definedPathOptions(
+      stateRoot,
+      "explicitObservabilityConfigPath",
+      findOptionValue(args, "--observability-config"),
+    ),
+  );
+  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath(
+    definedPathOptions(
+      stateRoot,
+      "explicitObservabilityDeliveriesPath",
+      findOptionValue(args, "--observability-deliveries"),
+    ),
+  );
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const secretStore = new SecretStore();

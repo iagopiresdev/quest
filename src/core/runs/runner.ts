@@ -20,7 +20,7 @@ export type RunnerExecutionResult = {
 export type RunnerExecutionContext = {
   cwd: string;
   run: QuestRunDocument;
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
   slice: QuestSliceSpec;
   sliceState: QuestRunSliceState;
   worker: RegisteredWorker;
@@ -621,7 +621,7 @@ export class HermesApiRunnerAdapter implements RunnerAdapter {
     const snapshots = await collectHermesFileSnapshots(context);
     const prompt = buildHermesPrompt(context, snapshots);
 
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    const requestInit: RequestInit = {
       body: JSON.stringify({
         messages: [
           {
@@ -639,8 +639,12 @@ export class HermesApiRunnerAdapter implements RunnerAdapter {
         "content-type": "application/json",
       },
       method: "POST",
-      signal: context.signal,
-    });
+    };
+    if (context.signal) {
+      requestInit.signal = context.signal;
+    }
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, requestInit);
 
     const responseText = await response.text();
     if (!response.ok) {

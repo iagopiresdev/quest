@@ -141,7 +141,7 @@ export class QuestRunExecutor {
 
   async executeRun(
     runId: string,
-    options: { dryRun?: boolean; sourceRepositoryPath?: string } = {},
+    options: { dryRun?: boolean | undefined; sourceRepositoryPath?: string | undefined } = {},
   ): Promise<QuestRunDocument> {
     const run = await this.runStore.getRun(runId);
     requireExecutableRun(run);

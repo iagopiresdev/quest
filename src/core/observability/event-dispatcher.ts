@@ -60,10 +60,10 @@ export class EventDispatcher {
   }
 
   async retryDeliveries(filters: {
-    eventType?: ObservableEventType;
-    runId?: string;
-    sinkId?: string;
-    status?: DeliveryStatus;
+    eventType?: ObservableEventType | undefined;
+    runId?: string | undefined;
+    sinkId?: string | undefined;
+    status?: DeliveryStatus | undefined;
   }): Promise<DeliveryAttempt[]> {
     const [config, deliveries] = await Promise.all([
       this.observabilityStore.readConfig(),

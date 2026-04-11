@@ -95,6 +95,8 @@ Preferred patterns:
 - Sparse comments that explain why a boundary or invariant exists, not what the next line of code does.
 - Import ordering must be left to Biome's `source.organizeImports` action instead of hand-maintained local styles.
 - Circular imports in `src/**` must fail lint. Keep shared contracts below the modules that consume them instead of using barrel files as two-way dependency hubs.
+- Cognitive complexity and function-size limits are hard gates. If a function needs an explicit override in `biome.json`, treat that as temporary design debt and pay it down before adding more behavior to the same function.
+- Nested ternaries are forbidden. Plain ternaries and `??` are still under active cleanup; do not add new dense conditional-expression chains when a helper or guard clause would be clearer.
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 - Redaction before delegation:
@@ -116,6 +118,7 @@ Use TypeScript as a modeling tool, not just linting.
 - All persisted structures must have a schema and exported inferred type.
 - Prefer narrow unions for statuses, event types, runners, and disciplines.
 - Do not use `any`.
+- Use `exactOptionalPropertyTypes` semantics. Optional means “may be absent,” not “present with undefined” unless the schema or type says so explicitly.
 - Avoid clever conditional types when a direct named type is available.
 - Validate external input at the boundary, then pass typed data internally.
 - When a value is optional because of lifecycle timing, make that explicit in the schema.

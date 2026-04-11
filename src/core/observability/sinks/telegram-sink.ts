@@ -88,11 +88,12 @@ export class TelegramSinkHandler implements EventSinkHandler<TelegramSink> {
 
   async deliver(sink: TelegramSink, context: EventSinkDeliveryContext): Promise<DeliveryRecord> {
     try {
-      const botToken = sink.botTokenSecretRef
-        ? await context.secretStore.getSecret(sink.botTokenSecretRef)
-        : sink.botTokenEnv
-          ? Bun.env[sink.botTokenEnv]
-          : undefined;
+      let botToken: string | undefined;
+      if (sink.botTokenSecretRef) {
+        botToken = await context.secretStore.getSecret(sink.botTokenSecretRef);
+      } else if (sink.botTokenEnv) {
+        botToken = Bun.env[sink.botTokenEnv];
+      }
       if (!botToken) {
         return createFailureDelivery(
           sink.id,

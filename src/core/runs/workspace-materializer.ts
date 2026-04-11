@@ -181,7 +181,7 @@ export async function prepareExecutionWorkspace(
   run: QuestRunDocument,
   sliceState: QuestRunSliceState,
   cwd: string,
-): Promise<{ baseRevision?: string }> {
+): Promise<{ baseRevision?: string | undefined }> {
   const workspaceRoot = run.workspaceRoot;
   if (!workspaceRoot) {
     throw new QuestDomainError({

@@ -4,7 +4,7 @@ import { QuestDomainError } from "../src/core/errors";
 import { SecretStore } from "../src/core/secret-store";
 
 test("secret store issues macOS keychain commands through the configured service name", async () => {
-  const calls: Array<{ cmd: string[]; stdin?: string }> = [];
+  const calls: Array<{ cmd: string[]; stdin?: string | undefined }> = [];
   const store = new SecretStore({
     platform: "darwin",
     runCommand: async ({ cmd, stdin }) => {

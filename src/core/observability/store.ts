@@ -178,10 +178,10 @@ export class ObservabilityStore {
 
   async listDeliveries(
     filters: {
-      eventType?: ObservableEventType;
-      runId?: string;
-      sinkId?: string;
-      status?: DeliveryStatus;
+      eventType?: ObservableEventType | undefined;
+      runId?: string | undefined;
+      sinkId?: string | undefined;
+      status?: DeliveryStatus | undefined;
     } = {},
   ): Promise<DeliveryRecord[]> {
     const deliveries = await this.readDeliveries();

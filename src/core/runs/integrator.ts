@@ -510,7 +510,7 @@ export class QuestRunIntegrator {
 
   async integrateRun(
     runId: string,
-    options: { sourceRepositoryPath?: string; targetRef?: string } = {},
+    options: { sourceRepositoryPath?: string | undefined; targetRef?: string | undefined } = {},
   ): Promise<QuestRunDocument> {
     const run = await this.runStore.getRun(runId);
     if (options.sourceRepositoryPath) {

@@ -6,13 +6,13 @@ import { QuestDomainError } from "./errors";
 
 const DEFAULT_STATE_ROOT = join(homedir(), ".quest-runner");
 
-export function resolveQuestStateRoot(explicitPath?: string): string {
+export function resolveQuestStateRoot(explicitPath?: string | undefined): string {
   const configuredPath = explicitPath?.trim() || Bun.env.QUEST_RUNNER_STATE_ROOT?.trim();
   return configuredPath ? resolve(configuredPath) : DEFAULT_STATE_ROOT;
 }
 
 export function resolveWorkerRegistryPath(
-  options: { explicitRegistryPath?: string; stateRoot?: string } = {},
+  options: { explicitRegistryPath?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
     options.explicitRegistryPath?.trim() || Bun.env.QUEST_RUNNER_WORKER_REGISTRY_PATH?.trim();
@@ -24,7 +24,7 @@ export function resolveWorkerRegistryPath(
 }
 
 export function resolveQuestRunsRoot(
-  options: { explicitRunsRoot?: string; stateRoot?: string } = {},
+  options: { explicitRunsRoot?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath = options.explicitRunsRoot?.trim() || Bun.env.QUEST_RUNNER_RUNS_ROOT?.trim();
   if (configuredPath) {
@@ -35,7 +35,7 @@ export function resolveQuestRunsRoot(
 }
 
 export function resolveQuestWorkspacesRoot(
-  options: { explicitWorkspacesRoot?: string; stateRoot?: string } = {},
+  options: { explicitWorkspacesRoot?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
     options.explicitWorkspacesRoot?.trim() || Bun.env.QUEST_RUNNER_WORKSPACES_ROOT?.trim();
@@ -47,7 +47,7 @@ export function resolveQuestWorkspacesRoot(
 }
 
 export function resolveQuestCalibrationsRoot(
-  options: { explicitCalibrationsRoot?: string; stateRoot?: string } = {},
+  options: { explicitCalibrationsRoot?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
     options.explicitCalibrationsRoot?.trim() || Bun.env.QUEST_RUNNER_CALIBRATIONS_ROOT?.trim();
@@ -59,7 +59,10 @@ export function resolveQuestCalibrationsRoot(
 }
 
 export function resolveQuestObservabilityConfigPath(
-  options: { explicitObservabilityConfigPath?: string; stateRoot?: string } = {},
+  options: {
+    explicitObservabilityConfigPath?: string | undefined;
+    stateRoot?: string | undefined;
+  } = {},
 ): string {
   const configuredPath =
     options.explicitObservabilityConfigPath?.trim() ||
@@ -72,7 +75,10 @@ export function resolveQuestObservabilityConfigPath(
 }
 
 export function resolveQuestObservabilityDeliveriesPath(
-  options: { explicitObservabilityDeliveriesPath?: string; stateRoot?: string } = {},
+  options: {
+    explicitObservabilityDeliveriesPath?: string | undefined;
+    stateRoot?: string | undefined;
+  } = {},
 ): string {
   const configuredPath =
     options.explicitObservabilityDeliveriesPath?.trim() ||
@@ -87,8 +93,8 @@ export function resolveQuestObservabilityDeliveriesPath(
 export function resolveQuestRunPath(
   runId: string,
   options: {
-    explicitRunsRoot?: string;
-    stateRoot?: string;
+    explicitRunsRoot?: string | undefined;
+    stateRoot?: string | undefined;
   } = {},
 ): string {
   return join(resolveQuestRunsRoot(options), `${runId}.json`);
@@ -97,8 +103,8 @@ export function resolveQuestRunPath(
 export function resolveQuestRunWorkspaceRoot(
   runId: string,
   options: {
-    explicitWorkspacesRoot?: string;
-    stateRoot?: string;
+    explicitWorkspacesRoot?: string | undefined;
+    stateRoot?: string | undefined;
   } = {},
 ): string {
   return join(resolveQuestWorkspacesRoot(options), runId);
@@ -108,8 +114,8 @@ export function resolveQuestSliceWorkspacePath(
   runId: string,
   sliceId: string,
   options: {
-    explicitWorkspacesRoot?: string;
-    stateRoot?: string;
+    explicitWorkspacesRoot?: string | undefined;
+    stateRoot?: string | undefined;
   } = {},
 ): string {
   return join(resolveQuestRunWorkspaceRoot(runId, options), "slices", sliceId);

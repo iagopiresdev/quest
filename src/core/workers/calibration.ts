@@ -277,12 +277,14 @@ function computeSliceScore(
   const passedCheckCount =
     sliceState.lastChecks?.filter((check) => check.exitCode === 0).length ?? 0;
   const completionScore = sliceState.status === "completed" ? 70 : 0;
-  const validationScore =
-    totalCheckCount === 0
-      ? sliceState.status === "completed"
-        ? 30
-        : 0
-      : Math.round((passedCheckCount / totalCheckCount) * 30);
+  let validationScore = 0;
+  if (totalCheckCount === 0) {
+    if (sliceState.status === "completed") {
+      validationScore = 30;
+    }
+  } else {
+    validationScore = Math.round((passedCheckCount / totalCheckCount) * 30);
+  }
 
   return {
     checkCount: totalCheckCount,

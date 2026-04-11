@@ -33,18 +33,34 @@
     "rules": {
       "recommended": true,
       "complexity": {
-        "noBannedTypes": "error"
+        "noBannedTypes": "error",
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 25
+          }
+        },
+        "noExcessiveLinesPerFunction": {
+          "level": "error",
+          "options": {
+            "maxLines": 120,
+            "skipBlankLines": true,
+            "skipIifes": true
+          }
+        }
       },
       "correctness": {
         "noUnusedImports": "error",
         "noUnusedVariables": "error"
       },
       "style": {
+        "noNestedTernary": "error",
         "noNonNullAssertion": "error",
         "useImportType": "error"
       },
       "suspicious": {
         "noExplicitAny": "error",
+        "noExtraNonNullAssertion": "error",
         "noTsIgnore": "error",
         "useErrorMessage": "error"
       },
@@ -61,5 +77,53 @@
       "semicolons": "always",
       "trailingCommas": "all"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/cli.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 80
+              }
+            },
+            "noExcessiveLinesPerFunction": {
+              "level": "error",
+              "options": {
+                "maxLines": 250,
+                "skipBlankLines": true,
+                "skipIifes": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/core/runs/executor.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 40
+              }
+            },
+            "noExcessiveLinesPerFunction": {
+              "level": "error",
+              "options": {
+                "maxLines": 260,
+                "skipBlankLines": true,
+                "skipIifes": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

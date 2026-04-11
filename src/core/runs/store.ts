@@ -39,14 +39,14 @@ export type QuestRunLogView = {
   runId: string;
   workspaceRoot: string;
   slices: Array<{
+    lastChecks?: QuestRunSliceState["lastChecks"] | undefined;
+    lastError?: string | undefined;
+    lastOutput?: QuestRunSliceState["lastOutput"] | undefined;
     sliceId: string;
     status: QuestRunSliceState["status"];
     title: string;
     wave: number;
     workspacePath: string;
-    lastChecks?: QuestRunSliceState["lastChecks"];
-    lastError?: string;
-    lastOutput?: QuestRunSliceState["lastOutput"];
   }>;
 };
 
@@ -139,7 +139,7 @@ function hydrateWorkspacePaths(run: QuestRunDocument, workspacesRoot: string): Q
 
 function selectWorkersForRun(
   workers: RegisteredWorker[],
-  forcedWorkerId?: string,
+  forcedWorkerId?: string | undefined,
 ): RegisteredWorker[] {
   if (!forcedWorkerId) {
     return workers;
@@ -158,7 +158,7 @@ function selectWorkersForRun(
   return [worker];
 }
 
-function applyForcedWorkerToSpec(spec: QuestSpec, forcedWorkerId?: string): QuestSpec {
+function applyForcedWorkerToSpec(spec: QuestSpec, forcedWorkerId?: string | undefined): QuestSpec {
   if (!forcedWorkerId) {
     return spec;
   }
@@ -216,7 +216,10 @@ export class QuestRunStore {
   async createRun(
     spec: QuestSpec,
     workers: RegisteredWorker[],
-    options: { forcedWorkerId?: string; sourceRepositoryPath?: string } = {},
+    options: {
+      forcedWorkerId?: string | undefined;
+      sourceRepositoryPath?: string | undefined;
+    } = {},
   ): Promise<QuestRunDocument> {
     const createdAt = nowIsoString();
     const selectedWorkers = selectWorkersForRun(workers, options.forcedWorkerId);
@@ -406,7 +409,7 @@ export class QuestRunStore {
     return this.saveRun(run);
   }
 
-  async getRunLogs(runId: string, sliceId?: string): Promise<QuestRunLogView> {
+  async getRunLogs(runId: string, sliceId?: string | undefined): Promise<QuestRunLogView> {
     const run = await this.getRun(runId);
     const filteredSlices = sliceId
       ? run.slices.filter((slice) => slice.sliceId === sliceId)

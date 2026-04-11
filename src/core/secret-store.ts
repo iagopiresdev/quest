@@ -6,14 +6,14 @@ type SecretStoreCommandResult = Awaited<ReturnType<typeof runSubprocess>>;
 const keychainItemMissingExitCode = 44;
 
 type SecretStoreOptions = {
-  platform?: NodeJS.Platform;
+  platform?: NodeJS.Platform | undefined;
   runCommand?: (options: {
     cmd: string[];
     cwd: string;
     env: Record<string, string | undefined>;
-    stdin?: string;
+    stdin?: string | undefined;
   }) => Promise<SecretStoreCommandResult>;
-  serviceName?: string;
+  serviceName?: string | undefined;
 };
 
 export type SecretStoreStatus = {
@@ -61,7 +61,7 @@ export class SecretStore {
 
   private async runSecurityCommand(
     cmd: string[],
-    options: { stdin?: string } = {},
+    options: { stdin?: string | undefined } = {},
   ): Promise<SecretStoreCommandResult> {
     this.requireSupportedPlatform();
     return await this.runCommand({

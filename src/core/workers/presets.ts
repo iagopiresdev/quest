@@ -1,7 +1,7 @@
 import type { RegisteredWorker } from "./schema";
 
 export type CodexWorkerPresetInput = {
-  approach?: string;
+  approach?: string | undefined;
   auth:
     | {
         mode: "env-var";
@@ -17,21 +17,21 @@ export type CodexWorkerPresetInput = {
         secretRef: string;
         targetEnvVar: string;
       };
-  executable?: string;
-  id?: string;
-  name?: string;
-  profile?: string;
-  prompt?: string;
-  tags?: string[];
-  title?: string;
-  toolAllow?: string[];
-  toolDeny?: string[];
-  voice?: string;
-  workerClass?: string;
+  executable?: string | undefined;
+  id?: string | undefined;
+  name?: string | undefined;
+  profile?: string | undefined;
+  prompt?: string | undefined;
+  tags?: string[] | undefined;
+  title?: string | undefined;
+  toolAllow?: string[] | undefined;
+  toolDeny?: string[] | undefined;
+  voice?: string | undefined;
+  workerClass?: string | undefined;
 };
 
 export type HermesWorkerPresetInput = {
-  approach?: string;
+  approach?: string | undefined;
   auth?:
     | {
         mode: "env-var";
@@ -44,13 +44,13 @@ export type HermesWorkerPresetInput = {
         targetEnvVar: string;
       };
   baseUrl: string;
-  id?: string;
-  name?: string;
-  profile?: string;
-  prompt?: string;
-  title?: string;
-  voice?: string;
-  workerClass?: string;
+  id?: string | undefined;
+  name?: string | undefined;
+  profile?: string | undefined;
+  prompt?: string | undefined;
+  title?: string | undefined;
+  voice?: string | undefined;
+  workerClass?: string | undefined;
 };
 
 export function slugifyWorkerId(value: string, fallback = "worker"): string {
