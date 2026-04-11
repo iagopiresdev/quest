@@ -6,11 +6,13 @@ import {
   deliveryRecordSchema,
   type ObservabilityConfigDocument,
   type ObservabilityDeliveriesDocument,
+  type ObservabilitySink,
   type ObservableCalibrationEvent,
   type ObservableEvent,
   type ObservableEventType,
   observabilityConfigSchema,
   observabilityDeliveriesSchema,
+  observabilitySinkSchema,
   observableCalibrationEventSchema,
   type WebhookSink,
   webhookSinkSchema,
@@ -61,18 +63,18 @@ export class ObservabilityStore {
     return parsed.data;
   }
 
-  async listSinks(): Promise<WebhookSink[]> {
+  async listSinks(): Promise<ObservabilitySink[]> {
     const config = await this.readConfig();
     return config.sinks;
   }
 
-  async upsertWebhookSink(candidate: WebhookSink): Promise<WebhookSink> {
-    const parsed = webhookSinkSchema.safeParse(candidate);
+  async upsertSink(candidate: ObservabilitySink): Promise<ObservabilitySink> {
+    const parsed = observabilitySinkSchema.safeParse(candidate);
     if (!parsed.success) {
       throw new QuestDomainError({
         code: "invalid_observability_config",
         details: parsed.error.flatten(),
-        message: "Webhook sink definition is invalid",
+        message: "Observability sink definition is invalid",
         statusCode: 1,
       });
     }
@@ -92,6 +94,11 @@ export class ObservabilityStore {
     };
     await writeJsonFileAtomically(this.configPath, nextConfig);
     return parsed.data;
+  }
+
+  async upsertWebhookSink(candidate: WebhookSink): Promise<WebhookSink> {
+    const parsed = webhookSinkSchema.parse(candidate);
+    return (await this.upsertSink(parsed)) as WebhookSink;
   }
 
   async deleteSink(sinkId: string): Promise<void> {

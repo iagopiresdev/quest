@@ -193,6 +193,7 @@ Future observability work should prefer:
 - summary views derived from stored state, not recomputed from terminal output
 - sinks built on the same event model instead of sink-specific branching inside executors
 - delivery records that keep the exact payload snapshot needed for audit and safe replay
+- typed sink definitions so new integrations extend the sink union instead of rewriting config storage
 
 ## CLI Conventions
 

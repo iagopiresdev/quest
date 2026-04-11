@@ -169,6 +169,8 @@ Runs emit typed events. Observability is the layer that persists and dispatches 
 Current sink support:
 - `webhook`
 
+Internally, sinks already live behind a typed sink model instead of a webhook-only config shape. That keeps the current webhook path simple while leaving room for future Telegram, Linear, Slack, or metrics sinks without rewriting delivery storage.
+
 The core model is:
 - run or calibration emits an event
 - observability dedupes and records delivery attempts

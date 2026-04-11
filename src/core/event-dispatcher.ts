@@ -2,6 +2,7 @@ import {
   createObservableCalibrationEvent,
   type DeliveryRecord,
   type DeliveryStatus,
+  type ObservabilitySink,
   type ObservableEvent,
   type ObservableEventType,
   shouldDeliverEvent,
@@ -82,7 +83,7 @@ export class EventDispatcher {
         continue;
       }
 
-      const delivery = await this.deliverWebhookSink(sink, record.payload, record.attempts + 1);
+      const delivery = await this.deliverSinkEvent(sink, record.payload, record.attempts + 1);
       await this.observabilityStore.upsertDeliveryRecord(delivery);
       attempts.push({
         eventId: record.eventId,
@@ -124,7 +125,7 @@ export class EventDispatcher {
           continue;
         }
 
-        const delivery = await this.deliverWebhookSink(sink, event, 1);
+        const delivery = await this.deliverSinkEvent(sink, event, 1);
         await this.observabilityStore.upsertDeliveryRecord(delivery);
         attempts.push({
           eventId: event.eventId,
@@ -137,6 +138,17 @@ export class EventDispatcher {
     }
 
     return attempts;
+  }
+
+  private async deliverSinkEvent(
+    sink: ObservabilitySink,
+    event: ObservableEvent,
+    attempts: number,
+  ): Promise<DeliveryRecord> {
+    switch (sink.type) {
+      case "webhook":
+        return await this.deliverWebhookSink(sink, event, attempts);
+    }
   }
 
   private async deliverWebhookSink(

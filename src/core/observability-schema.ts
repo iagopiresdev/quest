@@ -52,9 +52,12 @@ export const webhookSinkSchema = z
   .strict();
 export type WebhookSink = z.infer<typeof webhookSinkSchema>;
 
+export const observabilitySinkSchema = z.discriminatedUnion("type", [webhookSinkSchema]);
+export type ObservabilitySink = z.infer<typeof observabilitySinkSchema>;
+
 export const observabilityConfigSchema = z
   .object({
-    sinks: z.array(webhookSinkSchema).max(64).default([]),
+    sinks: z.array(observabilitySinkSchema).max(64).default([]),
     version: z.literal(1),
   })
   .strict();
@@ -169,6 +172,9 @@ export function createObservableCalibrationEvent(input: {
   };
 }
 
-export function shouldDeliverEvent(sink: WebhookSink, eventType: ObservableEventType): boolean {
+export function shouldDeliverEvent(
+  sink: ObservabilitySink,
+  eventType: ObservableEventType,
+): boolean {
   return sink.enabled && (sink.eventTypes.length === 0 || sink.eventTypes.includes(eventType));
 }
