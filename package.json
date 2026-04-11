@@ -4,17 +4,17 @@
   "private": true,
   "license": "UNLICENSED",
   "packageManager": "bun@1.3.9",
+  "type": "module",
   "description": "CLI-first worker registry and quest planner for parallel agent execution",
   "engines": {
-    "bun": ">=1.3.9",
-    "node": ">=20.0.0"
+    "bun": ">=1.3.9"
   },
   "bin": {
-    "quest": "./dist/cli.js"
+    "quest": "./src/cli.ts"
   },
   "scripts": {
-    "build": "bun ./scripts/build.mjs",
-    "quest": "bun run build && bun dist/cli.js",
+    "build": "mkdir -p dist && bun build --compile ./src/cli.ts --outfile ./dist/quest",
+    "quest": "bun ./src/cli.ts",
     "test": "bun test",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
@@ -23,8 +23,6 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.12",
-    "@types/node": "^22.19.15",
-    "esbuild": "^0.27.0",
     "typescript": "^6.0.2"
   }
 }

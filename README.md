@@ -11,31 +11,33 @@ CLI-first worker registry and quest planner for parallel agent execution.
 ## Commands
 
 ```sh
-bun run build
-
 # upsert a worker from stdin JSON
-cat worker.json | bun dist/cli.js workers upsert --stdin
+cat worker.json | bun ./src/cli.ts workers upsert --stdin
 
 # list workers
-bun dist/cli.js workers list
+bun ./src/cli.ts workers list
 
 # plan a quest from stdin JSON
-cat spec.json | bun dist/cli.js plan --stdin
+cat spec.json | bun ./src/cli.ts plan --stdin
 
 # plan a quest from file
-bun dist/cli.js plan --file ./spec.json
+bun ./src/cli.ts plan --file ./spec.json
 
 # create and persist a quest run
-cat spec.json | bun dist/cli.js run --stdin
+cat spec.json | bun ./src/cli.ts run --stdin
 
 # list persisted quest runs
-bun dist/cli.js runs list
+bun ./src/cli.ts runs list
 
 # inspect one persisted quest run
-bun dist/cli.js runs status --id quest-abc12345-deadbeef
+bun ./src/cli.ts runs status --id quest-abc12345-deadbeef
 
 # execute a persisted run with the built-in dry-run adapter
-bun dist/cli.js runs execute --id quest-abc12345-deadbeef --dry-run
+bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --dry-run
+
+# optional: compile a standalone Bun executable
+bun run build
+./dist/quest runs list
 ```
 
 ## State
