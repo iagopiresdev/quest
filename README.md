@@ -160,64 +160,70 @@ If any check exits non-zero:
 ## Commands
 
 ```sh
+# install a stable local quest command
+bun run install:local
+
 # upsert a worker from stdin JSON
-cat worker.json | bun ./src/cli.ts workers upsert --stdin
+cat worker.json | quest workers upsert --stdin
 
 # list workers
-bun ./src/cli.ts workers list
+quest workers list
 
 # plan a quest from stdin JSON
-cat spec.json | bun ./src/cli.ts plan --stdin
+cat spec.json | quest plan --stdin
 
 # plan a quest from file
-bun ./src/cli.ts plan --file ./spec.json
+quest plan --file ./spec.json
 
 # create and persist a quest run
-cat spec.json | bun ./src/cli.ts run --stdin
+cat spec.json | quest run --stdin
 
 # create a run that will materialize slice workspaces from a git repo
-cat spec.json | bun ./src/cli.ts run --stdin --source-repo /abs/path/to/repo
+cat spec.json | quest run --stdin --source-repo /abs/path/to/repo
 
 # list persisted quest runs
-bun ./src/cli.ts runs list
+quest runs list
 
 # inspect one persisted quest run
-bun ./src/cli.ts runs status --id quest-abc12345-deadbeef
+quest runs status --id quest-abc12345-deadbeef
 
 # execute a persisted run with the built-in dry-run adapter
-bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --dry-run
+quest runs execute --id quest-abc12345-deadbeef --dry-run
 
 # execute a persisted run and backfill a source repo for worktree materialization
-bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
+quest runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
 
 # integrate a completed run into a dedicated integration worktree
-bun ./src/cli.ts runs integrate --id quest-abc12345-deadbeef --target-ref main
+quest runs integrate --id quest-abc12345-deadbeef --target-ref main
 
 # inspect persisted slice logs/output
-bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
+quest runs logs --id quest-abc12345-deadbeef
 
 # store a backend secret in the local keychain backend
-printf 'sk-example' | bun ./src/cli.ts secrets set --name codex.api --stdin
+printf 'sk-example' | quest secrets set --name codex.api --stdin
 
 # inspect whether a keychain secret exists
-bun ./src/cli.ts secrets status --name codex.api
+quest secrets status --name codex.api
 
 # delete a stored secret
-bun ./src/cli.ts secrets delete --name codex.api
+quest secrets delete --name codex.api
 
 # remove quest-managed workspaces for a run
 # source-repo runs must be integrated before cleanup
-bun ./src/cli.ts runs cleanup --id quest-abc12345-deadbeef
+quest runs cleanup --id quest-abc12345-deadbeef
 
 # abort a pending or running run
-bun ./src/cli.ts runs abort --id quest-abc12345-deadbeef
+quest runs abort --id quest-abc12345-deadbeef
 
 # create a fresh run from a prior run's spec
-bun ./src/cli.ts runs rerun --id quest-abc12345-deadbeef
+quest runs rerun --id quest-abc12345-deadbeef
 
 # optional: compile a standalone Bun executable
 bun run build
 ./dist/quest runs list
+
+# development fallback if you do not want to install the wrapper
+./bin/quest runs list
 ```
 
 ## State
