@@ -1,0 +1,300 @@
+# Engineering Guide
+
+This document sets the baseline for how `quest-runner` should evolve from v0 onward.
+
+The project is small on purpose. The guidance below exists to keep it small, typed, observable, and extractable as the feature surface grows.
+
+## Design Principles
+
+1. Keep the correctness boundary local.
+   `quest-runner` must remain usable from a single CLI process against local state. Optional services, dashboards, or remote adapters are secondary surfaces, not correctness dependencies.
+
+2. Prefer explicit state over hidden behavior.
+   Runs, slices, workers, and events should be persisted and typed. Avoid implicit transitions spread across unrelated modules.
+
+3. Plan parallel, integrate conservative.
+   Execution may be parallel. Ownership, validation, and eventual integration must remain strict and inspectable.
+
+4. Treat agents as adapters.
+   OpenClaw, Hermes, Codex, Claude, and future backends belong behind runner interfaces. None of them should define the core domain model.
+
+5. Optimize for agents first.
+   CLI I/O must stay machine-readable. Errors must be structured. Side effects must be durable and easy to inspect from automation.
+
+## System Design
+
+Current architectural layers:
+
+- `src/cli.ts`
+  CLI transport only. Parse input, resolve paths, invoke domain services, emit JSON.
+
+- `src/core/spec-schema.ts`
+  Quest and slice contracts.
+
+- `src/core/worker-schema.ts`
+  Worker contracts and backend metadata.
+
+- `src/core/planner.ts`
+  Pure planning logic. No filesystem or process execution.
+
+- `src/core/run-store.ts`
+  Persistent run storage and retrieval.
+
+- `src/core/run-executor.ts`
+  Runtime orchestration of planned runs.
+
+- `src/core/runner.ts`
+  Runner adapter boundary.
+
+- `src/core/run-lifecycle.ts`
+  Shared lifecycle helpers for run and slice state mutation.
+
+Recommended future layers:
+
+- `src/core/integration/*`
+  Git worktrees, merge policy, stale-base checks.
+
+- `src/core/notifications/*`
+  Event-driven notification adapters.
+
+- `src/core/steering/*`
+  Pause, resume, retry, reassignment, human intervention.
+
+Keep the dependency direction one-way:
+
+`cli -> core services -> storage / adapters`
+
+Core planning and schema code must not import CLI concerns.
+
+## Domain Rules
+
+The following invariants should stay true:
+
+- A run is created from one immutable spec snapshot.
+- A slice either has a worker assignment or is explicitly unassigned/blocked.
+- Lifecycle transitions must go through shared helpers when possible.
+- Worker command failure is different from runner unavailability.
+- JSON output is the public CLI contract.
+- New state should be appended, not inferred from logs after the fact.
+
+If a future change makes these rules harder to see, the design is getting worse.
+
+## Coding Patterns
+
+Preferred patterns:
+
+- Small pure helpers around domain decisions.
+- Schema-first validation with `zod`.
+- Narrow orchestration methods that delegate repeated state mutation to shared helpers.
+- Explicit domain errors with stable `code` values.
+- One place per concern:
+  command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
+
+Avoid:
+
+- Repeating status mutation logic in multiple files.
+- Encoding the same command surface in help text, parser branches, and dispatch branches separately.
+- Throwing generic `Error` for domain failures that need structured output.
+- Adding framework-level dependencies for problems a small helper can solve.
+- Letting adapters leak into the core data model.
+
+## Typing Rules
+
+Use TypeScript as a modeling tool, not just linting.
+
+- All persisted structures must have a schema and exported inferred type.
+- Prefer narrow unions for statuses, event types, runners, and disciplines.
+- Do not use `any`.
+- Avoid clever conditional types when a direct named type is available.
+- Validate external input at the boundary, then pass typed data internally.
+- When a value is optional because of lifecycle timing, make that explicit in the schema.
+
+Good:
+
+- `QuestRunStatus`
+- `QuestRunSliceStatus`
+- `RegisteredWorker`
+- `QuestSpec`
+
+Bad:
+
+- untyped JSON blobs passed through multiple layers
+- deriving types from async return expressions when the underlying type already exists
+
+## Error Model
+
+Every operator-visible failure should map to a stable domain error code when possible.
+
+Current pattern:
+
+- `QuestDomainError`
+- `code`
+- `message`
+- optional `details`
+- CLI renders JSON errors to stderr
+
+Rules:
+
+- Add a new code when callers need to distinguish two failure modes operationally.
+- Do not overload one error code for unrelated causes.
+- Preserve the low-level details needed for retry or diagnosis.
+- Keep messages concise and actionable.
+
+Examples:
+
+- `quest_runner_unavailable`
+  adapter missing or unsupported
+
+- `quest_runner_command_failed`
+  worker command ran and returned non-zero
+
+- `quest_acceptance_check_failed`
+  worker succeeded but validation failed
+
+## Observability
+
+Observability is not a dashboard requirement. It is a data-shape requirement.
+
+Minimum standard:
+
+- every run has events
+- every slice has status
+- worker stdout/stderr is persisted
+- acceptance check results are persisted
+- timestamps are updated consistently
+
+When adding behavior, ask:
+
+1. What event should this emit?
+2. What state should be persisted?
+3. What should `runs status` and `runs logs` show afterward?
+
+Future observability work should prefer:
+
+- append-only event streams
+- durable timestamps
+- explicit status transitions
+- summary views derived from stored state, not recomputed from terminal output
+
+## CLI Conventions
+
+The CLI is the primary interface.
+
+Rules:
+
+- Output JSON only.
+- Exit `0` on success, non-zero on failure.
+- Keep command definitions centralized.
+- Accept `--file` and `--stdin` where structured input makes sense.
+- Keep path overrides explicit via flags and env vars.
+
+Do not add:
+
+- human-only colored output as the default path
+- daemon-required flows for core behavior
+- hidden side effects outside the configured state root
+
+## Bun-First Rules
+
+This repo is Bun-native.
+
+Prefer:
+
+- `bun test`
+- `bun build --compile`
+- `Bun.spawn(...)` for asynchronous subprocesses
+- `Bun.file(...)` and `Bun.write(...)` when they improve clarity
+
+Be careful with:
+
+- `Bun.spawnSync(...)`
+  only use it when serialization is intentional
+
+- shell dependencies
+  `/bin/sh -lc` is still present in acceptance checks and should be treated as technical debt, not a default pattern
+
+- Node compatibility APIs
+  allowed when Bun does not yet provide a better surface, but document the reason
+
+## Dependency Policy
+
+Default position: do not add a package unless it clearly reduces complexity more than a local helper would.
+
+Good dependency candidates:
+
+- schema/validation
+- durable SQLite when JSON state becomes insufficient
+- a CLI parser only if the internal command table becomes unmaintainable
+
+Bad dependency candidates:
+
+- convenience wrappers that hide simple Bun or TypeScript features
+- libraries that duplicate existing Bun runtime capabilities
+- packages introduced only for tests when a small helper works
+
+When adding a dependency, write down:
+
+- why Bun or the standard library is insufficient
+- what code it replaces
+- what lock-in or migration cost it creates
+
+## Testing Patterns
+
+Tests should exercise behavior, not boilerplate.
+
+Rules:
+
+- shared fixtures belong in `test/helpers.ts`
+- test data should be built from small overrideable helpers
+- CLI tests should verify the stable JSON contract
+- executor tests should cover both success and failure state persistence
+- storage tests should assert typed error behavior for missing or invalid files
+
+Add tests for:
+
+- new error codes
+- new run or slice statuses
+- new adapter behavior
+- migration-sensitive persisted shapes
+
+## File And Package Layout
+
+Current single-package layout is acceptable for v0.
+
+Split only when there is a real boundary:
+
+- `core`
+  pure domain and persistence logic
+
+- `adapters`
+  external runner or integration backends
+
+- `cli`
+  transport only
+
+Do not split into multiple packages just to look modular. Split when import boundaries are already stable.
+
+## Documentation Rules
+
+When adding a new subsystem, update:
+
+- `README.md`
+  user-facing command and capability summary
+
+- this guide
+  engineering constraints and patterns if they change
+
+- memory log in project changelog
+  only for significant slices of work or architectural shifts
+
+## Near-Term Technical Debt
+
+These are known weak spots worth addressing next:
+
+- acceptance checks still rely on `/bin/sh -lc`
+- CLI TTY detection still shells out
+- `test/quest-cli.test.ts` still has duplicated payload setup
+- storage still leans on Node-style filesystem paths and exception-driven flows
+- Bun coverage output is not configured yet
+
+Do those before adding new orchestration surfaces unless a feature is blocked.

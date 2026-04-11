@@ -8,6 +8,8 @@ CLI-first worker registry and quest planner for parallel agent execution.
 - local state stored outside the repo
 - conservative planning around worker capacity and file ownership
 
+Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
+
 ## Worker Backends
 
 Current adapters:
