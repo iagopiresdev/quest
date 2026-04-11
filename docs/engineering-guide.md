@@ -97,6 +97,7 @@ Preferred patterns:
 - Narrow orchestration methods that delegate repeated state mutation to shared helpers.
 - Explicit domain errors with stable `code` values.
 - Sparse comments that explain why a boundary or invariant exists, not what the next line of code does.
+- Import ordering must be left to Biome's `source.organizeImports` action instead of hand-maintained local styles.
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 - Redaction before delegation:
@@ -223,6 +224,7 @@ Prefer:
 - `bun build --compile`
 - `Bun.spawn(...)` for asynchronous subprocesses
 - `Bun.file(...)` and `Bun.write(...)` when they improve clarity
+- `bun run lint:fix` when imports or safe Biome assists need to be normalized
 
 Be careful with:
 
