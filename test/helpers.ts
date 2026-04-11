@@ -9,6 +9,17 @@ export type CliTestContext = {
   stateRoot: string;
 };
 
+export type CliResult = {
+  code: number | null;
+  stderr: string;
+  stdout: string;
+};
+
+const cliArgs = ["./src/cli.ts"];
+const projectRoot = import.meta.dir.replace(/\/test$/, "");
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 export function createTempRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -19,6 +30,31 @@ export function cleanupTempRoot(root: string): void {
 
 export function createCliContext(): CliTestContext {
   return { stateRoot: createTempRoot("quest-cli-") };
+}
+
+export function runCli(
+  context: CliTestContext,
+  args: string[],
+  options: { input?: string } = {},
+): CliResult {
+  const result = Bun.spawnSync({
+    cmd: ["bun", ...cliArgs, ...args],
+    cwd: projectRoot,
+    env: {
+      ...Bun.env,
+      QUEST_RUNNER_STATE_ROOT: context.stateRoot,
+      QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
+    },
+    stdin: options.input ? textEncoder.encode(options.input) : null,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  return {
+    code: result.exitCode,
+    stderr: textDecoder.decode(result.stderr),
+    stdout: textDecoder.decode(result.stdout),
+  };
 }
 
 export function createWorker(
@@ -102,6 +138,13 @@ export function createWorker(
       ...overrides.trust,
     },
   };
+}
+
+export function createWorkerJson(
+  overrides: Partial<RegisteredWorker> = {},
+  backendOverrides: Partial<RegisteredWorker["backend"]> = {},
+): string {
+  return JSON.stringify(createWorker(overrides, backendOverrides));
 }
 
 export function createWorkerForRunner(

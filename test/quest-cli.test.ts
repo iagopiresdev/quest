@@ -1,109 +1,44 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-type TestContext = {
-  stateRoot: string;
-};
+import {
+  type CliTestContext,
+  cleanupTempRoot,
+  createCliContext,
+  createSlice,
+  createSpec,
+  createWorkerJson,
+  runCli,
+} from "./helpers";
 
-const activeContexts: TestContext[] = [];
-const cliArgs = ["./src/cli.ts"];
-const projectRoot = import.meta.dir.replace(/\/test$/, "");
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+const activeContexts: CliTestContext[] = [];
 
-function createContext(): TestContext {
-  const stateRoot = mkdtempSync(join(tmpdir(), "grind-quest-cli-"));
-  const context = { stateRoot };
+function trackContext(): CliTestContext {
+  const context = createCliContext();
   activeContexts.push(context);
   return context;
-}
-
-function runCli(
-  context: TestContext,
-  args: string[],
-  options: { input?: string } = {},
-): {
-  code: number | null;
-  stderr: string;
-  stdout: string;
-} {
-  const result = Bun.spawnSync({
-    cmd: ["bun", ...cliArgs, ...args],
-    cwd: projectRoot,
-    env: {
-      ...Bun.env,
-      QUEST_RUNNER_STATE_ROOT: context.stateRoot,
-      QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
-    },
-    stdin: options.input ? textEncoder.encode(options.input) : null,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  return {
-    code: result.exitCode,
-    stderr: textDecoder.decode(result.stderr),
-    stdout: textDecoder.decode(result.stdout),
-  };
 }
 
 afterEach(() => {
   while (activeContexts.length > 0) {
     const context = activeContexts.pop();
     if (context) {
-      rmSync(context.stateRoot, { force: true, recursive: true });
+      cleanupTempRoot(context.stateRoot);
     }
   }
 });
 
-test("quest cli upserts, lists, and plans from stdin", () => {
-  const context = createContext();
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-cli",
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
+function expectWorkerUpserted(context: CliTestContext, workerJson = createWorkerJson()): void {
+  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+}
 
-  const upsert = runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson });
+test("quest cli upserts, lists, and plans from stdin", () => {
+  const context = trackContext();
+
+  const upsert = runCli(context, ["workers", "upsert", "--stdin"], {
+    input: createWorkerJson(),
+  });
   expect(upsert.code).toBe(0);
   expect(JSON.parse(upsert.stdout).worker.id).toBe("ember");
 
@@ -112,37 +47,28 @@ test("quest cli upserts, lists, and plans from stdin", () => {
   expect(JSON.parse(listed.stdout).workers.length).toBe(1);
 
   const plan = runCli(context, ["plan", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Add SSRF protection",
-      workspace: "command-center",
-      maxParallel: 2,
-      acceptanceChecks: ["npm test"],
-      hotspots: [],
-      featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement SSRF parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-        {
-          id: "docs",
-          title: "Docs",
-          goal: "Draft feature notes",
-          discipline: "docs",
-          owns: ["docs/features/**"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(
+      createSpec({
+        acceptanceChecks: ["npm test"],
+        featureDoc: { enabled: true, outputPath: "docs/features/ssrf-protection.md" },
+        maxParallel: 2,
+        slices: [
+          createSlice({
+            goal: "Implement SSRF parser validation",
+            id: "parser",
+            title: "Parser",
+          }),
+          createSlice({
+            discipline: "docs",
+            goal: "Draft feature notes",
+            id: "docs",
+            owns: ["docs/features/**"],
+            title: "Docs",
+          }),
+        ],
+        title: "Add SSRF protection",
+      }),
+    ),
   });
 
   expect(plan.code).toBe(0);
@@ -156,42 +82,33 @@ test("quest cli upserts, lists, and plans from stdin", () => {
 });
 
 test("quest cli plans from file and reports unassigned slices", () => {
-  const context = createContext();
+  const context = trackContext();
   const specPath = join(context.stateRoot, "spec.json");
+
   writeFileSync(
     specPath,
-    JSON.stringify({
-      version: 1,
-      title: "Incompatible worker planning",
-      workspace: "command-center",
-      maxParallel: 2,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser changes",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          preferredRunner: "openclaw",
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-        {
-          id: "tests",
-          title: "Tests",
-          goal: "Validate parser changes",
-          discipline: "testing",
-          owns: ["src/**/*.test.ts"],
-          dependsOn: ["parser"],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    JSON.stringify(
+      createSpec({
+        maxParallel: 2,
+        slices: [
+          createSlice({
+            goal: "Implement parser changes",
+            id: "parser",
+            preferredRunner: "openclaw",
+            title: "Parser",
+          }),
+          createSlice({
+            dependsOn: ["parser"],
+            discipline: "testing",
+            goal: "Validate parser changes",
+            id: "tests",
+            owns: ["src/**/*.test.ts"],
+            title: "Tests",
+          }),
+        ],
+        title: "Incompatible worker planning",
+      }),
+    ),
     "utf8",
   );
 
@@ -211,75 +128,15 @@ test("quest cli plans from file and reports unassigned slices", () => {
 });
 
 test("quest cli creates persisted runs and reads them back", () => {
-  const context = createContext();
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-cli",
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
-
-  const upsert = runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson });
-  expect(upsert.code).toBe(0);
+  const context = trackContext();
+  expectWorkerUpserted(context);
 
   const created = runCli(context, ["run", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Create quest run",
-      workspace: "command-center",
-      maxParallel: 1,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(
+      createSpec({
+        title: "Create quest run",
+      }),
+    ),
   });
 
   expect(created.code).toBe(0);
@@ -299,74 +156,11 @@ test("quest cli creates persisted runs and reads them back", () => {
 });
 
 test("quest cli executes a planned run in dry-run mode", () => {
-  const context = createContext();
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-cli",
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
-
-  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+  const context = trackContext();
+  expectWorkerUpserted(context);
 
   const created = runCli(context, ["run", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Execute quest run",
-      workspace: "command-center",
-      maxParallel: 1,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(createSpec({ title: "Execute quest run" })),
   });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
@@ -380,74 +174,11 @@ test("quest cli executes a planned run in dry-run mode", () => {
 });
 
 test("quest cli returns logs and aborts a planned run", () => {
-  const context = createContext();
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-cli",
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
-
-  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+  const context = trackContext();
+  expectWorkerUpserted(context);
 
   const created = runCli(context, ["run", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Abort quest run",
-      workspace: "command-center",
-      maxParallel: 1,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(createSpec({ title: "Abort quest run" })),
   });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
@@ -465,7 +196,7 @@ test("quest cli returns logs and aborts a planned run", () => {
 });
 
 test("quest cli executes a real local-command worker", () => {
-  const context = createContext();
+  const context = trackContext();
   const scriptPath = join(context.stateRoot, "worker.ts");
   writeFileSync(
     scriptPath,
@@ -476,74 +207,13 @@ test("quest cli executes a real local-command worker", () => {
     "utf8",
   );
 
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-command",
-      command: ["bun", scriptPath],
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
-
-  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
 
   const created = runCli(context, ["run", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Execute real local command run",
-      workspace: "command-center",
-      maxParallel: 1,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(createSpec({ title: "Execute real local command run" })),
   });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
@@ -556,7 +226,7 @@ test("quest cli executes a real local-command worker", () => {
 });
 
 test("quest cli fails a run when acceptance checks fail", () => {
-  const context = createContext();
+  const context = trackContext();
   const scriptPath = join(context.stateRoot, "worker.ts");
   writeFileSync(
     scriptPath,
@@ -567,74 +237,18 @@ test("quest cli fails a run when acceptance checks fail", () => {
     "utf8",
   );
 
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-command",
-      command: ["bun", scriptPath],
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
-
-  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
 
   const created = runCli(context, ["run", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Execute failing check run",
-      workspace: "command-center",
-      maxParallel: 1,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: ['bun -e "process.exit(4)"'],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(
+      createSpec({
+        slices: [createSlice({ acceptanceChecks: ['bun -e "process.exit(4)"'] })],
+        title: "Execute failing check run",
+      }),
+    ),
   });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
@@ -649,74 +263,11 @@ test("quest cli fails a run when acceptance checks fail", () => {
 });
 
 test("quest cli reruns a prior run by cloning its spec", () => {
-  const context = createContext();
-  const workerJson = JSON.stringify({
-    id: "ember",
-    name: "Ember",
-    title: "Battle Engineer",
-    class: "engineer",
-    enabled: true,
-    backend: {
-      runner: "codex",
-      profile: "gpt-5.4",
-      adapter: "local-cli",
-      toolPolicy: { allow: ["git"], deny: [] },
-    },
-    persona: {
-      voice: "terse",
-      approach: "test-first",
-      prompt: "Keep diffs tight and explain tradeoffs briefly.",
-    },
-    stats: {
-      coding: 82,
-      testing: 77,
-      docs: 44,
-      research: 51,
-      speed: 63,
-      mergeSafety: 79,
-      contextEndurance: 58,
-    },
-    resources: {
-      cpuCost: 2,
-      memoryCost: 3,
-      gpuCost: 0,
-      maxParallel: 1,
-    },
-    trust: {
-      rating: 0.74,
-      calibratedAt: "2026-04-10T00:00:00Z",
-    },
-    progression: {
-      level: 7,
-      xp: 1840,
-    },
-    tags: ["typescript"],
-  });
-
-  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+  const context = trackContext();
+  expectWorkerUpserted(context);
 
   const created = runCli(context, ["run", "--stdin"], {
-    input: JSON.stringify({
-      version: 1,
-      title: "Rerun quest run",
-      workspace: "command-center",
-      maxParallel: 1,
-      acceptanceChecks: [],
-      hotspots: [],
-      featureDoc: { enabled: false },
-      slices: [
-        {
-          id: "parser",
-          title: "Parser",
-          goal: "Implement parser validation",
-          discipline: "coding",
-          owns: ["src/security/url.ts"],
-          dependsOn: [],
-          acceptanceChecks: [],
-          contextHints: [],
-        },
-      ],
-    }),
+    input: JSON.stringify(createSpec({ title: "Rerun quest run" })),
   });
   expect(created.code).toBe(0);
   const firstRun = JSON.parse(created.stdout).run;
