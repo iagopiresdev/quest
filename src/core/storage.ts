@@ -34,6 +34,18 @@ export function resolveQuestRunsRoot(
   return join(resolveQuestStateRoot(options.stateRoot), "runs");
 }
 
+export function resolveQuestWorkspacesRoot(
+  options: { explicitWorkspacesRoot?: string; stateRoot?: string } = {},
+): string {
+  const configuredPath =
+    options.explicitWorkspacesRoot?.trim() || Bun.env.QUEST_RUNNER_WORKSPACES_ROOT?.trim();
+  if (configuredPath) {
+    return resolve(configuredPath);
+  }
+
+  return join(resolveQuestStateRoot(options.stateRoot), "workspaces");
+}
+
 export function resolveQuestRunPath(
   runId: string,
   options: {
@@ -42,6 +54,27 @@ export function resolveQuestRunPath(
   } = {},
 ): string {
   return join(resolveQuestRunsRoot(options), `${runId}.json`);
+}
+
+export function resolveQuestRunWorkspaceRoot(
+  runId: string,
+  options: {
+    explicitWorkspacesRoot?: string;
+    stateRoot?: string;
+  } = {},
+): string {
+  return join(resolveQuestWorkspacesRoot(options), runId);
+}
+
+export function resolveQuestSliceWorkspacePath(
+  runId: string,
+  sliceId: string,
+  options: {
+    explicitWorkspacesRoot?: string;
+    stateRoot?: string;
+  } = {},
+): string {
+  return join(resolveQuestRunWorkspaceRoot(runId, options), "slices", sliceId);
 }
 
 export async function readJsonFileOrDefault<T>(path: string, fallback: T): Promise<T> {
@@ -86,6 +119,19 @@ export async function writeJsonFileAtomically(path: string, payload: unknown): P
       code: "quest_storage_failure",
       details: { path, reason: error instanceof Error ? error.message : String(error) },
       message: `Failed to write quest state to ${path}`,
+      statusCode: 1,
+    });
+  }
+}
+
+export async function ensureDirectory(path: string): Promise<void> {
+  try {
+    await mkdir(path, { recursive: true });
+  } catch (error: unknown) {
+    throw new QuestDomainError({
+      code: "quest_storage_failure",
+      details: { path, reason: error instanceof Error ? error.message : String(error) },
+      message: `Failed to prepare quest directory at ${path}`,
       statusCode: 1,
     });
   }

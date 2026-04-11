@@ -65,6 +65,13 @@ Example `local-command` worker:
 ```
 
 The command receives a JSON payload on stdin with the run, slice, slice state, and worker metadata. Its stdout/stderr and exit code are persisted into run logs.
+Execution happens from the slice workspace path for that run, and the process also gets:
+- `QUEST_RUN_ID`
+- `QUEST_SLICE_ID`
+- `QUEST_WORKER_ID`
+- `QUEST_WORKSPACE`
+- `QUEST_WORKSPACE_ROOT`
+- `QUEST_SLICE_WORKSPACE`
 
 ## Tester Lane
 
@@ -123,13 +130,16 @@ Defaults:
 - state root: `~/.quest-runner`
 - worker registry: `~/.quest-runner/workers.json`
 - runs root: `~/.quest-runner/runs`
+- workspaces root: `~/.quest-runner/workspaces`
 
 Overrides:
 - `QUEST_RUNNER_STATE_ROOT`
 - `QUEST_RUNNER_WORKER_REGISTRY_PATH`
 - `QUEST_RUNNER_RUNS_ROOT`
+- `QUEST_RUNNER_WORKSPACES_ROOT`
 - `--registry <path>`
 - `--runs-root <path>`
+- `--workspaces-root <path>`
 - `--state-root <path>`
 
 Do not commit runtime state, tokens, or local config.
@@ -144,6 +154,7 @@ Do not commit runtime state, tokens, or local config.
 - real local subprocess execution through the `local-command` adapter
 - slice-level tester lane through `acceptanceChecks`
 - basic steering commands to abort and rerun runs
+- runtime-managed per-run and per-slice workspace directories
 
 Additional runner adapters, git worktrees, merge/integration, notifications, and richer steering are still pending.
 

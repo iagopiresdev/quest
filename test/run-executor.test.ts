@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -84,7 +84,7 @@ test("run executor completes a planned run in dry-run mode", async () => {
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {
@@ -93,11 +93,18 @@ test("run executor completes a planned run in dry-run mode", async () => {
 
     const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
     const executed = await executor.executeRun(run.id, { dryRun: true });
+    const workspaceRoot = executed.workspaceRoot ?? "";
+    const workspacePath = executed.slices[0]?.workspacePath ?? "";
 
     expect(executed.status).toBe("completed");
     expect(executed.slices.every((slice) => slice.status === "completed")).toBe(true);
     expect(executed.slices[0]?.lastOutput?.summary).toContain("Dry run completed slice");
     expect(executed.slices[0]?.lastOutput?.exitCode).toBe(0);
+    expect(existsSync(workspaceRoot)).toBe(true);
+    expect(existsSync(workspacePath)).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(workspacePath, "quest-context.json"), "utf8")).sliceId,
+    ).toBe("parser");
     expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
     expect(executed.events.some((event) => event.type === "run_completed")).toBe(true);
   } finally {
@@ -110,7 +117,7 @@ test("run executor completes a planned run with the local-command adapter", asyn
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {
@@ -157,12 +164,67 @@ test("run executor completes a planned run with the local-command adapter", asyn
   }
 });
 
+test("run executor executes the worker inside the slice workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-cwd.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "await Bun.write('worker-marker.txt', 'ok');",
+        "await Bun.write(Bun.stdout, process.cwd());",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
+          title: "Parser",
+        },
+      ],
+      title: "Local command cwd",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+    const workspacePath = executed.slices[0]?.workspacePath ?? "";
+
+    expect(workspacePath).toBe(join(root, "workspaces", run.id, "slices", "parser"));
+    expect(realpathSync(executed.slices[0]?.lastOutput?.stdout.trim() ?? "")).toBe(
+      realpathSync(workspacePath),
+    );
+    expect(existsSync(join(workspacePath, "worker-marker.txt"))).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor records failure for a failing local-command adapter", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {
@@ -216,7 +278,7 @@ test("run executor persists passing acceptance checks", async () => {
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {
@@ -267,7 +329,7 @@ test("run executor fails when acceptance checks fail", async () => {
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {
@@ -327,7 +389,7 @@ test("run executor refuses blocked runs", async () => {
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {
@@ -369,7 +431,7 @@ test("run executor fails explicitly when no adapter is available", async () => {
   const registryPath = join(root, "workers.json");
   const runsRoot = join(root, "runs");
   const workerRegistry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
   try {

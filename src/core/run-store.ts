@@ -14,6 +14,9 @@ import {
   readJsonFileOrDefault,
   resolveQuestRunPath,
   resolveQuestRunsRoot,
+  resolveQuestRunWorkspaceRoot,
+  resolveQuestSliceWorkspacePath,
+  resolveQuestWorkspacesRoot,
   writeJsonFileAtomically,
 } from "./storage";
 import type { RegisteredWorker } from "./worker-schema";
@@ -31,11 +34,14 @@ export type QuestRunSummary = Pick<
 
 export type QuestRunLogView = {
   runId: string;
+  workspaceRoot: string;
   slices: Array<{
     sliceId: string;
     status: QuestRunSliceState["status"];
     title: string;
     wave: number;
+    workspacePath: string;
+    lastChecks?: QuestRunSliceState["lastChecks"];
     lastError?: string;
     lastOutput?: QuestRunSliceState["lastOutput"];
   }>;
@@ -63,8 +69,25 @@ function summarizeRun(run: QuestRunDocument): QuestRunSummary {
   };
 }
 
+function resolveRunWorkspaceRootForStore(runId: string, workspacesRoot: string): string {
+  return resolveQuestRunWorkspaceRoot(runId, {
+    explicitWorkspacesRoot: workspacesRoot,
+  });
+}
+
+function resolveSliceWorkspacePathForStore(
+  runId: string,
+  sliceId: string,
+  workspacesRoot: string,
+): string {
+  return resolveQuestSliceWorkspacePath(runId, sliceId, {
+    explicitWorkspacesRoot: workspacesRoot,
+  });
+}
+
 function buildInitialSliceStates(
-  run: Pick<QuestRunDocument, "plan" | "spec">,
+  run: Pick<QuestRunDocument, "id" | "plan" | "spec" | "workspaceRoot">,
+  workspacesRoot: string,
 ): QuestRunSliceState[] {
   const scheduledSlices = run.plan.waves.flatMap((wave) =>
     wave.slices.map<QuestRunSliceState>((slice) => ({
@@ -74,6 +97,7 @@ function buildInitialSliceStates(
       status: "pending",
       title: slice.title,
       wave: slice.wave,
+      workspacePath: resolveSliceWorkspacePathForStore(run.id, slice.id, workspacesRoot),
     })),
   );
 
@@ -85,6 +109,7 @@ function buildInitialSliceStates(
     status: "blocked",
     title: slice.title,
     wave: 0,
+    workspacePath: resolveSliceWorkspacePathForStore(run.id, slice.id, workspacesRoot),
   }));
 
   const orderedSliceIds = run.spec.slices.map((slice) => slice.id);
@@ -94,12 +119,32 @@ function buildInitialSliceStates(
   );
 }
 
+function hydrateWorkspacePaths(run: QuestRunDocument, workspacesRoot: string): QuestRunDocument {
+  const workspaceRoot =
+    run.workspaceRoot ?? resolveRunWorkspaceRootForStore(run.id, workspacesRoot);
+
+  run.workspaceRoot = workspaceRoot;
+  run.slices.forEach((slice) => {
+    slice.workspacePath ??= resolveSliceWorkspacePathForStore(
+      run.id,
+      slice.sliceId,
+      workspacesRoot,
+    );
+  });
+
+  return run;
+}
+
 export class QuestRunStore {
-  constructor(private readonly runsRoot: string = resolveQuestRunsRoot()) {}
+  constructor(
+    private readonly runsRoot: string = resolveQuestRunsRoot(),
+    private readonly workspacesRoot: string = resolveQuestWorkspacesRoot(),
+  ) {}
 
   async createRun(spec: QuestSpec, workers: RegisteredWorker[]): Promise<QuestRunDocument> {
     const createdAt = nowIsoString();
     const plan = planQuest(spec, workers);
+    const runId = createQuestRunId();
     const events: QuestRunEvent[] = [
       {
         at: createdAt,
@@ -125,20 +170,21 @@ export class QuestRunStore {
     const runBase = {
       createdAt,
       events,
-      id: createQuestRunId(),
+      id: runId,
       plan,
       spec,
+      workspaceRoot: resolveRunWorkspaceRootForStore(runId, this.workspacesRoot),
     };
 
     const run: QuestRunDocument = {
       ...runBase,
-      slices: buildInitialSliceStates(runBase),
+      slices: buildInitialSliceStates(runBase, this.workspacesRoot),
       status: plan.unassigned.length > 0 ? "blocked" : "planned",
       updatedAt: createdAt,
       version: 1,
     };
 
-    return this.saveRun(run);
+    return this.saveRun(hydrateWorkspacePaths(run, this.workspacesRoot));
   }
 
   async getRun(runId: string): Promise<QuestRunDocument> {
@@ -163,7 +209,7 @@ export class QuestRunStore {
       });
     }
 
-    return parsed.data;
+    return hydrateWorkspacePaths(parsed.data, this.workspacesRoot);
   }
 
   async listRuns(): Promise<QuestRunSummary[]> {
@@ -203,7 +249,9 @@ export class QuestRunStore {
   }
 
   async saveRun(run: QuestRunDocument): Promise<QuestRunDocument> {
-    const parsed = questRunDocumentSchema.safeParse(run);
+    const parsed = questRunDocumentSchema.safeParse(
+      hydrateWorkspacePaths(run, this.workspacesRoot),
+    );
     if (!parsed.success) {
       throw new QuestDomainError({
         code: "invalid_quest_run",
@@ -268,14 +316,20 @@ export class QuestRunStore {
     const filteredSlices = sliceId
       ? run.slices.filter((slice) => slice.sliceId === sliceId)
       : run.slices;
+    const workspaceRoot =
+      run.workspaceRoot ?? resolveRunWorkspaceRootForStore(run.id, this.workspacesRoot);
 
     return {
       runId: run.id,
+      workspaceRoot,
       slices: filteredSlices.map((slice) => ({
         sliceId: slice.sliceId,
         status: slice.status,
         title: slice.title,
         wave: slice.wave,
+        workspacePath:
+          slice.workspacePath ??
+          resolveSliceWorkspacePathForStore(run.id, slice.sliceId, this.workspacesRoot),
         lastError: slice.lastError,
         lastChecks: slice.lastChecks,
         lastOutput: slice.lastOutput,

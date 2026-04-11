@@ -141,6 +141,7 @@ export const questRunSliceStateSchema = z
     status: z.enum(questRunSliceStatusValues),
     title: nonEmptyString(120),
     wave: z.number().int().min(0),
+    workspacePath: nonEmptyString(400).optional(),
   })
   .strict();
 
@@ -155,6 +156,7 @@ export const questRunDocumentSchema = z
     updatedAt: isoDateStringSchema,
     version: z.literal(1),
     events: z.array(questRunEventSchema),
+    workspaceRoot: nonEmptyString(400).optional(),
   })
   .strict();
 

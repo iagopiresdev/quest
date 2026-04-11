@@ -10,6 +10,7 @@ import { questSpecSchema } from "./core/spec-schema";
 import {
   resolveQuestRunsRoot,
   resolveQuestStateRoot,
+  resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
 import { WorkerRegistry } from "./core/worker-registry";
@@ -181,13 +182,14 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       const spec = questSpecSchema.parse(await readJsonInput(args));
       return { run: await runStore.createRun(spec, await registry.listWorkers()) };
     },
-    usage: "quest run --file <path> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+    usage:
+      "quest run --file <path> [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:list",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "list",
     run: async ({ runStore }) => ({ runs: await runStore.listRuns() }),
-    usage: "quest runs list [--runs-root <path>] [--state-root <path>]",
+    usage: "quest runs list [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:abort",
@@ -195,7 +197,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, runStore }) => ({
       run: await runStore.abortRun(requireOptionValue(args, "--id", "--id <run-id>")),
     }),
-    usage: "quest runs abort --id <run-id> [--runs-root <path>] [--state-root <path>]",
+    usage:
+      "quest runs abort --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:rerun",
@@ -205,7 +208,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { run: await runStore.createRun(previousRun.spec, await registry.listWorkers()) };
     },
     usage:
-      "quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+      "quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:execute",
@@ -216,7 +219,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       }),
     }),
     usage:
-      "quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
+      "quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:logs",
@@ -228,7 +231,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       ),
     }),
     usage:
-      "quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
+      "quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:status",
@@ -236,7 +239,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, runStore }) => ({
       run: await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>")),
     }),
-    usage: "quest runs status --id <run-id> [--runs-root <path>] [--state-root <path>]",
+    usage:
+      "quest runs status --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
 ];
 
@@ -263,8 +267,12 @@ async function main(): Promise<number> {
     explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
     stateRoot,
   });
+  const workspacesRoot = resolveQuestWorkspacesRoot({
+    explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
+    stateRoot,
+  });
   const registry = new WorkerRegistry(registryPath);
-  const runStore = new QuestRunStore(runsRoot);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const runExecutor = new QuestRunExecutor(runStore, registry);
 
   try {

@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { $ } from "bun";
 
 import { QuestDomainError } from "./errors";
@@ -5,6 +6,7 @@ import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./run-l
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestRunStore } from "./run-store";
 import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
+import { ensureDirectory } from "./storage";
 import type { WorkerRegistry } from "./worker-registry";
 import type { RegisteredWorker } from "./worker-schema";
 
@@ -52,16 +54,17 @@ function findSliceState(run: QuestRunDocument, sliceId: string): QuestRunSliceSt
 }
 
 function resolveExecutionCwd(
+  run: QuestRunDocument,
   sliceState: QuestRunSliceState,
-  workers: Map<string, RegisteredWorker>,
+  worker: RegisteredWorker,
 ): string {
-  const workerId = sliceState.assignedWorkerId;
-  if (!workerId) {
-    return Bun.env.PWD ?? ".";
-  }
-
-  const worker = workers.get(workerId);
-  return worker?.backend.workingDirectory ?? Bun.env.PWD ?? ".";
+  return (
+    sliceState.workspacePath ??
+    run.workspaceRoot ??
+    worker.backend.workingDirectory ??
+    Bun.env.PWD ??
+    "."
+  );
 }
 
 async function runAcceptanceChecks(
@@ -83,6 +86,31 @@ async function runAcceptanceChecks(
   return results;
 }
 
+async function prepareSliceWorkspace(
+  run: QuestRunDocument,
+  sliceState: QuestRunSliceState,
+  cwd: string,
+): Promise<void> {
+  await ensureDirectory(cwd);
+  await writeFile(
+    `${cwd}/quest-context.json`,
+    `${JSON.stringify(
+      {
+        cwd,
+        runId: run.id,
+        sliceId: sliceState.sliceId,
+        status: sliceState.status,
+        title: sliceState.title,
+        wave: sliceState.wave,
+        workspaceRoot: run.workspaceRoot,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
+
 export class QuestRunExecutor {
   private readonly runnerRegistry = new RunnerRegistry([
     new DryRunRunnerAdapter(),
@@ -102,7 +130,9 @@ export class QuestRunExecutor {
     const workerMap = new Map(workers.map((worker) => [worker.id, worker]));
     const specSliceMap = new Map(run.spec.slices.map((slice) => [slice.id, slice]));
     const startedAt = nowIsoString();
+    const runWorkspaceRoot = run.workspaceRoot ?? Bun.env.PWD ?? ".";
 
+    await ensureDirectory(runWorkspaceRoot);
     setRunStatus(run, "running");
     appendEvent(run, "run_started", { dryRun: options.dryRun === true }, startedAt);
     await this.runStore.saveRun(run);
@@ -164,8 +194,11 @@ export class QuestRunExecutor {
             const adapter = this.runnerRegistry.resolve(worker, {
               forceDryRun: options.dryRun === true,
             });
+            const cwd = resolveExecutionCwd(run, sliceState, worker);
+            await prepareSliceWorkspace(run, sliceState, cwd);
             return {
               result: await adapter.execute({
+                cwd,
                 run,
                 slice,
                 sliceState,
@@ -177,7 +210,27 @@ export class QuestRunExecutor {
         );
 
         for (const { result, sliceState } of results) {
-          const workerCwd = resolveExecutionCwd(sliceState, workerMap);
+          const workerId = sliceState.assignedWorkerId;
+          if (!workerId) {
+            throw new QuestDomainError({
+              code: "invalid_quest_run",
+              details: { runId: run.id, sliceId: sliceState.sliceId },
+              message: `Slice ${sliceState.sliceId} has no assigned worker`,
+              statusCode: 1,
+            });
+          }
+
+          const worker = workerMap.get(workerId);
+          if (!worker) {
+            throw new QuestDomainError({
+              code: "quest_worker_not_found",
+              details: { runId: run.id, sliceId: sliceState.sliceId, workerId },
+              message: `Assigned worker ${workerId} is not registered`,
+              statusCode: 1,
+            });
+          }
+
+          const workerCwd = resolveExecutionCwd(run, sliceState, worker);
           const sliceSpec = specSliceMap.get(sliceState.sliceId);
           if (!sliceSpec) {
             throw new QuestDomainError({

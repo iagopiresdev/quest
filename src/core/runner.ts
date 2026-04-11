@@ -11,6 +11,7 @@ export type RunnerExecutionResult = {
 };
 
 export type RunnerExecutionContext = {
+  cwd: string;
   run: QuestRunDocument;
   slice: QuestSliceSpec;
   sliceState: QuestRunSliceState;
@@ -60,6 +61,7 @@ function buildLocalCommandPayload(context: RunnerExecutionContext): string {
         id: context.run.id,
         status: context.run.status,
         workspace: context.run.spec.workspace,
+        workspaceRoot: context.run.workspaceRoot ?? null,
       },
       slice: context.slice,
       sliceState: {
@@ -68,12 +70,14 @@ function buildLocalCommandPayload(context: RunnerExecutionContext): string {
         sliceId: context.sliceState.sliceId,
         status: context.sliceState.status,
         wave: context.sliceState.wave,
+        workspacePath: context.sliceState.workspacePath ?? null,
       },
       worker: {
         backend: context.worker.backend,
         id: context.worker.id,
         name: context.worker.name,
       },
+      cwd: context.cwd,
     },
     null,
     2,
@@ -128,7 +132,7 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
     const payload = buildLocalCommandPayload(context);
     const { exitCode, stderr, stdout } = await runCommand({
       cmd: command,
-      cwd: context.worker.backend.workingDirectory ?? Bun.env.PWD ?? ".",
+      cwd: context.cwd,
       env: {
         ...Bun.env,
         ...context.worker.backend.env,
@@ -136,6 +140,8 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
         QUEST_SLICE_ID: context.slice.id,
         QUEST_WORKER_ID: context.worker.id,
         QUEST_WORKSPACE: context.run.spec.workspace,
+        QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
+        QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
       },
       stdin: payload,
     });
