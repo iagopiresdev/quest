@@ -75,6 +75,7 @@ Execution happens from the slice workspace path for that run, and the process al
 
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
+Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
 
 ## Tester Lane
 
@@ -118,6 +119,9 @@ bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --dry-run
 
 # execute a persisted run and backfill a source repo for worktree materialization
 bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
+
+# integrate a completed run into a dedicated integration worktree
+bun ./src/cli.ts runs integrate --id quest-abc12345-deadbeef --target-ref main
 
 # inspect persisted slice logs/output
 bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
@@ -168,9 +172,10 @@ Do not commit runtime state, tokens, or local config.
 - basic steering commands to abort and rerun runs
 - runtime-managed per-run and per-slice workspace directories
 - optional Git worktree materialization via `--source-repo`
+- serial integration into a dedicated worktree via `runs integrate`
 - explicit workspace cleanup via `runs cleanup`
 
-Additional runner adapters, git worktrees, merge/integration, notifications, and richer steering are still pending.
+Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
 
 ## Validation
 

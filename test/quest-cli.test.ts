@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -281,6 +281,36 @@ test("quest cli executes a run against a source git repository", () => {
   expect(executedRun.status).toBe("completed");
   expect(executedRun.sourceRepositoryPath).toBe(repositoryRoot);
   expect(executedRun.slices[0].lastOutput.stdout.trim()).toBe("from-source-repo");
+});
+
+test("quest cli integrates a completed run into a dedicated integration worktree", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-integrate.ts");
+  writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(createSpec({ title: "Integrate source repo run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(0);
+
+  const integrated = runCli(context, ["runs", "integrate", "--id", runId]);
+  expect(integrated.code).toBe(0);
+  const integratedRun = JSON.parse(integrated.stdout).run;
+  expect(integratedRun.slices[0].integrationStatus).toBe("integrated");
+  expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("from-source-repo\n");
+  expect(readFileSync(join(integratedRun.integrationWorkspacePath, "tracked.txt"), "utf8")).toBe(
+    "integrated-change\n",
+  );
 });
 
 test("quest cli fails a run when acceptance checks fail", () => {

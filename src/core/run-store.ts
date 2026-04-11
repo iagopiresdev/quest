@@ -94,6 +94,7 @@ function buildInitialSliceStates(
     wave.slices.map<QuestRunSliceState>((slice) => ({
       assignedRunner: slice.assignedRunner,
       assignedWorkerId: slice.assignedWorkerId,
+      integrationStatus: "pending",
       sliceId: slice.id,
       status: "pending",
       title: slice.title,
@@ -105,6 +106,7 @@ function buildInitialSliceStates(
   const blockedSlices = run.plan.unassigned.map<QuestRunSliceState>((slice) => ({
     assignedRunner: null,
     assignedWorkerId: null,
+    integrationStatus: "pending",
     lastError: slice.message,
     sliceId: slice.id,
     status: "blocked",

@@ -27,7 +27,7 @@ async function directoryHasEntries(path: string): Promise<boolean> {
   }
 }
 
-async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Promise<string> {
+export async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Promise<string> {
   const resolvedSourcePath = resolve(sourceRepositoryPath);
   const result = await runSubprocess({
     cmd: ["git", "rev-parse", "--show-toplevel"],
@@ -51,7 +51,7 @@ async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Promise<s
   return result.stdout.trim();
 }
 
-async function ensureGitRepositoryIsClean(repositoryRoot: string): Promise<void> {
+export async function ensureGitRepositoryIsClean(repositoryRoot: string): Promise<void> {
   const result = await runSubprocess({
     cmd: ["git", "status", "--porcelain"],
     cwd: repositoryRoot,
@@ -150,24 +150,53 @@ async function writeQuestContext(
   );
 }
 
+async function readHeadRevision(cwd: string): Promise<string> {
+  const result = await runSubprocess({
+    cmd: ["git", "rev-parse", "HEAD"],
+    cwd,
+    env: Bun.env,
+  });
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_workspace_materialization_failed",
+      details: {
+        cwd,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Failed to resolve git HEAD for ${cwd}`,
+      statusCode: 1,
+    });
+  }
+
+  return result.stdout.trim();
+}
+
 export async function prepareExecutionWorkspace(
   run: QuestRunDocument,
   sliceState: QuestRunSliceState,
   cwd: string,
-): Promise<void> {
+): Promise<{ baseRevision?: string }> {
+  let baseRevision: string | undefined;
   if (run.sourceRepositoryPath) {
     await materializeGitWorktree(run.sourceRepositoryPath, cwd);
+    baseRevision = await readHeadRevision(cwd);
   } else {
     await ensureDirectory(cwd);
   }
 
   await writeQuestContext(run, sliceState, cwd);
+  return { baseRevision };
 }
 
 export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise<void> {
   const workspacePaths = run.slices
     .map((slice) => slice.workspacePath)
     .filter((workspacePath): workspacePath is string => Boolean(workspacePath));
+  if (run.integrationWorkspacePath) {
+    workspacePaths.push(run.integrationWorkspacePath);
+  }
 
   if (run.sourceRepositoryPath) {
     const repositoryRoot = await resolveGitRepositoryRoot(run.sourceRepositoryPath);

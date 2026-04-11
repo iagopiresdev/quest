@@ -1,0 +1,120 @@
+import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { QuestDomainError } from "../src/core/errors";
+import { QuestRunExecutor } from "../src/core/run-executor";
+import { QuestRunIntegrator } from "../src/core/run-integrator";
+import { QuestRunStore } from "../src/core/run-store";
+import { WorkerRegistry } from "../src/core/worker-registry";
+import { createCommittedRepo, createSpec, createWorker, runCommandOrThrow } from "./helpers";
+
+test("run integrator cherry-picks completed slice changes into a dedicated integration worktree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    await executor.executeRun(run.id);
+    const integratedRun = await integrator.integrateRun(run.id);
+    const integrationWorkspacePath = integratedRun.integrationWorkspacePath ?? "";
+
+    expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("from-source-repo\n");
+    expect(readFileSync(join(integrationWorkspacePath, "tracked.txt"), "utf8")).toBe(
+      "integrated-change\n",
+    );
+    expect(integratedRun.events.some((event) => event.type === "run_integrated")).toBe(true);
+    expect(integratedRun.slices[0]?.integrationStatus).toBe("integrated");
+    expect(integratedRun.slices[0]?.integratedCommit).toBeDefined();
+
+    const diffResult = Bun.spawnSync({
+      cmd: ["git", "log", "-1", "--pretty=%B"],
+      cwd: integrationWorkspacePath,
+      env: Bun.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(diffResult.exitCode).toBe(0);
+    expect(new TextDecoder().decode(diffResult.stdout)).toContain("Quest-Slice-Id: parser");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator refuses runs that are not completed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    const run = await runStore.createRun(createSpec(), [createWorker()]);
+
+    try {
+      await integrator.integrateRun(run.id);
+      throw new Error("Expected quest_run_not_integratable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_run_not_integratable");
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator fails when drift causes a cherry-pick conflict", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    await executor.executeRun(run.id);
+
+    writeFileSync(join(repositoryRoot, "tracked.txt"), "conflicting-change\n", "utf8");
+    runCommandOrThrow(["git", "add", "tracked.txt"], repositoryRoot);
+    runCommandOrThrow(["git", "commit", "-m", "Drift source repo"], repositoryRoot);
+
+    try {
+      await integrator.integrateRun(run.id);
+      throw new Error("Expected quest_integration_failed");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_integration_failed");
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

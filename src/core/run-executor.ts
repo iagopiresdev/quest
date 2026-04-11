@@ -178,7 +178,10 @@ export class QuestRunExecutor {
               forceDryRun: options.dryRun === true,
             });
             const cwd = resolveExecutionCwd(run, sliceState, worker);
-            await prepareExecutionWorkspace(run, sliceState, cwd);
+            const preparedWorkspace = await prepareExecutionWorkspace(run, sliceState, cwd);
+            if (preparedWorkspace.baseRevision) {
+              sliceState.baseRevision = preparedWorkspace.baseRevision;
+            }
             return {
               result: await adapter.execute({
                 cwd,

@@ -6,6 +6,7 @@ import { isQuestDomainError } from "./core/errors";
 import { planQuest } from "./core/planner";
 import { QuestRunCleanup } from "./core/run-cleanup";
 import { QuestRunExecutor } from "./core/run-executor";
+import { QuestRunIntegrator } from "./core/run-integrator";
 import { QuestRunStore } from "./core/run-store";
 import { questSpecSchema } from "./core/spec-schema";
 import {
@@ -22,6 +23,7 @@ type QuestCliCommand =
   | "run"
   | "runs:abort"
   | "runs:cleanup"
+  | "runs:integrate"
   | "runs:rerun"
   | "runs:execute"
   | "runs:logs"
@@ -35,6 +37,7 @@ type QuestCliContext = {
   runCleanup: QuestRunCleanup;
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
+  runIntegrator: QuestRunIntegrator;
   runStore: QuestRunStore;
 };
 
@@ -217,6 +220,18 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs cleanup --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:integrate",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "integrate",
+    run: async ({ args, runIntegrator }) => ({
+      run: await runIntegrator.integrateRun(requireOptionValue(args, "--id", "--id <run-id>"), {
+        sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
+        targetRef: findOptionValue(args, "--target-ref") ?? undefined,
+      }),
+    }),
+    usage:
+      "quest runs integrate --id <run-id> [--source-repo <path>] [--target-ref <ref>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:rerun",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rerun",
     run: async ({ args, registry, runStore }) => {
@@ -297,9 +312,12 @@ async function main(): Promise<number> {
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const runCleanup = new QuestRunCleanup(runStore);
   const runExecutor = new QuestRunExecutor(runStore, registry);
+  const runIntegrator = new QuestRunIntegrator(runStore);
 
   try {
-    writeJson(await command.run({ args, registry, runCleanup, runExecutor, runStore }));
+    writeJson(
+      await command.run({ args, registry, runCleanup, runExecutor, runIntegrator, runStore }),
+    );
     return 0;
   } catch (error: unknown) {
     writeError(error);
