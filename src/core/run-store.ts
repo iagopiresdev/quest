@@ -1,5 +1,4 @@
-import { randomBytes } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { readdir } from "fs/promises";
 
 import { QuestDomainError } from "./errors";
 import { planQuest } from "./planner";
@@ -32,7 +31,9 @@ function nowIsoString(): string {
 
 function createQuestRunId(): string {
   const timePart = Date.now().toString(36).slice(-8).padStart(8, "0");
-  const randomPart = randomBytes(4).toString("hex");
+  const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
   return `quest-${timePart}-${randomPart}`;
 }
 

@@ -1,14 +1,13 @@
-import os from "node:os";
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { homedir } from "os";
+import { dirname, join, resolve } from "path";
 
 import { QuestDomainError } from "./errors";
 
-const DEFAULT_STATE_ROOT = join(os.homedir(), ".quest-runner");
+const DEFAULT_STATE_ROOT = join(homedir(), ".quest-runner");
 
 export function resolveQuestStateRoot(explicitPath?: string): string {
-  const configuredPath = explicitPath?.trim() || process.env.QUEST_RUNNER_STATE_ROOT?.trim();
+  const configuredPath = explicitPath?.trim() || Bun.env.QUEST_RUNNER_STATE_ROOT?.trim();
   return configuredPath ? resolve(configuredPath) : DEFAULT_STATE_ROOT;
 }
 
@@ -16,7 +15,7 @@ export function resolveWorkerRegistryPath(options: {
   explicitRegistryPath?: string;
   stateRoot?: string;
 } = {}): string {
-  const configuredPath = options.explicitRegistryPath?.trim() || process.env.QUEST_RUNNER_WORKER_REGISTRY_PATH?.trim();
+  const configuredPath = options.explicitRegistryPath?.trim() || Bun.env.QUEST_RUNNER_WORKER_REGISTRY_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -28,7 +27,7 @@ export function resolveQuestRunsRoot(options: {
   explicitRunsRoot?: string;
   stateRoot?: string;
 } = {}): string {
-  const configuredPath = options.explicitRunsRoot?.trim() || process.env.QUEST_RUNNER_RUNS_ROOT?.trim();
+  const configuredPath = options.explicitRunsRoot?.trim() || Bun.env.QUEST_RUNNER_RUNS_ROOT?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -72,7 +71,7 @@ export async function readJsonFileOrDefault<T>(path: string, fallback: T): Promi
 
 export async function writeJsonFileAtomically(path: string, payload: unknown): Promise<void> {
   const parentDir = dirname(path);
-  const tempPath = `${path}.${randomUUID()}.tmp`;
+  const tempPath = `${path}.${crypto.randomUUID()}.tmp`;
 
   try {
     await mkdir(parentDir, { recursive: true });

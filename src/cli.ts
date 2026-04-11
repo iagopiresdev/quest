@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
 
-import { readFile } from "node:fs/promises";
-import process from "node:process";
-
 import { ZodError } from "zod";
 
 import { isQuestDomainError } from "./core/errors";
@@ -24,7 +21,8 @@ type QuestCliCommand =
   | "workers:upsert";
 
 function printUsage(): void {
-  process.stdout.write(
+  void Bun.write(
+    Bun.stdout,
     [
       "Usage:",
       "  quest workers list [--registry <path>]",
@@ -41,6 +39,14 @@ function printUsage(): void {
       "Output is always JSON.",
     ].join("\n") + "\n",
   );
+}
+
+function stdinIsTty(): boolean {
+  return Bun.spawnSync({
+    cmd: ["/bin/sh", "-lc", "test -t 0"],
+    stderr: "ignore",
+    stdout: "ignore",
+  }).exitCode === 0;
 }
 
 function resolveCommand(args: string[]): QuestCliCommand | null {
@@ -89,13 +95,7 @@ function hasFlag(args: string[], flag: string): boolean {
 }
 
 async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-
-  for await (const chunk of process.stdin) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-
-  return Buffer.concat(chunks).toString("utf8");
+  return await Bun.stdin.text();
 }
 
 async function readJsonInput(args: string[]): Promise<unknown> {
@@ -103,10 +103,10 @@ async function readJsonInput(args: string[]): Promise<unknown> {
   const useStdin = hasFlag(args, "--stdin");
 
   if (filePath) {
-    return JSON.parse(await readFile(filePath, "utf8")) as unknown;
+    return JSON.parse(await Bun.file(filePath).text()) as unknown;
   }
 
-  if (useStdin || !process.stdin.isTTY) {
+  if (useStdin || !stdinIsTty()) {
     const raw = await readStdin();
     return JSON.parse(raw) as unknown;
   }
@@ -115,12 +115,13 @@ async function readJsonInput(args: string[]): Promise<unknown> {
 }
 
 function writeJson(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  void Bun.write(Bun.stdout, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function writeErrorAndExit(error: unknown): never {
+function writeError(error: unknown): void {
   if (error instanceof ZodError) {
-    process.stderr.write(
+    void Bun.write(
+      Bun.stderr,
       `${JSON.stringify(
         {
           error: "validation_failed",
@@ -131,11 +132,12 @@ function writeErrorAndExit(error: unknown): never {
         2,
       )}\n`,
     );
-    process.exit(1);
+    return;
   }
 
   if (isQuestDomainError(error)) {
-    process.stderr.write(
+    void Bun.write(
+      Bun.stderr,
       `${JSON.stringify(
         {
           error: error.code,
@@ -146,10 +148,11 @@ function writeErrorAndExit(error: unknown): never {
         2,
       )}\n`,
     );
-    process.exit(1);
+    return;
   }
 
-  process.stderr.write(
+  void Bun.write(
+    Bun.stderr,
     `${JSON.stringify(
       {
         error: "cli_failure",
@@ -159,22 +162,20 @@ function writeErrorAndExit(error: unknown): never {
       2,
     )}\n`,
   );
-  process.exit(1);
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+async function main(): Promise<number> {
+  const args = Bun.argv.slice(2);
 
   if (args.length === 0 || hasFlag(args, "--help")) {
     printUsage();
-    return;
+    return 0;
   }
 
   const command = resolveCommand(args);
   if (!command) {
     printUsage();
-    process.exitCode = 1;
-    return;
+    return 1;
   }
 
   const stateRoot = resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined);
@@ -193,32 +194,32 @@ async function main(): Promise<void> {
   try {
     if (command === "workers:list") {
       writeJson({ workers: await registry.listWorkers() });
-      return;
+      return 0;
     }
 
     if (command === "workers:upsert") {
       const payload = registeredWorkerSchema.parse(await readJsonInput(args));
       writeJson({ worker: await registry.upsertWorker(payload) });
-      return;
+      return 0;
     }
 
     if (command === "plan") {
       const spec = questSpecSchema.parse(await readJsonInput(args));
       const workers = await registry.listWorkers();
       writeJson({ plan: planQuest(spec, workers) });
-      return;
+      return 0;
     }
 
     if (command === "run") {
       const spec = questSpecSchema.parse(await readJsonInput(args));
       const workers = await registry.listWorkers();
       writeJson({ run: await runStore.createRun(spec, workers) });
-      return;
+      return 0;
     }
 
     if (command === "runs:list") {
       writeJson({ runs: await runStore.listRuns() });
-      return;
+      return 0;
     }
 
     if (command === "runs:execute") {
@@ -232,7 +233,7 @@ async function main(): Promise<void> {
           dryRun: hasFlag(args, "--dry-run"),
         }),
       });
-      return;
+      return 0;
     }
 
     if (command === "runs:status") {
@@ -242,11 +243,17 @@ async function main(): Promise<void> {
       }
 
       writeJson({ run: await runStore.getRun(runId) });
-      return;
+      return 0;
     }
   } catch (error: unknown) {
-    writeErrorAndExit(error);
+    writeError(error);
+    return 1;
   }
+
+  return 0;
 }
 
-void main();
+const exitCode = await main();
+if (exitCode !== 0) {
+  process.exit(exitCode);
+}
