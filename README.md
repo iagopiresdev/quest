@@ -107,6 +107,9 @@ bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
 # abort a pending or running run
 bun ./src/cli.ts runs abort --id quest-abc12345-deadbeef
 
+# create a fresh run from a prior run's spec
+bun ./src/cli.ts runs rerun --id quest-abc12345-deadbeef
+
 # optional: compile a standalone Bun executable
 bun run build
 ./dist/quest runs list
@@ -138,6 +141,7 @@ Do not commit runtime state, tokens, or local config.
 - persisted slice output logs and basic control commands (`runs logs`, `runs abort`)
 - real local subprocess execution through the `local-command` adapter
 - slice-level tester lane through `acceptanceChecks`
+- basic steering commands to abort and rerun runs
 
 Additional runner adapters, git worktrees, merge/integration, notifications, and richer steering are still pending.
 

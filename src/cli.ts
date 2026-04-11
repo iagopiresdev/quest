@@ -15,6 +15,7 @@ type QuestCliCommand =
   | "plan"
   | "run"
   | "runs:abort"
+  | "runs:rerun"
   | "runs:execute"
   | "runs:logs"
   | "runs:list"
@@ -35,6 +36,7 @@ function printUsage(): void {
       "  quest plan --file <path> [--registry <path>]",
       "  quest plan --stdin [--registry <path>]",
       "  quest runs abort --id <run-id> [--runs-root <path>] [--state-root <path>]",
+      "  quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--state-root <path>]",
       "  quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--state-root <path>]",
       "  quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--state-root <path>]",
       "  quest runs list [--runs-root <path>] [--state-root <path>]",
@@ -76,6 +78,10 @@ function resolveCommand(args: string[]): QuestCliCommand | null {
 
   if (args.length >= 2 && args[0] === "runs" && args[1] === "abort") {
     return "runs:abort";
+  }
+
+  if (args.length >= 2 && args[0] === "runs" && args[1] === "rerun") {
+    return "runs:rerun";
   }
 
   if (args.length >= 2 && args[0] === "runs" && args[1] === "execute") {
@@ -241,6 +247,18 @@ async function main(): Promise<number> {
       }
 
       writeJson({ run: await runStore.abortRun(runId) });
+      return 0;
+    }
+
+    if (command === "runs:rerun") {
+      const runId = findOptionValue(args, "--id");
+      if (!runId) {
+        throw new Error("Expected --id <run-id>");
+      }
+
+      const previousRun = await runStore.getRun(runId);
+      const workers = await registry.listWorkers();
+      writeJson({ run: await runStore.createRun(previousRun.spec, workers) });
       return 0;
     }
 
