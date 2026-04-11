@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -194,6 +194,31 @@ test("quest cli returns logs and aborts a planned run", () => {
   const abortedRun = JSON.parse(aborted.stdout).run;
   expect(abortedRun.status).toBe("aborted");
   expect(abortedRun.slices[0].status).toBe("aborted");
+});
+
+test("quest cli cleans up run workspaces", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Cleanup quest run" })),
+  });
+  expect(created.code).toBe(0);
+  const createdRun = JSON.parse(created.stdout).run;
+  const runId = createdRun.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+  expect(executed.code).toBe(0);
+  const executedRun = JSON.parse(executed.stdout).run;
+  expect(existsSync(executedRun.workspaceRoot)).toBe(true);
+
+  const cleaned = runCli(context, ["runs", "cleanup", "--id", runId]);
+  expect(cleaned.code).toBe(0);
+  const cleanedRun = JSON.parse(cleaned.stdout).run;
+  expect(existsSync(cleanedRun.workspaceRoot)).toBe(false);
+  expect(
+    cleanedRun.events.some((event: { type: string }) => event.type === "run_workspace_cleaned"),
+  ).toBe(true);
 });
 
 test("quest cli executes a real local-command worker", () => {

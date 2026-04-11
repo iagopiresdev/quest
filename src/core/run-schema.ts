@@ -38,6 +38,7 @@ export const questRunEventTypeValues = [
   "run_completed",
   "run_failed",
   "run_aborted",
+  "run_workspace_cleaned",
   "slice_started",
   "slice_testing_started",
   "slice_testing_completed",

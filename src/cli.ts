@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 
 import { isQuestDomainError } from "./core/errors";
 import { planQuest } from "./core/planner";
+import { QuestRunCleanup } from "./core/run-cleanup";
 import { QuestRunExecutor } from "./core/run-executor";
 import { QuestRunStore } from "./core/run-store";
 import { questSpecSchema } from "./core/spec-schema";
@@ -20,6 +21,7 @@ type QuestCliCommand =
   | "plan"
   | "run"
   | "runs:abort"
+  | "runs:cleanup"
   | "runs:rerun"
   | "runs:execute"
   | "runs:logs"
@@ -30,6 +32,7 @@ type QuestCliCommand =
 
 type QuestCliContext = {
   args: string[];
+  runCleanup: QuestRunCleanup;
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
   runStore: QuestRunStore;
@@ -205,6 +208,15 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs abort --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:cleanup",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "cleanup",
+    run: async ({ args, runCleanup }) => ({
+      run: await runCleanup.cleanupRun(requireOptionValue(args, "--id", "--id <run-id>")),
+    }),
+    usage:
+      "quest runs cleanup --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:rerun",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rerun",
     run: async ({ args, registry, runStore }) => {
@@ -283,10 +295,11 @@ async function main(): Promise<number> {
   });
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const runCleanup = new QuestRunCleanup(runStore);
   const runExecutor = new QuestRunExecutor(runStore, registry);
 
   try {
-    writeJson(await command.run({ args, registry, runExecutor, runStore }));
+    writeJson(await command.run({ args, registry, runCleanup, runExecutor, runStore }));
     return 0;
   } catch (error: unknown) {
     writeError(error);

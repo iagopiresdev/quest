@@ -1,4 +1,4 @@
-import { readdir, writeFile } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import { QuestDomainError } from "./errors";
@@ -162,4 +162,58 @@ export async function prepareExecutionWorkspace(
   }
 
   await writeQuestContext(run, sliceState, cwd);
+}
+
+export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise<void> {
+  const workspacePaths = run.slices
+    .map((slice) => slice.workspacePath)
+    .filter((workspacePath): workspacePath is string => Boolean(workspacePath));
+
+  if (run.sourceRepositoryPath) {
+    const repositoryRoot = await resolveGitRepositoryRoot(run.sourceRepositoryPath);
+
+    for (const workspacePath of workspacePaths) {
+      if (!(await directoryHasEntries(workspacePath))) {
+        continue;
+      }
+
+      const result = await runSubprocess({
+        cmd: ["git", "worktree", "remove", "--force", workspacePath],
+        cwd: repositoryRoot,
+        env: Bun.env,
+      });
+
+      if (result.exitCode !== 0) {
+        throw new QuestDomainError({
+          code: "quest_workspace_materialization_failed",
+          details: {
+            path: workspacePath,
+            sourceRepositoryPath: repositoryRoot,
+            stderr: result.stderr,
+            stdout: result.stdout,
+          },
+          message: `Failed to remove git worktree for ${workspacePath}`,
+          statusCode: 1,
+        });
+      }
+    }
+  }
+
+  if (!run.workspaceRoot) {
+    return;
+  }
+
+  try {
+    await rm(run.workspaceRoot, { force: true, recursive: true });
+  } catch (error: unknown) {
+    throw new QuestDomainError({
+      code: "quest_workspace_materialization_failed",
+      details: {
+        path: run.workspaceRoot,
+        reason: error instanceof Error ? error.message : String(error),
+      },
+      message: `Failed to remove workspace root ${run.workspaceRoot}`,
+      statusCode: 1,
+    });
+  }
 }

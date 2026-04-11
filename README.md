@@ -74,6 +74,7 @@ Execution happens from the slice workspace path for that run, and the process al
 - `QUEST_SLICE_WORKSPACE`
 
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
+Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 
 ## Tester Lane
 
@@ -121,6 +122,9 @@ bun ./src/cli.ts runs execute --id quest-abc12345-deadbeef --source-repo /abs/pa
 # inspect persisted slice logs/output
 bun ./src/cli.ts runs logs --id quest-abc12345-deadbeef
 
+# remove quest-managed workspaces for a run
+bun ./src/cli.ts runs cleanup --id quest-abc12345-deadbeef
+
 # abort a pending or running run
 bun ./src/cli.ts runs abort --id quest-abc12345-deadbeef
 
@@ -164,6 +168,7 @@ Do not commit runtime state, tokens, or local config.
 - basic steering commands to abort and rerun runs
 - runtime-managed per-run and per-slice workspace directories
 - optional Git worktree materialization via `--source-repo`
+- explicit workspace cleanup via `runs cleanup`
 
 Additional runner adapters, git worktrees, merge/integration, notifications, and richer steering are still pending.
 
