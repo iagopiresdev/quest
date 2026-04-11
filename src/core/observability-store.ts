@@ -2,11 +2,13 @@ import { QuestDomainError } from "./errors";
 import {
   createObservableRunEvent,
   type DeliveryRecord,
+  type DeliveryStatus,
   deliveryRecordSchema,
   type ObservabilityConfigDocument,
   type ObservabilityDeliveriesDocument,
   type ObservableCalibrationEvent,
   type ObservableEvent,
+  type ObservableEventType,
   observabilityConfigSchema,
   observabilityDeliveriesSchema,
   observableCalibrationEventSchema,
@@ -158,6 +160,38 @@ export class ObservabilityStore {
       records: nextRecords,
       version: 1,
     } satisfies ObservabilityDeliveriesDocument);
+  }
+
+  async listDeliveries(
+    filters: {
+      eventType?: ObservableEventType;
+      runId?: string;
+      sinkId?: string;
+      status?: DeliveryStatus;
+    } = {},
+  ): Promise<DeliveryRecord[]> {
+    const deliveries = await this.readDeliveries();
+    return deliveries.records
+      .filter((record) => {
+        if (filters.sinkId && record.sinkId !== filters.sinkId) {
+          return false;
+        }
+
+        if (filters.status && record.status !== filters.status) {
+          return false;
+        }
+
+        if (filters.eventType && record.eventType !== filters.eventType) {
+          return false;
+        }
+
+        if (filters.runId && record.payload.runId !== filters.runId) {
+          return false;
+        }
+
+        return true;
+      })
+      .sort((left, right) => right.lastAttemptAt.localeCompare(left.lastAttemptAt));
   }
 
   async listObservableRunEvents(run: QuestRunDocument): Promise<ObservableEvent[]> {

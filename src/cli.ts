@@ -9,6 +9,8 @@ import { listCalibrationSuites, WorkerCalibrator } from "./core/calibration";
 import { isQuestDomainError } from "./core/errors";
 import { EventDispatcher } from "./core/event-dispatcher";
 import {
+  type DeliveryStatus,
+  deliveryStatusSchema,
   type ObservableEventType,
   observableEventTypeSchema,
   webhookSinkSchema,
@@ -43,6 +45,9 @@ import {
 
 type QuestCliCommand =
   | "doctor"
+  | "observability:deliveries:list"
+  | "observability:deliveries:retry"
+  | "observability:events:list"
   | "observability:sinks:list"
   | "observability:sink:delete"
   | "observability:webhook:upsert"
@@ -162,6 +167,14 @@ function parseKeyValuePairs(value: string | null): Record<string, string> {
 
 function parseObservableEventTypes(value: string | null): ObservableEventType[] {
   return parseCommaSeparatedValues(value).map((entry) => observableEventTypeSchema.parse(entry));
+}
+
+function parseObservableEventType(value: string | null): ObservableEventType | undefined {
+  return value ? observableEventTypeSchema.parse(value) : undefined;
+}
+
+function parseDeliveryStatus(value: string | null): DeliveryStatus | undefined {
+  return value ? deliveryStatusSchema.parse(value) : undefined;
 }
 
 function slugifyWorkerId(value: string): string {
@@ -625,6 +638,17 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
   },
   {
+    id: "observability:events:list",
+    matches: (args) =>
+      args.length >= 3 && args[0] === "observability" && args[1] === "events" && args[2] === "list",
+    run: async ({ args, observabilityStore, runStore }) => {
+      const run = await runStore.getRun(requireOptionValue(args, "--run-id", "--run-id <run-id>"));
+      return { events: await observabilityStore.listObservableRunEvents(run) };
+    },
+    usage:
+      "quest observability events list --run-id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--observability-config <path>] [--state-root <path>]",
+  },
+  {
     id: "observability:sinks:list",
     matches: (args) =>
       args.length >= 3 && args[0] === "observability" && args[1] === "sinks" && args[2] === "list",
@@ -632,6 +656,42 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       sinks: await observabilityStore.listSinks(),
     }),
     usage: "quest observability sinks list [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:deliveries:list",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "deliveries" &&
+      args[2] === "list",
+    run: async ({ args, observabilityStore }) => ({
+      deliveries: await observabilityStore.listDeliveries({
+        eventType: parseObservableEventType(findOptionValue(args, "--event-type")),
+        runId: findOptionValue(args, "--run-id") ?? undefined,
+        sinkId: findOptionValue(args, "--sink-id") ?? undefined,
+        status: parseDeliveryStatus(findOptionValue(args, "--status")),
+      }),
+    }),
+    usage:
+      "quest observability deliveries list [--sink-id <sink-id>] [--run-id <run-id>] [--event-type <event-type>] [--status <pending|delivered|failed>] [--observability-deliveries <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:deliveries:retry",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "deliveries" &&
+      args[2] === "retry",
+    run: async ({ args, dispatcher }) => ({
+      attempts: await dispatcher.retryDeliveries({
+        eventType: parseObservableEventType(findOptionValue(args, "--event-type")),
+        runId: findOptionValue(args, "--run-id") ?? undefined,
+        sinkId: findOptionValue(args, "--sink-id") ?? undefined,
+        status: parseDeliveryStatus(findOptionValue(args, "--status")) ?? "failed",
+      }),
+    }),
+    usage:
+      "quest observability deliveries retry [--sink-id <sink-id>] [--run-id <run-id>] [--event-type <event-type>] [--status <pending|delivered|failed>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
   },
   {
     id: "observability:webhook:upsert",

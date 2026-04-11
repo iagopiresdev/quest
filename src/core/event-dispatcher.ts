@@ -1,7 +1,9 @@
 import {
   createObservableCalibrationEvent,
   type DeliveryRecord,
+  type DeliveryStatus,
   type ObservableEvent,
+  type ObservableEventType,
   shouldDeliverEvent,
   type WebhookSink,
 } from "./observability-schema";
@@ -14,6 +16,8 @@ type DeliveryAttempt = {
   eventType: string;
   ok: boolean;
   sinkId: string;
+  status: DeliveryStatus | "skipped";
+  reason?: string;
 };
 
 export class EventDispatcher {
@@ -40,6 +44,58 @@ export class EventDispatcher {
     return await this.dispatchEvents([createObservableCalibrationEvent(input)]);
   }
 
+  async retryDeliveries(filters: {
+    eventType?: ObservableEventType;
+    runId?: string;
+    sinkId?: string;
+    status?: DeliveryStatus;
+  }): Promise<DeliveryAttempt[]> {
+    const [config, deliveries] = await Promise.all([
+      this.observabilityStore.readConfig(),
+      this.observabilityStore.listDeliveries(filters),
+    ]);
+    const attempts: DeliveryAttempt[] = [];
+
+    for (const record of deliveries) {
+      const sink = config.sinks.find((candidate) => candidate.id === record.sinkId) ?? null;
+      if (!sink) {
+        attempts.push({
+          eventId: record.eventId,
+          eventType: record.eventType,
+          ok: false,
+          reason: "sink_not_found",
+          sinkId: record.sinkId,
+          status: "skipped",
+        });
+        continue;
+      }
+
+      if (!sink.enabled) {
+        attempts.push({
+          eventId: record.eventId,
+          eventType: record.eventType,
+          ok: false,
+          reason: "sink_disabled",
+          sinkId: record.sinkId,
+          status: "skipped",
+        });
+        continue;
+      }
+
+      const delivery = await this.deliverWebhookSink(sink, record.payload, record.attempts + 1);
+      await this.observabilityStore.upsertDeliveryRecord(delivery);
+      attempts.push({
+        eventId: record.eventId,
+        eventType: record.eventType,
+        ok: delivery.status === "delivered",
+        sinkId: record.sinkId,
+        status: delivery.status,
+      });
+    }
+
+    return attempts;
+  }
+
   private async dispatchEvents(events: ObservableEvent[]): Promise<DeliveryAttempt[]> {
     const [config, deliveries] = await Promise.all([
       this.observabilityStore.readConfig(),
@@ -56,24 +112,26 @@ export class EventDispatcher {
         const existingRecord = deliveries.records.find(
           (record) => record.eventId === event.eventId && record.sinkId === sink.id,
         );
-        if (existingRecord?.status === "delivered") {
+        if (existingRecord) {
           attempts.push({
             eventId: event.eventId,
             eventType: event.eventType,
-            ok: true,
+            ok: existingRecord.status === "delivered",
+            reason: "already_recorded",
             sinkId: sink.id,
+            status: existingRecord.status,
           });
           continue;
         }
 
-        const nextAttemptCount = (existingRecord?.attempts ?? 0) + 1;
-        const delivery = await this.deliverWebhookSink(sink, event, nextAttemptCount);
+        const delivery = await this.deliverWebhookSink(sink, event, 1);
         await this.observabilityStore.upsertDeliveryRecord(delivery);
         attempts.push({
           eventId: event.eventId,
           eventType: event.eventType,
           ok: delivery.status === "delivered",
           sinkId: sink.id,
+          status: delivery.status,
         });
       }
     }
@@ -87,6 +145,8 @@ export class EventDispatcher {
     attempts: number,
   ): Promise<DeliveryRecord> {
     const lastAttemptAt = new Date().toISOString();
+    // Delivery retries should be able to replay the original event even if run state changes later.
+    const payload = event;
 
     try {
       const headers: Record<string, string> = {
@@ -111,6 +171,7 @@ export class EventDispatcher {
           eventType: event.eventType,
           lastAttemptAt,
           lastError: `HTTP ${response.status}`,
+          payload,
           sinkId: sink.id,
           status: "failed",
         };
@@ -122,6 +183,7 @@ export class EventDispatcher {
         eventId: event.eventId,
         eventType: event.eventType,
         lastAttemptAt,
+        payload,
         sinkId: sink.id,
         status: "delivered",
       };
@@ -132,6 +194,7 @@ export class EventDispatcher {
         eventType: event.eventType,
         lastAttemptAt,
         lastError: error instanceof Error ? error.message : String(error),
+        payload,
         sinkId: sink.id,
         status: "failed",
       };

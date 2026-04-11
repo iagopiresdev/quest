@@ -176,6 +176,8 @@ The core model is:
 
 This matters because webhook delivery is only the first consumer. The same event stream should support future sinks such as Telegram, Linear, Slack, or metrics without changing the run model itself.
 
+Delivery records keep the observable payload snapshot that was sent to the sink. That gives operators a stable audit trail and lets Quest Runner retry failed deliveries without needing to reconstruct the original event from a possibly-mutated local state tree.
+
 ## Worker Calibration
 
 `quest workers calibrate` reuses the normal run planner and executor against a throwaway fixture repo under the calibrations root. The current built-in suite is `training-grounds-v1`.
@@ -202,11 +204,20 @@ quest workers add codex --name "Quest Codex" --profile gpt-5.4
 # list configured observability sinks
 quest observability sinks list
 
+# list normalized events for a run
+quest observability events list --run-id quest-abc12345-deadbeef
+
+# inspect stored delivery attempts
+quest observability deliveries list --status failed
+
 # add or update a webhook sink
 quest observability webhook upsert \
   --id local-webhook \
   --url https://example.com/quest-events \
   --events run_failed,run_completed,worker_calibration_recorded
+
+# retry failed webhook deliveries after the sink is healthy again
+quest observability deliveries retry --sink-id local-webhook --status failed
 
 # delete a sink
 quest observability sinks delete --id local-webhook
@@ -334,7 +345,7 @@ Do not commit runtime state, tokens, or local config.
 - built-in worker calibration through the throwaway `training-grounds-v1` suite
 - persisted calibration history, trust updates, and XP awards on workers
 - event-driven observability with a webhook sink
-- persisted webhook delivery records for dedupe and retries
+- persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
 

@@ -60,28 +60,6 @@ export const observabilityConfigSchema = z
   .strict();
 export type ObservabilityConfigDocument = z.infer<typeof observabilityConfigSchema>;
 
-export const deliveryRecordSchema = z
-  .object({
-    attempts: z.number().int().min(1).max(1024),
-    deliveredAt: nonEmptyString(80).optional(),
-    eventId: nonEmptyString(240),
-    eventType: observableEventTypeSchema,
-    lastAttemptAt: nonEmptyString(80),
-    lastError: nonEmptyString(1000).optional(),
-    sinkId: nonEmptyString(80),
-    status: z.enum(["pending", "delivered", "failed"]),
-  })
-  .strict();
-export type DeliveryRecord = z.infer<typeof deliveryRecordSchema>;
-
-export const observabilityDeliveriesSchema = z
-  .object({
-    records: z.array(deliveryRecordSchema).default([]),
-    version: z.literal(1),
-  })
-  .strict();
-export type ObservabilityDeliveriesDocument = z.infer<typeof observabilityDeliveriesSchema>;
-
 export const observableRunEventSchema = z
   .object({
     details: z.record(z.string(), z.unknown()),
@@ -115,7 +93,37 @@ export const observableCalibrationEventSchema = z
   .strict();
 export type ObservableCalibrationEvent = z.infer<typeof observableCalibrationEventSchema>;
 
-export type ObservableEvent = ObservableRunEvent | ObservableCalibrationEvent;
+export const observableEventSchema = z.discriminatedUnion("kind", [
+  observableRunEventSchema,
+  observableCalibrationEventSchema,
+]);
+export type ObservableEvent = z.infer<typeof observableEventSchema>;
+
+export const deliveryStatusSchema = z.enum(["pending", "delivered", "failed"]);
+export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
+
+export const deliveryRecordSchema = z
+  .object({
+    attempts: z.number().int().min(1).max(1024),
+    deliveredAt: nonEmptyString(80).optional(),
+    eventId: nonEmptyString(240),
+    eventType: observableEventTypeSchema,
+    lastAttemptAt: nonEmptyString(80),
+    lastError: nonEmptyString(1000).optional(),
+    payload: observableEventSchema,
+    sinkId: nonEmptyString(80),
+    status: deliveryStatusSchema,
+  })
+  .strict();
+export type DeliveryRecord = z.infer<typeof deliveryRecordSchema>;
+
+export const observabilityDeliveriesSchema = z
+  .object({
+    records: z.array(deliveryRecordSchema).default([]),
+    version: z.literal(1),
+  })
+  .strict();
+export type ObservabilityDeliveriesDocument = z.infer<typeof observabilityDeliveriesSchema>;
 
 export function createObservableRunEvent(
   run: QuestRunDocument,

@@ -154,6 +154,18 @@ test("quest cli configures webhook sinks and delivers run events", async () => {
     const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
     expect(executed.code).toBe(0);
 
+    const events = await runCliAsync(context, [
+      "observability",
+      "events",
+      "list",
+      "--run-id",
+      runId,
+    ]);
+    expect(events.code).toBe(0);
+    expect(
+      JSON.parse(events.stdout).events.map((event: { eventType: string }) => event.eventType),
+    ).toEqual(["run_created", "run_started", "slice_started", "slice_completed", "run_completed"]);
+
     expect(receivedEvents.map((event) => event.eventType)).toEqual([
       "run_created",
       "run_started",
@@ -169,6 +181,112 @@ test("quest cli configures webhook sinks and delivers run events", async () => {
     ]);
     expect(deleted.code).toBe(0);
     expect(JSON.parse(deleted.stdout)).toMatchObject({ deleted: "local-webhook", ok: true });
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("quest cli lists and retries failed webhook deliveries", async () => {
+  const context = trackContext();
+  let shouldFail = true;
+  const receivedEvents: string[] = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      const payload = (await request.json()) as { eventType: string };
+      receivedEvents.push(payload.eventType);
+      return shouldFail ? new Response("nope", { status: 500 }) : new Response("ok");
+    },
+    port: 0,
+  });
+
+  try {
+    const sink = await runCliAsync(context, [
+      "observability",
+      "webhook",
+      "upsert",
+      "--id",
+      "retry-webhook",
+      "--url",
+      `http://127.0.0.1:${server.port}/events`,
+      "--events",
+      "run_created,run_started,run_completed",
+    ]);
+    expect(sink.code).toBe(0);
+
+    expectWorkerUpserted(context);
+    const created = await runCliAsync(context, ["run", "--stdin"], {
+      input: JSON.stringify(createSpec({ title: "Retry observed run" })),
+    });
+    expect(created.code).toBe(0);
+    const runId = JSON.parse(created.stdout).run.id as string;
+
+    const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+    expect(executed.code).toBe(0);
+
+    const failedDeliveries = await runCliAsync(context, [
+      "observability",
+      "deliveries",
+      "list",
+      "--sink-id",
+      "retry-webhook",
+      "--status",
+      "failed",
+    ]);
+    expect(failedDeliveries.code).toBe(0);
+    const records = JSON.parse(failedDeliveries.stdout).deliveries as Array<{
+      attempts: number;
+      eventType: string;
+      payload: { runId: string };
+      status: string;
+    }>;
+    expect(records).toHaveLength(3);
+    expect(records.map((record) => record.eventType).sort()).toEqual([
+      "run_completed",
+      "run_created",
+      "run_started",
+    ]);
+    expect(new Set(records.map((record) => record.payload.runId))).toEqual(new Set([runId]));
+
+    shouldFail = false;
+
+    const retried = await runCliAsync(context, [
+      "observability",
+      "deliveries",
+      "retry",
+      "--sink-id",
+      "retry-webhook",
+      "--status",
+      "failed",
+    ]);
+    expect(retried.code).toBe(0);
+    expect(JSON.parse(retried.stdout).attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: "run_completed", ok: true, status: "delivered" }),
+        expect.objectContaining({ eventType: "run_started", ok: true, status: "delivered" }),
+        expect.objectContaining({ eventType: "run_created", ok: true, status: "delivered" }),
+      ]),
+    );
+
+    const delivered = await runCliAsync(context, [
+      "observability",
+      "deliveries",
+      "list",
+      "--sink-id",
+      "retry-webhook",
+      "--status",
+      "delivered",
+      "--run-id",
+      runId,
+    ]);
+    expect(delivered.code).toBe(0);
+    const deliveredRecords = JSON.parse(delivered.stdout).deliveries as Array<{
+      attempts: number;
+      lastError?: string;
+      status: string;
+    }>;
+    expect(deliveredRecords).toHaveLength(3);
+    expect(deliveredRecords.every((record) => record.attempts === 2)).toBe(true);
+    expect(deliveredRecords.every((record) => record.lastError === undefined)).toBe(true);
   } finally {
     server.stop(true);
   }
