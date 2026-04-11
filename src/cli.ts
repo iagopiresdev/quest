@@ -7,6 +7,13 @@ import { ZodError } from "zod";
 
 import { listCalibrationSuites, WorkerCalibrator } from "./core/calibration";
 import { isQuestDomainError } from "./core/errors";
+import { EventDispatcher } from "./core/event-dispatcher";
+import {
+  type ObservableEventType,
+  observableEventTypeSchema,
+  webhookSinkSchema,
+} from "./core/observability-schema";
+import { ObservabilityStore } from "./core/observability-store";
 import { planQuest } from "./core/planner";
 import { runSubprocess } from "./core/process";
 import { buildProcessEnv } from "./core/process-env";
@@ -20,6 +27,8 @@ import { questSpecSchema } from "./core/spec-schema";
 import {
   ensureDirectory,
   resolveQuestCalibrationsRoot,
+  resolveQuestObservabilityConfigPath,
+  resolveQuestObservabilityDeliveriesPath,
   resolveQuestRunsRoot,
   resolveQuestStateRoot,
   resolveQuestWorkspacesRoot,
@@ -34,6 +43,9 @@ import {
 
 type QuestCliCommand =
   | "doctor"
+  | "observability:sinks:list"
+  | "observability:sink:delete"
+  | "observability:webhook:upsert"
   | "plan"
   | "run"
   | "runs:abort"
@@ -56,6 +68,8 @@ type QuestCliCommand =
 type QuestCliContext = {
   args: string[];
   calibrator: WorkerCalibrator;
+  dispatcher: EventDispatcher;
+  observabilityStore: ObservabilityStore;
   runCleanup: QuestRunCleanup;
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
@@ -124,6 +138,30 @@ function parseCommaSeparatedValues(value: string | null): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function parseKeyValuePairs(value: string | null): Record<string, string> {
+  const entries = parseCommaSeparatedValues(value);
+  return Object.fromEntries(
+    entries.map((entry) => {
+      const separatorIndex = entry.indexOf("=");
+      if (separatorIndex <= 0) {
+        throw new Error(`Expected key=value entry, received ${entry}`);
+      }
+
+      const key = entry.slice(0, separatorIndex).trim();
+      const pairValue = entry.slice(separatorIndex + 1).trim();
+      if (!key || !pairValue) {
+        throw new Error(`Expected key=value entry, received ${entry}`);
+      }
+
+      return [key, pairValue];
+    }),
+  );
+}
+
+function parseObservableEventTypes(value: string | null): ObservableEventType[] {
+  return parseCommaSeparatedValues(value).map((entry) => observableEventTypeSchema.parse(entry));
 }
 
 function slugifyWorkerId(value: string): string {
@@ -300,6 +338,60 @@ function summarizeRunDetail(run: QuestRunDocument): Record<string, unknown> {
   };
 }
 
+async function dispatchResultEvents(value: unknown, dispatcher: EventDispatcher): Promise<void> {
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const runCandidate = candidate.run;
+  if (
+    runCandidate &&
+    typeof runCandidate === "object" &&
+    runCandidate !== null &&
+    "events" in runCandidate
+  ) {
+    await dispatcher.dispatchRun(runCandidate as QuestRunDocument);
+  }
+
+  const resultCandidate = candidate.result;
+  if (
+    resultCandidate &&
+    typeof resultCandidate === "object" &&
+    resultCandidate !== null &&
+    "run" in resultCandidate
+  ) {
+    const calibrationResult = resultCandidate as {
+      calibration?: {
+        at: string;
+        runId: string;
+        score: number;
+        status: "passed" | "failed";
+        suiteId: string;
+        xpAwarded: number;
+      };
+      run?: QuestRunDocument;
+      worker?: { id: string; name: string };
+    };
+    if (calibrationResult.run) {
+      await dispatcher.dispatchRun(calibrationResult.run);
+    }
+
+    if (calibrationResult.calibration && calibrationResult.worker) {
+      await dispatcher.dispatchCalibration({
+        at: calibrationResult.calibration.at,
+        runId: calibrationResult.calibration.runId,
+        score: calibrationResult.calibration.score,
+        status: calibrationResult.calibration.status,
+        suiteId: calibrationResult.calibration.suiteId,
+        workerId: calibrationResult.worker.id,
+        workerName: calibrationResult.worker.name,
+        xpAwarded: calibrationResult.calibration.xpAwarded,
+      });
+    }
+  }
+}
+
 async function checkPathWritable(path: string): Promise<DoctorCheck> {
   try {
     await ensureDirectory(path);
@@ -385,6 +477,8 @@ async function runDoctor(
   secretStore: SecretStore,
   stateRoot: string,
   calibrationsRoot: string,
+  observabilityConfigPath: string,
+  observabilityDeliveriesPath: string,
   runsRoot: string,
   workspacesRoot: string,
   registryPath: string,
@@ -410,6 +504,8 @@ async function runDoctor(
     await checkPathWritable(runsRoot),
     await checkPathWritable(workspacesRoot),
     await checkPathWritable(dirname(registryPath)),
+    await checkPathWritable(dirname(observabilityConfigPath)),
+    await checkPathWritable(dirname(observabilityDeliveriesPath)),
     await checkCodexExecutable(codexExecutable),
   ];
 
@@ -502,6 +598,16 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
           explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
           stateRoot: findOptionValue(args, "--state-root") ?? undefined,
         }),
+        resolveQuestObservabilityConfigPath({
+          explicitObservabilityConfigPath:
+            findOptionValue(args, "--observability-config") ?? undefined,
+          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
+        }),
+        resolveQuestObservabilityDeliveriesPath({
+          explicitObservabilityDeliveriesPath:
+            findOptionValue(args, "--observability-deliveries") ?? undefined,
+          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
+        }),
         resolveQuestRunsRoot({
           explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
           stateRoot: findOptionValue(args, "--state-root") ?? undefined,
@@ -516,7 +622,54 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         }),
       ),
     usage:
-      "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--state-root <path>]",
+      "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:sinks:list",
+    matches: (args) =>
+      args.length >= 3 && args[0] === "observability" && args[1] === "sinks" && args[2] === "list",
+    run: async ({ observabilityStore }) => ({
+      sinks: await observabilityStore.listSinks(),
+    }),
+    usage: "quest observability sinks list [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:webhook:upsert",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "webhook" &&
+      args[2] === "upsert",
+    run: async ({ args, observabilityStore }) => {
+      const sink = webhookSinkSchema.parse({
+        enabled: !hasFlag(args, "--disabled"),
+        eventTypes: parseObservableEventTypes(findOptionValue(args, "--events")),
+        headers: parseKeyValuePairs(findOptionValue(args, "--headers")),
+        id: findOptionValue(args, "--id") ?? "default-webhook",
+        secretHeader: findOptionValue(args, "--secret-header") ?? undefined,
+        secretRef: findOptionValue(args, "--secret-ref") ?? undefined,
+        type: "webhook",
+        url: requireOptionValue(args, "--url", "--url <https://...>"),
+      });
+      return { sink: await observabilityStore.upsertWebhookSink(sink) };
+    },
+    usage:
+      "quest observability webhook upsert --url <https://...> [--id <sink-id>] [--events <event,event>] [--headers <key=value,key=value>] [--secret-ref <name>] [--secret-header <name>] [--disabled] [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:sink:delete",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "sinks" &&
+      args[2] === "delete",
+    run: async ({ args, observabilityStore }) => {
+      const sinkId = requireOptionValue(args, "--id", "--id <sink-id>");
+      await observabilityStore.deleteSink(sinkId);
+      return { deleted: sinkId, ok: true };
+    },
+    usage:
+      "quest observability sinks delete --id <sink-id> [--observability-config <path>] [--state-root <path>]",
   },
   {
     id: "secrets:set",
@@ -751,27 +904,43 @@ async function main(): Promise<number> {
     explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
     stateRoot,
   });
+  const observabilityConfigPath = resolveQuestObservabilityConfigPath({
+    explicitObservabilityConfigPath: findOptionValue(args, "--observability-config") ?? undefined,
+    stateRoot,
+  });
+  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath({
+    explicitObservabilityDeliveriesPath:
+      findOptionValue(args, "--observability-deliveries") ?? undefined,
+    stateRoot,
+  });
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const secretStore = new SecretStore();
+  const observabilityStore = new ObservabilityStore(
+    observabilityConfigPath,
+    observabilityDeliveriesPath,
+  );
   const runCleanup = new QuestRunCleanup(runStore);
   const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
   const calibrator = new WorkerCalibrator(registry, runStore, runExecutor, calibrationsRoot);
+  const dispatcher = new EventDispatcher(observabilityStore, secretStore);
 
   try {
-    writeJson(
-      await command.run({
-        args,
-        calibrator,
-        registry,
-        runCleanup,
-        runExecutor,
-        runIntegrator,
-        runStore,
-        secretStore,
-      }),
-    );
+    const result = await command.run({
+      args,
+      calibrator,
+      dispatcher,
+      observabilityStore,
+      registry,
+      runCleanup,
+      runExecutor,
+      runIntegrator,
+      runStore,
+      secretStore,
+    });
+    await dispatchResultEvents(result, dispatcher);
+    writeJson(result);
     return 0;
   } catch (error: unknown) {
     writeError(error);

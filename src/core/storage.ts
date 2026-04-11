@@ -58,6 +58,32 @@ export function resolveQuestCalibrationsRoot(
   return join(resolveQuestStateRoot(options.stateRoot), "calibrations");
 }
 
+export function resolveQuestObservabilityConfigPath(
+  options: { explicitObservabilityConfigPath?: string; stateRoot?: string } = {},
+): string {
+  const configuredPath =
+    options.explicitObservabilityConfigPath?.trim() ||
+    Bun.env.QUEST_RUNNER_OBSERVABILITY_CONFIG_PATH?.trim();
+  if (configuredPath) {
+    return resolve(configuredPath);
+  }
+
+  return join(resolveQuestStateRoot(options.stateRoot), "observability", "config.json");
+}
+
+export function resolveQuestObservabilityDeliveriesPath(
+  options: { explicitObservabilityDeliveriesPath?: string; stateRoot?: string } = {},
+): string {
+  const configuredPath =
+    options.explicitObservabilityDeliveriesPath?.trim() ||
+    Bun.env.QUEST_RUNNER_OBSERVABILITY_DELIVERIES_PATH?.trim();
+  if (configuredPath) {
+    return resolve(configuredPath);
+  }
+
+  return join(resolveQuestStateRoot(options.stateRoot), "observability", "deliveries.json");
+}
+
 export function resolveQuestRunPath(
   runId: string,
   options: {
@@ -93,7 +119,10 @@ export async function readJsonFileOrDefault<T>(
   path: string,
   fallback: T,
   options: {
-    invalidJsonCode?: "invalid_quest_run" | "invalid_worker_registry";
+    invalidJsonCode?:
+      | "invalid_quest_run"
+      | "invalid_worker_registry"
+      | "invalid_observability_config";
     invalidJsonMessage?: string;
   } = {},
 ): Promise<T> {

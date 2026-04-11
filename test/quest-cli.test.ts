@@ -14,6 +14,7 @@ import {
   createSpec,
   createWorkerJson,
   runCli,
+  runCliAsync,
 } from "./helpers";
 
 const activeContexts: CliTestContext[] = [];
@@ -112,6 +113,67 @@ test("quest cli adds a codex worker from flags", () => {
   expect(JSON.parse(listed.stdout).workers).toHaveLength(1);
 });
 
+test("quest cli configures webhook sinks and delivers run events", async () => {
+  const context = trackContext();
+  const receivedEvents: Array<{ eventId: string; eventType: string; kind: string }> = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      receivedEvents.push(
+        (await request.json()) as { eventId: string; eventType: string; kind: string },
+      );
+      return new Response("ok");
+    },
+    port: 0,
+  });
+
+  try {
+    const upsertSink = await runCliAsync(context, [
+      "observability",
+      "webhook",
+      "upsert",
+      "--id",
+      "local-webhook",
+      "--url",
+      `http://127.0.0.1:${server.port}/events`,
+      "--events",
+      "run_created,run_started,run_completed",
+    ]);
+    expect(upsertSink.code).toBe(0);
+
+    const listed = await runCliAsync(context, ["observability", "sinks", "list"]);
+    expect(listed.code).toBe(0);
+    expect(JSON.parse(listed.stdout).sinks).toHaveLength(1);
+
+    expectWorkerUpserted(context);
+    const created = await runCliAsync(context, ["run", "--stdin"], {
+      input: JSON.stringify(createSpec({ title: "Observed run" })),
+    });
+    expect(created.code).toBe(0);
+    const runId = JSON.parse(created.stdout).run.id as string;
+
+    const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+    expect(executed.code).toBe(0);
+
+    expect(receivedEvents.map((event) => event.eventType)).toEqual([
+      "run_created",
+      "run_started",
+      "run_completed",
+    ]);
+
+    const deleted = await runCliAsync(context, [
+      "observability",
+      "sinks",
+      "delete",
+      "--id",
+      "local-webhook",
+    ]);
+    expect(deleted.code).toBe(0);
+    expect(JSON.parse(deleted.stdout)).toMatchObject({ deleted: "local-webhook", ok: true });
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("quest cli calibrates a worker through the training grounds suite", () => {
   const context = trackContext();
   const scriptPath = createCalibrationCommandScript(context.stateRoot);
@@ -151,6 +213,64 @@ test("quest cli records failed calibration runs without crashing the command", (
   expect(result.run.status).toBe("failed");
   expect(result.worker.calibration.history[0].status).toBe("failed");
   expect(result.worker.progression.xp).toBe(1840);
+});
+
+test("quest cli delivers calibration events to webhook sinks", async () => {
+  const context = trackContext();
+  const scriptPath = createCalibrationCommandScript(context.stateRoot);
+  const receivedEvents: Array<{
+    eventType: string;
+    kind: string;
+    score?: number;
+    workerId?: string;
+  }> = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      receivedEvents.push(
+        (await request.json()) as {
+          eventType: string;
+          kind: string;
+          score?: number;
+          workerId?: string;
+        },
+      );
+      return new Response("ok");
+    },
+    port: 0,
+  });
+
+  try {
+    const sink = await runCliAsync(context, [
+      "observability",
+      "webhook",
+      "upsert",
+      "--id",
+      "calibration-webhook",
+      "--url",
+      `http://127.0.0.1:${server.port}/events`,
+      "--events",
+      "worker_calibration_recorded",
+    ]);
+    expect(sink.code).toBe(0);
+
+    const upsert = runCli(context, ["workers", "upsert", "--stdin"], {
+      input: createLocalCommandWorkerJson("sparrow", ["bun", scriptPath]),
+    });
+    expect(upsert.code).toBe(0);
+
+    const calibrated = await runCliAsync(context, ["workers", "calibrate", "--id", "sparrow"]);
+    expect(calibrated.code).toBe(0);
+
+    expect(receivedEvents).toHaveLength(1);
+    expect(receivedEvents[0]).toMatchObject({
+      eventType: "worker_calibration_recorded",
+      kind: "worker_calibration",
+      score: 100,
+      workerId: "sparrow",
+    });
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("quest cli plans from file and reports unassigned slices", () => {

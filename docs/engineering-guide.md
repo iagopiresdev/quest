@@ -49,6 +49,9 @@ Current architectural layers:
 - `src/core/calibration.ts`
   Built-in worker evaluation suites that must reuse normal run planning and execution instead of inventing a parallel orchestration model.
 
+- `src/core/observability-*`
+  Event schemas, sink config, delivery logs, and dispatch. This layer observes run state; it must not become a second execution path.
+
 - `src/core/run-lifecycle.ts`
   Shared lifecycle helpers for run and slice state mutation.
 
@@ -79,6 +82,7 @@ The following invariants should stay true:
 - Calibration slices must be independently solvable from a clean base unless the executor grows explicit cross-slice replay semantics.
 - Lifecycle transitions must go through shared helpers when possible.
 - Worker command failure is different from runner unavailability.
+- Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
 - New state should be appended, not inferred from logs after the fact.
 
@@ -173,6 +177,7 @@ Minimum standard:
 - acceptance check results are persisted
 - timestamps are updated consistently
 - secret values never appear in persisted logs, prompts, or argv when a safer channel exists
+- sink delivery state is persisted separately from run state
 
 When adding behavior, ask:
 
@@ -186,6 +191,7 @@ Future observability work should prefer:
 - durable timestamps
 - explicit status transitions
 - summary views derived from stored state, not recomputed from terminal output
+- sinks built on the same event model instead of sink-specific branching inside executors
 
 ## CLI Conventions
 

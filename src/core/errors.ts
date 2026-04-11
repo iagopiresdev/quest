@@ -1,6 +1,7 @@
 export const QUEST_ERROR_CODES = [
   "invalid_worker_registry",
   "invalid_worker_definition",
+  "invalid_observability_config",
   "quest_acceptance_check_failed",
   "quest_integration_failed",
   "invalid_quest_run",
@@ -21,6 +22,7 @@ export const QUEST_ERROR_CODES = [
   "quest_unknown_dependency",
   "quest_workspace_materialization_failed",
   "quest_worker_not_found",
+  "quest_observability_sink_not_found",
   "quest_storage_failure",
 ] as const;
 

@@ -7,6 +7,7 @@ CLI-first worker registry and quest planner for parallel agent execution.
 - no daemon required for correctness
 - local state stored outside the repo
 - conservative planning around worker capacity and file ownership
+- event-driven observability with optional sinks such as webhooks
 
 Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.md](./docs/specs/training-grounds-v2.md).
@@ -161,6 +162,20 @@ If any check exits non-zero:
 - `runs execute` exits non-zero
 - `runs logs` shows both the worker output and the failing check result
 
+## Observability
+
+Runs emit typed events. Observability is the layer that persists and dispatches those events to sinks.
+
+Current sink support:
+- `webhook`
+
+The core model is:
+- run or calibration emits an event
+- observability dedupes and records delivery attempts
+- sinks react to the event
+
+This matters because webhook delivery is only the first consumer. The same event stream should support future sinks such as Telegram, Linear, Slack, or metrics without changing the run model itself.
+
 ## Worker Calibration
 
 `quest workers calibrate` reuses the normal run planner and executor against a throwaway fixture repo under the calibrations root. The current built-in suite is `training-grounds-v1`.
@@ -183,6 +198,18 @@ cat worker.json | quest workers upsert --stdin
 
 # add a Codex worker from flags instead of hand-writing worker JSON
 quest workers add codex --name "Quest Codex" --profile gpt-5.4
+
+# list configured observability sinks
+quest observability sinks list
+
+# add or update a webhook sink
+quest observability webhook upsert \
+  --id local-webhook \
+  --url https://example.com/quest-events \
+  --events run_failed,run_completed,worker_calibration_recorded
+
+# delete a sink
+quest observability sinks delete --id local-webhook
 
 # list built-in calibration suites
 quest workers calibrate --list-suites
@@ -264,6 +291,8 @@ Defaults:
 - runs root: `~/.quest-runner/runs`
 - workspaces root: `~/.quest-runner/workspaces`
 - calibrations root: `~/.quest-runner/calibrations`
+- observability config: `~/.quest-runner/observability/config.json`
+- observability deliveries: `~/.quest-runner/observability/deliveries.json`
 - secret-store service name: `quest-runner`
 
 Overrides:
@@ -272,6 +301,8 @@ Overrides:
 - `QUEST_RUNNER_RUNS_ROOT`
 - `QUEST_RUNNER_WORKSPACES_ROOT`
 - `QUEST_RUNNER_CALIBRATIONS_ROOT`
+- `QUEST_RUNNER_OBSERVABILITY_CONFIG_PATH`
+- `QUEST_RUNNER_OBSERVABILITY_DELIVERIES_PATH`
 - `QUEST_RUNNER_SECRET_STORE_SERVICE_NAME`
 - `--registry <path>`
 - `--runs-root <path>`
@@ -302,6 +333,8 @@ Do not commit runtime state, tokens, or local config.
 - local keychain-backed secret storage for runner auth
 - built-in worker calibration through the throwaway `training-grounds-v1` suite
 - persisted calibration history, trust updates, and XP awards on workers
+- event-driven observability with a webhook sink
+- persisted webhook delivery records for dedupe and retries
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
 
