@@ -9,6 +9,7 @@ CLI-first worker registry and quest planner for parallel agent execution.
 - conservative planning around worker capacity and file ownership
 
 Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
+Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.md](./docs/specs/training-grounds-v2.md).
 
 ## Worker Backends
 
