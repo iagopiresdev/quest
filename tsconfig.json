@@ -5,7 +5,6 @@
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "moduleDetection": "force",
-    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "outDir": "dist",
     "rootDir": ".",
