@@ -132,6 +132,8 @@ Auth modes for `codex-cli`:
 - `env-var`: copy a named env var into the target subprocess env
 - `secret-store`: load a named secret from the OS keychain backend
 
+For `native-login`, Quest Runner probes `codex login status` before execution so a missing or broken local session fails fast as a runner-availability problem instead of surfacing later as a partial run failure.
+
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.

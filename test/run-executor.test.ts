@@ -592,6 +592,10 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
       [
         "#!/usr/bin/env bun",
         "const args = process.argv.slice(2);",
+        "if (args[0] === 'login' && args[1] === 'status') {",
+        "  await Bun.write(Bun.stdout, 'Logged in using ChatGPT');",
+        "  process.exit(0);",
+        "}",
         "if (args.includes('-a')) {",
         "  await Bun.write(Bun.stderr, 'unexpected approval flag');",
         "  process.exit(1);",
@@ -665,6 +669,10 @@ test("run executor resolves secret-store auth for codex-cli workers", async () =
       [
         "#!/usr/bin/env bun",
         "const args = process.argv.slice(2);",
+        "if (args[0] === 'login' && args[1] === 'status') {",
+        "  await Bun.write(Bun.stdout, 'Logged in using ChatGPT');",
+        "  process.exit(0);",
+        "}",
         "const outputIndex = args.indexOf('--output-last-message');",
         "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
         "await Bun.write(Bun.stdout, process.env.OPENAI_API_KEY ?? 'missing');",
@@ -714,6 +722,52 @@ test("run executor fails codex-cli workers when env-var auth is missing", async 
           targetEnvVar: "OPENAI_API_KEY",
         },
         executable: "/bin/echo",
+        profile: "gpt-5.4",
+      }),
+    );
+
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_runner_unavailable");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor fails codex-cli workers when native login status is unavailable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "fake-codex-login-fail");
+    writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bun",
+        "const args = process.argv.slice(2);",
+        "if (args[0] === 'login' && args[1] === 'status') {",
+        "  await Bun.write(Bun.stderr, 'not logged in');",
+        "  process.exit(1);",
+        "}",
+        "process.exit(0);",
+      ].join("\n"),
+      "utf8",
+    );
+    Bun.spawnSync({ cmd: ["chmod", "+x", scriptPath], cwd: root });
+
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "codex-cli", undefined, {
+        executable: scriptPath,
         profile: "gpt-5.4",
       }),
     );

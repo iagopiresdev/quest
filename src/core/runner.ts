@@ -145,6 +145,30 @@ async function resolveAuthEnv(
   return { [auth.targetEnvVar]: await secretStore.getSecret(auth.secretRef) };
 }
 
+async function verifyCodexNativeLogin(executable: string, worker: RegisteredWorker): Promise<void> {
+  const result = await runSubprocess({
+    cmd: [executable, "login", "status"],
+    cwd: Bun.env.PWD ?? ".",
+    env: buildProcessEnv(worker.backend.env),
+    timeoutMs: 30 * 1000,
+  });
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: {
+        command: [executable, "login", "status"],
+        exitCode: result.exitCode,
+        stderr: result.stderr,
+        stdout: result.stdout,
+        workerId: worker.id,
+      },
+      message: `Codex native login is not available for ${worker.id}`,
+      statusCode: 1,
+    });
+  }
+}
+
 export class DryRunRunnerAdapter implements RunnerAdapter {
   readonly name = "dry-run";
 
@@ -270,6 +294,9 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
     const executable = context.worker.backend.executable ?? "codex";
     const outputPath = `${context.cwd}/.quest-runner/codex-last-message.txt`;
     const prompt = buildQuestPrompt(context);
+    if (!context.worker.backend.auth || context.worker.backend.auth.mode === "native-login") {
+      await verifyCodexNativeLogin(executable, context.worker);
+    }
     const authEnv = await resolveAuthEnv(context.worker, this.secretStore);
     const { aborted, exitCode, stderr, stderrTruncated, stdout, stdoutTruncated, timedOut } =
       await runSubprocess({
