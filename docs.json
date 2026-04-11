@@ -1,0 +1,11 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "quest-runner",
+  "colors": {
+    "primary": "#0f766e"
+  },
+  "navigation": {
+    "$ref": "./config/navigation.json"
+  }
+}

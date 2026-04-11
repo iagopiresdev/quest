@@ -1,0 +1,16 @@
+{
+  "groups": [
+    {
+      "group": "Overview",
+      "pages": ["index"]
+    },
+    {
+      "group": "Core Docs",
+      "pages": ["docs/design-system", "docs/engineering-guide"]
+    },
+    {
+      "group": "Specs",
+      "pages": ["docs/specs/training-grounds-v2"]
+    }
+  ]
+}

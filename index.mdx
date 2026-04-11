@@ -1,0 +1,46 @@
+---
+title: Quest Runner
+description: CLI-first worker registry, planning, execution, calibration, integration, and observability for parallel agent work.
+---
+
+# Quest Runner
+
+`quest-runner` is a Bun-native, CLI-first orchestration system for spec-driven agent work.
+
+It is designed around a few non-negotiable constraints:
+- specs drive planning and execution
+- workers are typed and calibratable
+- runs stay local and inspectable
+- integration is conservative
+- observability is event-driven, not bolted on afterward
+
+## Read This First
+
+- [Design System](/docs/design-system)
+  Project structure, spec-driven workflow, documentation hierarchy, DDD boundaries, and vertical-slice rules.
+- [Engineering Guide](/docs/engineering-guide)
+  Implementation rules, typing gates, lint rules, observability rules, and runtime invariants.
+- [Training Grounds v2](/docs/specs/training-grounds-v2)
+  Future direction for richer worker calibration and installable benchmark packs.
+
+## Current Capabilities
+
+- plan quests from typed specs
+- register workers with backend metadata, trust, progression, and calibration history
+- execute runs through `local-command`, `codex-cli`, and `hermes-api`
+- integrate completed runs through dedicated workspaces
+- emit typed observable events and dispatch them to sinks such as webhook and Telegram
+
+## Local Docs Preview
+
+Mintlify expects a `docs.json` file at the project root. To run the docs locally:
+
+```bash
+npx mint dev --no-open
+```
+
+Or use the repo script:
+
+```bash
+bun run docs:dev
+```

@@ -16,9 +16,15 @@ CLI output modes:
 - `--pretty` forces human-readable output
 - `bun run lint` now also fails on circular imports in `src/**`
 
-Engineering guidance for future work lives in [docs/engineering-guide.md](./docs/engineering-guide.md).
-Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.md](./docs/design-system.md).
-Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.md](./docs/specs/training-grounds-v2.md).
+Engineering guidance for future work lives in [docs/engineering-guide.mdx](./docs/engineering-guide.mdx).
+Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.mdx](./docs/design-system.mdx).
+Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
+
+Mintlify powers the docs surface for this repo. Local preview runs from the project root with:
+
+```sh
+bun run docs:dev
+```
 
 ## Worker Backends
 

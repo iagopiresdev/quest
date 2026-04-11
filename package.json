@@ -14,6 +14,7 @@
   },
   "scripts": {
     "build": "mkdir -p dist && bun build --compile ./src/cli.ts --outfile ./dist/quest",
+    "docs:dev": "npx mint dev --no-open",
     "format": "biome format . --write",
     "install:local": "bash ./scripts/install-local.sh",
     "lint": "biome check . && bun run lint:cycles",
