@@ -7,7 +7,7 @@ const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
 const isoDateStringSchema = z.string().datetime({ offset: true });
 const questRunIdSchema = z.string().trim().regex(/^quest-[a-z0-9]{8}-[a-z0-9]{8}$/);
 
-export const questRunSliceStatusValues = ["pending", "blocked", "running", "completed", "failed", "aborted"] as const;
+export const questRunSliceStatusValues = ["pending", "blocked", "running", "testing", "completed", "failed", "aborted"] as const;
 export type QuestRunSliceStatus = (typeof questRunSliceStatusValues)[number];
 
 export const questRunStatusValues = ["planned", "blocked", "running", "completed", "failed", "aborted"] as const;
@@ -21,6 +21,9 @@ export const questRunEventTypeValues = [
   "run_failed",
   "run_aborted",
   "slice_started",
+  "slice_testing_started",
+  "slice_testing_completed",
+  "slice_testing_failed",
   "slice_completed",
   "slice_failed",
   "slice_aborted",
@@ -94,12 +97,22 @@ export const questRunSliceOutputSchema = z
   })
   .strict();
 
+export const questRunCheckResultSchema = z
+  .object({
+    command: nonEmptyString(400),
+    exitCode: z.number().int(),
+    stderr: z.string(),
+    stdout: z.string(),
+  })
+  .strict();
+
 export const questRunSliceStateSchema = z
   .object({
     assignedRunner: z.string().trim().min(1).max(80).nullable(),
     assignedWorkerId: nonEmptyString(80).nullable(),
     completedAt: isoDateStringSchema.optional(),
     lastError: nonEmptyString(400).optional(),
+    lastChecks: z.array(questRunCheckResultSchema).optional(),
     lastOutput: questRunSliceOutputSchema.optional(),
     sliceId: nonEmptyString(80),
     startedAt: isoDateStringSchema.optional(),
@@ -124,6 +137,7 @@ export const questRunDocumentSchema = z
   .strict();
 
 export type QuestRunDocument = z.infer<typeof questRunDocumentSchema>;
+export type QuestRunCheckResult = z.infer<typeof questRunCheckResultSchema>;
 export type QuestRunEvent = z.infer<typeof questRunEventSchema>;
 export type QuestRunSliceOutput = z.infer<typeof questRunSliceOutputSchema>;
 export type QuestRunSliceState = z.infer<typeof questRunSliceStateSchema>;

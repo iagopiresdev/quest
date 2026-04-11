@@ -570,3 +570,100 @@ test("quest cli executes a real local-command worker", () => {
   expect(executedRun.status).toBe("completed");
   expect(executedRun.slices[0].lastOutput.stdout).toContain("real:parser:ember");
 });
+
+test("quest cli fails a run when acceptance checks fail", () => {
+  const context = createContext();
+  const scriptPath = join(context.stateRoot, "worker.ts");
+  writeFileSync(
+    scriptPath,
+    [
+      "const input = JSON.parse(await Bun.stdin.text());",
+      "await Bun.write(Bun.stdout, `real:${input.slice.id}:${input.worker.id}`);",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const workerJson = JSON.stringify({
+    id: "ember",
+    name: "Ember",
+    title: "Battle Engineer",
+    class: "engineer",
+    enabled: true,
+    backend: {
+      runner: "codex",
+      profile: "gpt-5.4",
+      adapter: "local-command",
+      command: ["bun", scriptPath],
+      toolPolicy: { allow: ["git"], deny: [] },
+    },
+    persona: {
+      voice: "terse",
+      approach: "test-first",
+      prompt: "Keep diffs tight and explain tradeoffs briefly.",
+    },
+    stats: {
+      coding: 82,
+      testing: 77,
+      docs: 44,
+      research: 51,
+      speed: 63,
+      mergeSafety: 79,
+      contextEndurance: 58,
+    },
+    resources: {
+      cpuCost: 2,
+      memoryCost: 3,
+      gpuCost: 0,
+      maxParallel: 1,
+    },
+    trust: {
+      rating: 0.74,
+      calibratedAt: "2026-04-10T00:00:00Z",
+    },
+    progression: {
+      level: 7,
+      xp: 1840,
+    },
+    tags: ["typescript"],
+  });
+
+  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: workerJson }).code).toBe(0);
+
+  const created = runCli(
+    context,
+    ["run", "--stdin"],
+    {
+      input: JSON.stringify({
+        version: 1,
+        title: "Execute failing check run",
+        workspace: "command-center",
+        maxParallel: 1,
+        acceptanceChecks: [],
+        hotspots: [],
+        featureDoc: { enabled: false },
+        slices: [
+          {
+            id: "parser",
+            title: "Parser",
+            goal: "Implement parser validation",
+            discipline: "coding",
+            owns: ["src/security/url.ts"],
+            dependsOn: [],
+            acceptanceChecks: ["bun -e \"process.exit(4)\""],
+            contextHints: [],
+          },
+        ],
+      }),
+    },
+  );
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(1);
+  const logs = runCli(context, ["runs", "logs", "--id", runId]);
+  expect(logs.code).toBe(0);
+  const parsedLogs = JSON.parse(logs.stdout).logs;
+  expect(parsedLogs.slices[0].status).toBe("failed");
+  expect(parsedLogs.slices[0].lastChecks[0].exitCode).toBe(4);
+});

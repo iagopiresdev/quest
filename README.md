@@ -64,6 +64,16 @@ Example `local-command` worker:
 
 The command receives a JSON payload on stdin with the run, slice, slice state, and worker metadata. Its stdout/stderr and exit code are persisted into run logs.
 
+## Tester Lane
+
+Each slice can define `acceptanceChecks`. After the worker command succeeds, Quest Runner executes those checks in order and persists their results into slice logs.
+
+If any check exits non-zero:
+- the slice becomes `failed`
+- the run becomes `failed`
+- `runs execute` exits non-zero
+- `runs logs` shows both the worker output and the failing check result
+
 ## Commands
 
 ```sh
@@ -127,8 +137,9 @@ Do not commit runtime state, tokens, or local config.
 - dry-run execution path for exercising run state transitions
 - persisted slice output logs and basic control commands (`runs logs`, `runs abort`)
 - real local subprocess execution through the `local-command` adapter
+- slice-level tester lane through `acceptanceChecks`
 
-Real runner adapters, git worktrees, tester lane, and integration are still pending.
+Additional runner adapters, git worktrees, merge/integration, notifications, and richer steering are still pending.
 
 ## Validation
 

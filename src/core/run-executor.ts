@@ -1,6 +1,6 @@
 import { QuestDomainError } from "./errors";
 import { QuestRunStore } from "./run-store";
-import { type QuestRunDocument, type QuestRunEvent, type QuestRunSliceState } from "./run-schema";
+import { type QuestRunCheckResult, type QuestRunDocument, type QuestRunEvent, type QuestRunSliceState } from "./run-schema";
 import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "./runner";
 import { WorkerRegistry } from "./worker-registry";
 
@@ -54,6 +54,35 @@ function findSliceState(run: QuestRunDocument, sliceId: string): QuestRunSliceSt
   }
 
   return sliceState;
+}
+
+function resolveExecutionCwd(sliceState: QuestRunSliceState, workers: Map<string, ReturnType<WorkerRegistry["listWorkers"]> extends Promise<(infer T)[]> ? T : never>): string {
+  const workerId = sliceState.assignedWorkerId;
+  if (!workerId) {
+    return Bun.env.PWD ?? ".";
+  }
+
+  const worker = workers.get(workerId);
+  return worker?.backend.workingDirectory ?? Bun.env.PWD ?? ".";
+}
+
+function runAcceptanceChecks(commands: string[], cwd: string): QuestRunCheckResult[] {
+  return commands.map((command) => {
+    const result = Bun.spawnSync({
+      cmd: ["/bin/sh", "-lc", command],
+      cwd,
+      env: Bun.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    return {
+      command,
+      exitCode: result.exitCode,
+      stderr: new TextDecoder().decode(result.stderr),
+      stdout: new TextDecoder().decode(result.stdout),
+    };
+  });
 }
 
 export class QuestRunExecutor {
@@ -147,6 +176,79 @@ export class QuestRunExecutor {
         );
 
         results.forEach(({ result, sliceState }) => {
+          const workerCwd = resolveExecutionCwd(sliceState, workerMap);
+          const sliceSpec = specSliceMap.get(sliceState.sliceId);
+          if (!sliceSpec) {
+            throw new QuestDomainError({
+              code: "invalid_quest_run",
+              details: { runId: run.id, sliceId: sliceState.sliceId },
+              message: `Quest run ${run.id} is missing spec for slice ${sliceState.sliceId}`,
+              statusCode: 1,
+            });
+          }
+
+          if (sliceSpec.acceptanceChecks.length > 0) {
+            const eventAt = nowIsoString();
+            sliceState.status = "testing";
+            appendEvent(run, {
+              at: eventAt,
+              details: {
+                checkCount: sliceSpec.acceptanceChecks.length,
+                sliceId: sliceState.sliceId,
+              },
+              type: "slice_testing_started",
+            });
+          }
+
+          const checkResults = runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd);
+          sliceState.lastChecks = checkResults;
+
+          const failedCheck = checkResults.find((check) => check.exitCode !== 0);
+          if (failedCheck) {
+            const eventAt = nowIsoString();
+            sliceState.completedAt = eventAt;
+            sliceState.lastError = `Acceptance check failed: ${failedCheck.command}`;
+            sliceState.lastOutput = {
+              exitCode: result.exitCode,
+              stderr: result.stderr,
+              stdout: result.stdout,
+              summary: result.summary,
+            };
+            sliceState.status = "failed";
+            appendEvent(run, {
+              at: eventAt,
+              details: {
+                command: failedCheck.command,
+                exitCode: failedCheck.exitCode,
+                sliceId: sliceState.sliceId,
+              },
+              type: "slice_testing_failed",
+            });
+            throw new QuestDomainError({
+              code: "quest_acceptance_check_failed",
+              details: {
+                command: failedCheck.command,
+                runId: run.id,
+                sliceId: sliceState.sliceId,
+                stderr: failedCheck.stderr,
+                stdout: failedCheck.stdout,
+              },
+              message: `Acceptance check failed for slice ${sliceState.sliceId}`,
+              statusCode: 1,
+            });
+          }
+
+          if (sliceSpec.acceptanceChecks.length > 0) {
+            appendEvent(run, {
+              at: nowIsoString(),
+              details: {
+                checkCount: sliceSpec.acceptanceChecks.length,
+                sliceId: sliceState.sliceId,
+              },
+              type: "slice_testing_completed",
+            });
+          }
+
           const eventAt = nowIsoString();
           sliceState.completedAt = eventAt;
           sliceState.lastError = undefined;

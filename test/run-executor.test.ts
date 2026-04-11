@@ -219,6 +219,117 @@ test("run executor records failure for a failing local-command adapter", async (
   }
 });
 
+test("run executor persists passing acceptance checks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-success.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "const input = JSON.parse(await Bun.stdin.text());",
+        "await Bun.write(Bun.stdout, `completed:${input.slice.id}:${input.worker.id}`);",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: ["bun -e \"console.log('ok')\""],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
+          title: "Parser",
+        },
+      ],
+      title: "Checks pass",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastChecks?.[0]?.exitCode).toBe(0);
+    expect(executed.events.some((event) => event.type === "slice_testing_completed")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor fails when acceptance checks fail", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-success.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "const input = JSON.parse(await Bun.stdin.text());",
+        "await Bun.write(Bun.stdout, `completed:${input.slice.id}:${input.worker.id}`);",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: ["bun -e \"process.exit(3)\""],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Implement parser changes",
+          id: "parser",
+          owns: ["src/security/url.ts"],
+          title: "Parser",
+        },
+      ],
+      title: "Checks fail",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_acceptance_check_failed");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_acceptance_check_failed");
+    }
+
+    const failedRun = await runStore.getRun(run.id);
+    expect(failedRun.status).toBe("failed");
+    expect(failedRun.slices[0]?.status).toBe("failed");
+    expect(failedRun.slices[0]?.lastChecks?.[0]?.exitCode).toBe(3);
+    expect(failedRun.events.some((event) => event.type === "slice_testing_failed")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor refuses blocked runs", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");

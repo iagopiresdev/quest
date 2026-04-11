@@ -1,6 +1,7 @@
 export const QUEST_ERROR_CODES = [
   "invalid_worker_registry",
   "invalid_worker_definition",
+  "quest_acceptance_check_failed",
   "invalid_quest_run",
   "invalid_quest_spec",
   "quest_dependency_cycle",

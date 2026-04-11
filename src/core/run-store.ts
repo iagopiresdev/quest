@@ -269,6 +269,7 @@ export class QuestRunStore {
         title: slice.title,
         wave: slice.wave,
         lastError: slice.lastError,
+        lastChecks: slice.lastChecks,
         lastOutput: slice.lastOutput,
       })),
     };
