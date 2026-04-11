@@ -31,6 +31,9 @@ Read [Design System](/docs/design-system) first when the question is about proje
 6. Optimize for agents first.
    CLI I/O must have a stable machine-readable mode. Errors must be structured. Side effects must be durable and easy to inspect from automation.
 
+7. Keep runtime controls typed at the worker boundary.
+   Reasoning, token, sampling, and context-window settings belong in the persisted worker model first. CLI flags and provider-specific launch args should compile down from that shared runtime object instead of inventing backend-only transport fields.
+
 ## System Design
 
 Current architectural layers:
@@ -42,10 +45,13 @@ Current architectural layers:
   Quest and slice contracts plus pure planning logic.
 
 - `src/core/workers/*`
-  Worker contracts, backend presets, registry, and calibration.
+  Worker contracts, typed runtime options, backend presets, registry, and calibration.
 
 - `src/core/runs/*`
-  Execution lifecycle, runner adapters, workspaces, cleanup, and integration.
+  Execution lifecycle, adapter registry, workspaces, cleanup, and integration.
+
+- `src/core/runs/adapters/*`
+  Provider-specific translation logic. Codex, Hermes, Claude, OpenClaw, and local-command implementations belong here so the executor coordinates lifecycle instead of learning provider syntax.
 
 - `src/core/observability/*`
   Event schemas, sink config, delivery logs, and sink handlers. This layer observes run state; it must not become a second execution path.
@@ -117,6 +123,7 @@ Avoid:
 - Throwing generic `Error` for domain failures that need structured output.
 - Adding framework-level dependencies for problems a small helper can solve.
 - Letting adapters leak into the core data model.
+- Letting CLI parsing become the only place a backend feature exists. If a runtime flag matters after worker creation, it belongs in the worker schema.
 - Comments that restate the code without adding the operational reason behind it.
 
 ## Typing Rules
@@ -124,6 +131,7 @@ Avoid:
 Use TypeScript as a modeling tool, not just linting.
 
 - All persisted structures must have a schema and exported inferred type.
+- Provider runtime settings belong in a typed `backend.runtime` object with common fields first and provider escape hatches second.
 - Prefer narrow unions for statuses, event types, runners, and disciplines.
 - Do not use `any`.
 - Use `exactOptionalPropertyTypes` semantics. Optional means “may be absent,” not “present with undefined” unless the schema or type says so explicitly.
@@ -132,6 +140,7 @@ Use TypeScript as a modeling tool, not just linting.
 - When a value is optional because of lifecycle timing, make that explicit in the schema.
 - Do not widen persisted status types just to describe transient CLI or dispatcher outcomes; model those separately.
 - Normalize unbounded runner text before persisting it into bounded schema fields so a verbose model cannot make stored run state invalid.
+- When a backend needs provider-specific advanced flags, keep them in a bounded typed map instead of scattering one-off properties across worker presets and adapter constructors.
 
 Good:
 

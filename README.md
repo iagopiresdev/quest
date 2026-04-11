@@ -107,6 +107,16 @@ Example `codex-cli` worker:
     "runner": "codex",
     "profile": "gpt-5.4",
     "adapter": "codex-cli",
+    "runtime": {
+      "reasoningEffort": "high",
+      "maxOutputTokens": 12000,
+      "temperature": 0.2,
+      "topP": 0.9,
+      "contextWindow": 240000,
+      "providerOptions": {
+        "model_provider": "\"responses\""
+      }
+    },
     "auth": {
       "mode": "native-login"
     },
@@ -146,6 +156,8 @@ Example `codex-cli` worker:
 
 `codex-cli` runs `codex exec` inside the slice workspace, persists Codex stdout/stderr, and captures the final response through `--output-last-message`.
 The prompt includes owned paths, dependencies, and redacted acceptance-check summaries. It does not forward raw acceptance-check argv or env values to the model.
+Common runtime controls such as reasoning effort, output-token limits, sampling, and context window live under `backend.runtime`, and Quest Runner translates them into Codex `-c key=value` overrides when it starts `codex exec`.
+If a Codex-specific knob does not have a first-class runtime field yet, put it in `backend.runtime.providerOptions`.
 
 Auth modes for `codex-cli`:
 - `native-login`: reuse the local `codex login` session
@@ -168,6 +180,15 @@ Example `hermes-api` worker:
     "profile": "hermes-local",
     "adapter": "hermes-api",
     "baseUrl": "http://127.0.0.1:8000/v1",
+    "runtime": {
+      "reasoningEffort": "medium",
+      "maxOutputTokens": 4096,
+      "temperature": 0.3,
+      "topP": 0.8,
+      "providerOptions": {
+        "frequency_penalty": "0.5"
+      }
+    },
     "toolPolicy": { "allow": [], "deny": [] }
   },
   "persona": {
@@ -203,6 +224,7 @@ Example `hermes-api` worker:
 ```
 
 `hermes-api` calls an OpenAI-compatible `/chat/completions` endpoint, asks Hermes for a strict JSON write plan, and applies only owned-path writes inside the slice workspace. The runner rejects responses that try to write outside the owned paths or escape the slice workspace.
+For Hermes, the same `backend.runtime` object maps onto request-body controls such as `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, and provider-specific extra request fields from `providerOptions`.
 
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
@@ -273,10 +295,26 @@ quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
 cat worker.json | quest workers upsert --stdin
 
 # add a Codex worker from flags instead of hand-writing worker JSON
-quest workers add codex --name "Quest Codex" --profile gpt-5.4
+quest workers add codex \
+  --name "Quest Codex" \
+  --profile gpt-5.4 \
+  --reasoning-effort high \
+  --max-output-tokens 12000 \
+  --temperature 0.2 \
+  --top-p 0.9 \
+  --context-window 240000 \
+  --provider-option 'model_provider="responses"'
 
 # add a Hermes worker from flags
-quest workers add hermes --name "Quest Hermes" --base-url http://127.0.0.1:8000/v1 --profile hermes-local
+quest workers add hermes \
+  --name "Quest Hermes" \
+  --base-url http://127.0.0.1:8000/v1 \
+  --profile hermes-local \
+  --reasoning-effort medium \
+  --max-output-tokens 4096 \
+  --temperature 0.3 \
+  --top-p 0.8 \
+  --provider-option frequency_penalty=0.5
 
 # list configured observability sinks
 quest observability sinks list

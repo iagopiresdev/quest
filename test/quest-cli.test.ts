@@ -98,6 +98,18 @@ test("quest cli adds a codex worker from flags", () => {
     "Quest Codex",
     "--profile",
     "gpt-5.4-mini",
+    "--reasoning-effort",
+    "high",
+    "--max-output-tokens",
+    "12000",
+    "--temperature",
+    "0.2",
+    "--top-p",
+    "0.9",
+    "--context-window",
+    "240000",
+    "--provider-option",
+    'model_provider="responses"',
     "--auth-mode",
     "native-login",
   ]);
@@ -108,6 +120,16 @@ test("quest cli adds a codex worker from flags", () => {
   expect(worker.backend.adapter).toBe("codex-cli");
   expect(worker.backend.profile).toBe("gpt-5.4-mini");
   expect(worker.backend.auth.mode).toBe("native-login");
+  expect(worker.backend.runtime).toEqual({
+    contextWindow: 240000,
+    maxOutputTokens: 12000,
+    providerOptions: {
+      model_provider: '"responses"',
+    },
+    reasoningEffort: "high",
+    temperature: 0.2,
+    topP: 0.9,
+  });
 
   const listed = runCli(context, ["workers", "list"]);
   expect(listed.code).toBe(0);
@@ -127,6 +149,14 @@ test("quest cli adds a hermes worker from flags", () => {
     "http://127.0.0.1:8000/v1",
     "--profile",
     "hermes-local",
+    "--max-output-tokens",
+    "4096",
+    "--temperature",
+    "0.3",
+    "--top-p",
+    "0.8",
+    "--provider-option",
+    "frequency_penalty=0.5",
   ]);
 
   expect(added.code).toBe(0);
@@ -135,6 +165,14 @@ test("quest cli adds a hermes worker from flags", () => {
   expect(worker.backend.adapter).toBe("hermes-api");
   expect(worker.backend.baseUrl).toBe("http://127.0.0.1:8000/v1");
   expect(worker.backend.runner).toBe("hermes");
+  expect(worker.backend.runtime).toEqual({
+    maxOutputTokens: 4096,
+    providerOptions: {
+      frequency_penalty: "0.5",
+    },
+    temperature: 0.3,
+    topP: 0.8,
+  });
 });
 
 test("quest cli setup bootstraps a codex worker from detected tooling", () => {

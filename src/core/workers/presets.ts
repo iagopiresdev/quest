@@ -1,3 +1,4 @@
+import type { WorkerRuntimeConfig } from "./runtime";
 import type { RegisteredWorker } from "./schema";
 
 export type CodexWorkerPresetInput = {
@@ -22,6 +23,7 @@ export type CodexWorkerPresetInput = {
   name?: string | undefined;
   profile?: string | undefined;
   prompt?: string | undefined;
+  runtime?: WorkerRuntimeConfig | undefined;
   tags?: string[] | undefined;
   title?: string | undefined;
   toolAllow?: string[] | undefined;
@@ -48,6 +50,7 @@ export type HermesWorkerPresetInput = {
   name?: string | undefined;
   profile?: string | undefined;
   prompt?: string | undefined;
+  runtime?: WorkerRuntimeConfig | undefined;
   title?: string | undefined;
   voice?: string | undefined;
   workerClass?: string | undefined;
@@ -70,6 +73,7 @@ export function createCodexWorkerPreset(input: CodexWorkerPresetInput): Register
       auth: input.auth,
       executable: input.executable,
       profile: input.profile ?? "gpt-5.4",
+      ...(input.runtime ? { runtime: input.runtime } : {}),
       runner: "codex",
       toolPolicy: {
         allow: input.toolAllow ?? [],
@@ -113,6 +117,7 @@ export function createHermesWorkerPreset(input: HermesWorkerPresetInput): Regist
       auth: input.auth,
       baseUrl: input.baseUrl,
       profile: input.profile ?? "hermes",
+      ...(input.runtime ? { runtime: input.runtime } : {}),
       runner: "hermes",
       toolPolicy: {
         allow: [],

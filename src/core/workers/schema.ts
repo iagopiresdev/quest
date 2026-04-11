@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { workerRuntimeSchema } from "./runtime";
 
 const workerIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const secretRefPattern = /^[a-z0-9][a-z0-9._-]{0,79}$/;
@@ -101,6 +102,7 @@ export const workerBackendSchema = z
     gatewayAuthTokenEnv: nonEmptyString(120).optional(),
     gatewayUrl: nonEmptyString(240).optional(),
     profile: nonEmptyString(120),
+    runtime: workerRuntimeSchema.optional(),
     runner: workerRunnerSchema,
     toolPolicy: z
       .object({

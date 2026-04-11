@@ -43,6 +43,7 @@ import {
   slugifyWorkerId,
 } from "./core/workers/presets";
 import { WorkerRegistry } from "./core/workers/registry";
+import { workerRuntimeSchema } from "./core/workers/runtime";
 import {
   type RegisteredWorker,
   registeredWorkerSchema,
@@ -168,6 +169,19 @@ function findOptionValue(args: string[], flag: string): string | undefined {
   return args[index + 1] ?? undefined;
 }
 
+function findOptionValues(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === flag) {
+      const value = args[index + 1];
+      if (value) {
+        values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
@@ -210,6 +224,79 @@ function parseKeyValuePairs(value: string | undefined): Record<string, string> {
       return [key, pairValue];
     }),
   );
+}
+
+function parseRepeatedKeyValuePairs(args: string[], flag: string): Record<string, string> {
+  return Object.fromEntries(
+    findOptionValues(args, flag).map((entry) => {
+      const separatorIndex = entry.indexOf("=");
+      if (separatorIndex <= 0) {
+        throw new Error(`Expected key=value entry, received ${entry}`);
+      }
+
+      const key = entry.slice(0, separatorIndex).trim();
+      const pairValue = entry.slice(separatorIndex + 1).trim();
+      if (!key || !pairValue) {
+        throw new Error(`Expected key=value entry, received ${entry}`);
+      }
+
+      return [key, pairValue];
+    }),
+  );
+}
+
+function parseIntegerOptionValue(args: string[], flag: string): number | undefined {
+  const raw = findOptionValue(args, flag);
+  if (!raw) {
+    return undefined;
+  }
+
+  const value = Number(raw);
+  if (!Number.isInteger(value)) {
+    throw new Error(`Expected integer for ${flag}`);
+  }
+
+  return value;
+}
+
+function parseNumberOptionValue(args: string[], flag: string): number | undefined {
+  const raw = findOptionValue(args, flag);
+  if (!raw) {
+    return undefined;
+  }
+
+  const value = Number(raw);
+  if (Number.isNaN(value)) {
+    throw new Error(`Expected number for ${flag}`);
+  }
+
+  return value;
+}
+
+function parseWorkerRuntime(args: string[]): RegisteredWorker["backend"]["runtime"] {
+  const providerOptions = parseRepeatedKeyValuePairs(args, "--provider-option");
+  const runtimeCandidate = {
+    contextWindow: parseIntegerOptionValue(args, "--context-window"),
+    maxOutputTokens: parseIntegerOptionValue(args, "--max-output-tokens"),
+    providerOptions,
+    reasoningEffort: findOptionValue(args, "--reasoning-effort"),
+    temperature: parseNumberOptionValue(args, "--temperature"),
+    topP: parseNumberOptionValue(args, "--top-p"),
+  };
+
+  const hasRuntimeOptions =
+    runtimeCandidate.contextWindow !== undefined ||
+    runtimeCandidate.maxOutputTokens !== undefined ||
+    runtimeCandidate.reasoningEffort !== undefined ||
+    runtimeCandidate.temperature !== undefined ||
+    runtimeCandidate.topP !== undefined ||
+    Object.keys(runtimeCandidate.providerOptions).length > 0;
+
+  if (!hasRuntimeOptions) {
+    return undefined;
+  }
+
+  return workerRuntimeSchema.parse(runtimeCandidate);
 }
 
 function parseObservableEventTypes(value: string | undefined): ObservableEventType[] {
@@ -349,6 +436,7 @@ function buildCodexWorker(args: string[]): RegisteredWorker {
     executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "codex-worker"),
     name,
+    runtime: parseWorkerRuntime(args),
     tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")),
     toolAllow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
     toolDeny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
@@ -393,6 +481,7 @@ function buildHermesWorker(args: string[]): RegisteredWorker {
     baseUrl: findOptionValue(args, "--base-url") ?? "http://127.0.0.1:8000/v1",
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "hermes-worker"),
     name,
+    runtime: parseWorkerRuntime(args),
   };
   const approach = findOptionValue(args, "--approach");
   const profile = findOptionValue(args, "--profile");
@@ -851,6 +940,14 @@ async function runSetup(
       pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
       pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
       pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
+      pushOption(workerArgs, "--reasoning-effort", findOptionValue(args, "--reasoning-effort"));
+      pushOption(workerArgs, "--max-output-tokens", findOptionValue(args, "--max-output-tokens"));
+      pushOption(workerArgs, "--temperature", findOptionValue(args, "--temperature"));
+      pushOption(workerArgs, "--top-p", findOptionValue(args, "--top-p"));
+      pushOption(workerArgs, "--context-window", findOptionValue(args, "--context-window"));
+      findOptionValues(args, "--provider-option").forEach((entry) => {
+        workerArgs.push("--provider-option", entry);
+      });
 
       createdWorker = await registry.upsertWorker(
         registeredWorkerSchema.parse(
@@ -1249,7 +1346,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "setup",
     run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--hermes-base-url <url>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--hermes-base-url <url>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",
@@ -1468,7 +1565,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:add:hermes",
@@ -1479,7 +1576,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--profile <model>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:calibrate",

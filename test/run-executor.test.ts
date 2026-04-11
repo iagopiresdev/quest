@@ -605,6 +605,7 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
         "}",
         "const outputIndex = args.indexOf('--output-last-message');",
         "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
+        "await Bun.write('codex-args.txt', JSON.stringify(args, null, 2));",
         "const prompt = await Bun.stdin.text();",
         "await Bun.write('codex-marker.txt', prompt.includes('Owned paths:') ? 'ok' : 'bad');",
         "await Bun.write('codex-prompt.txt', prompt);",
@@ -619,6 +620,16 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
       createWorker("ember", "codex-cli", undefined, {
         executable: scriptPath,
         profile: "gpt-5.4",
+        runtime: {
+          contextWindow: 272000,
+          maxOutputTokens: 64000,
+          providerOptions: {
+            model_provider: '"responses"',
+          },
+          reasoningEffort: "high",
+          temperature: 0.2,
+          topP: 0.95,
+        },
       }),
     );
 
@@ -632,6 +643,9 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
     const executed = await executor.executeRun(run.id);
     const workspacePath = executed.slices[0]?.workspacePath ?? "";
     const prompt = readFileSync(join(workspacePath, "codex-prompt.txt"), "utf8");
+    const codexArgs = JSON.parse(
+      readFileSync(join(workspacePath, "codex-args.txt"), "utf8"),
+    ) as string[];
 
     expect(executed.status).toBe("completed");
     expect(executed.slices[0]?.lastOutput?.summary).toBe("codex summary from fake cli");
@@ -639,6 +653,13 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
     expect(prompt).toContain("Global acceptance checks before integration:");
     expect(prompt).toContain("grep (3 arg(s) redacted)");
     expect(prompt).not.toContain("top-secret-value");
+    expect(codexArgs).toContain("-c");
+    expect(codexArgs).toContain('model_reasoning_effort="high"');
+    expect(codexArgs).toContain("model_context_window=272000");
+    expect(codexArgs).toContain("model_max_output_tokens=64000");
+    expect(codexArgs).toContain("model_temperature=0.2");
+    expect(codexArgs).toContain("model_top_p=0.95");
+    expect(codexArgs).toContain('model_provider="responses"');
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -706,8 +727,15 @@ test("run executor completes a planned run with the hermes-api adapter", async (
 
   const server = Bun.serve({
     fetch: async (request) => {
-      const body = (await request.json()) as { messages: Array<{ content: string }> };
+      const body = (await request.json()) as Record<string, unknown> & {
+        messages: Array<{ content: string }>;
+      };
       expect(body.messages[1]?.content).toContain("Current owned file snapshots");
+      expect(body.max_tokens).toBe(4096);
+      expect(body.temperature).toBe(0.3);
+      expect(body.top_p).toBe(0.8);
+      expect(body.reasoning_effort).toBe("medium");
+      expect(body.frequency_penalty).toBe(0.5);
       return new Response(
         JSON.stringify({
           choices: [
@@ -739,6 +767,15 @@ test("run executor completes a planned run with the hermes-api adapter", async (
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         profile: "hermes-local",
         runner: "hermes",
+        runtime: {
+          maxOutputTokens: 4096,
+          providerOptions: {
+            frequency_penalty: "0.5",
+          },
+          reasoningEffort: "medium",
+          temperature: 0.3,
+          topP: 0.8,
+        },
       }),
     );
     const repositoryRoot = createCommittedRepo(root);

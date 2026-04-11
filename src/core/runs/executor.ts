@@ -5,16 +5,16 @@ import { SecretStore } from "../secret-store";
 import { ensureDirectory } from "../storage";
 import type { WorkerRegistry } from "../workers/registry";
 import type { RegisteredWorker } from "../workers/schema";
-import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
-import { runSubprocess } from "./process";
-import { buildProcessEnv } from "./process-env";
 import {
   CodexCliRunnerAdapter,
   DryRunRunnerAdapter,
   HermesApiRunnerAdapter,
   LocalCommandRunnerAdapter,
   RunnerRegistry,
-} from "./runner";
+} from "./adapters";
+import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
+import { runSubprocess } from "./process";
+import { buildProcessEnv } from "./process-env";
 import {
   QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH,
   type QuestRunCheckResult,
