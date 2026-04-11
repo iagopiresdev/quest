@@ -76,6 +76,7 @@ Execution happens from the slice workspace path for that run, and the process al
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
+Top-level spec `acceptanceChecks` run in that integration worktree after slices are replayed. If they fail, integration exits non-zero and the recorded integration checks stay on the run for inspection.
 
 ## Tester Lane
 
@@ -173,6 +174,8 @@ Do not commit runtime state, tokens, or local config.
 - runtime-managed per-run and per-slice workspace directories
 - optional Git worktree materialization via `--source-repo`
 - serial integration into a dedicated worktree via `runs integrate`
+- integration-time execution of top-level `acceptanceChecks`
+- resume-safe `runs integrate` when the existing integration worktree is clean
 - explicit workspace cleanup via `runs cleanup`
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.

@@ -1,9 +1,10 @@
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
+import { $ } from "bun";
 
 import { QuestDomainError } from "./errors";
 import { runSubprocess } from "./process";
 import { appendEvent } from "./run-lifecycle";
-import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
+import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestRunStore } from "./run-store";
 import { ensureDirectory } from "./storage";
 import { ensureGitRepositoryIsClean, resolveGitRepositoryRoot } from "./workspace-materializer";
@@ -130,12 +131,35 @@ async function prepareIntegrationWorkspace(
   run.targetRef = targetRef;
 
   if (await directoryHasEntries(workspacePath)) {
-    throw new QuestDomainError({
-      code: "quest_integration_failed",
-      details: { path: workspacePath, runId: run.id },
-      message: `Integration workspace already exists and is not empty: ${workspacePath}`,
-      statusCode: 1,
+    const topLevelResult = await runSubprocess({
+      cmd: ["git", "rev-parse", "--show-toplevel"],
+      cwd: workspacePath,
+      env: Bun.env,
     });
+    const expectedWorkspacePath = await realpath(workspacePath);
+    const resolvedTopLevelPath =
+      topLevelResult.exitCode === 0 ? await realpath(topLevelResult.stdout.trim()) : null;
+
+    if (topLevelResult.exitCode !== 0 || resolvedTopLevelPath !== expectedWorkspacePath) {
+      throw new QuestDomainError({
+        code: "quest_integration_failed",
+        details: { path: workspacePath, runId: run.id },
+        message: `Integration workspace already exists and is not reusable: ${workspacePath}`,
+        statusCode: 1,
+      });
+    }
+
+    const status = await readGitStatus(workspacePath);
+    if (status.trim().length > 0) {
+      throw new QuestDomainError({
+        code: "quest_integration_failed",
+        details: { path: workspacePath, runId: run.id, status },
+        message: `Integration workspace is dirty and cannot be resumed: ${workspacePath}`,
+        statusCode: 1,
+      });
+    }
+
+    return workspacePath;
   }
 
   await ensureDirectory(run.workspaceRoot ?? "");
@@ -321,6 +345,10 @@ async function integrateSlice(
   integrationWorkspacePath: string,
   sliceState: QuestRunSliceState,
 ): Promise<boolean> {
+  if (sliceState.integrationStatus === "integrated" || sliceState.integrationStatus === "noop") {
+    return false;
+  }
+
   const { baseRevision, noop, resultRevision } = await freezeSliceResult(run, sliceState);
   const integrationHead = await readHeadRevision(integrationWorkspacePath);
   const driftedFromBase = integrationHead !== baseRevision;
@@ -368,6 +396,25 @@ async function integrateSlice(
   );
   sliceState.integrationStatus = "integrated";
   return true;
+}
+
+async function runIntegrationChecks(
+  commands: string[],
+  cwd: string,
+): Promise<QuestRunCheckResult[]> {
+  const results: QuestRunCheckResult[] = [];
+
+  for (const command of commands) {
+    const result = await $`${{ raw: command }}`.cwd(cwd).env(Bun.env).nothrow().quiet();
+    results.push({
+      command,
+      exitCode: result.exitCode,
+      stderr: result.stderr.toString(),
+      stdout: result.stdout.toString(),
+    });
+  }
+
+  return results;
 }
 
 function orderedSlices(run: QuestRunDocument): QuestRunSliceState[] {
@@ -435,6 +482,49 @@ export class QuestRunIntegrator {
       if (applied) {
         appliedSliceCount += 1;
       }
+    }
+
+    if (run.spec.acceptanceChecks.length > 0) {
+      appendEvent(run, "run_integration_checks_started", {
+        checkCount: run.spec.acceptanceChecks.length,
+        integrationWorkspacePath,
+        runId: run.id,
+      });
+
+      const checkResults = await runIntegrationChecks(
+        run.spec.acceptanceChecks,
+        integrationWorkspacePath,
+      );
+      run.lastIntegrationChecks = checkResults;
+      const failedCheck = checkResults.find((check) => check.exitCode !== 0);
+      if (failedCheck) {
+        appendEvent(run, "run_integration_checks_failed", {
+          command: failedCheck.command,
+          exitCode: failedCheck.exitCode,
+          integrationWorkspacePath,
+          runId: run.id,
+        });
+        await this.runStore.saveRun(run);
+        throw new QuestDomainError({
+          code: "quest_integration_failed",
+          details: {
+            command: failedCheck.command,
+            integrationWorkspacePath,
+            runId: run.id,
+            stderr: failedCheck.stderr,
+            stdout: failedCheck.stdout,
+          },
+          message: `Integration acceptance check failed for run ${run.id}`,
+          statusCode: 1,
+        });
+      }
+
+      appendEvent(run, "run_integration_checks_completed", {
+        checkCount: run.spec.acceptanceChecks.length,
+        integrationWorkspacePath,
+        runId: run.id,
+      });
+      await this.runStore.saveRun(run);
     }
 
     appendEvent(run, "run_integrated", {

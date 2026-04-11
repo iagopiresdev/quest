@@ -313,6 +313,37 @@ test("quest cli integrates a completed run into a dedicated integration worktree
   );
 });
 
+test("quest cli fails integration when top-level acceptance checks fail", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-integrate.ts");
+  writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(
+      createSpec({
+        acceptanceChecks: ['bun -e "process.exit(9)"'],
+        title: "Integration checks fail",
+      }),
+    ),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  expect(runCli(context, ["runs", "execute", "--id", runId]).code).toBe(0);
+
+  const integrated = runCli(context, ["runs", "integrate", "--id", runId]);
+  expect(integrated.code).toBe(1);
+  const status = runCli(context, ["runs", "status", "--id", runId]);
+  const statusRun = JSON.parse(status.stdout).run;
+  expect(statusRun.lastIntegrationChecks[0].exitCode).toBe(9);
+});
+
 test("quest cli fails a run when acceptance checks fail", () => {
   const context = trackContext();
   const scriptPath = join(context.stateRoot, "worker.ts");
