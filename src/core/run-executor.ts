@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { $ } from "bun";
 
 import { QuestDomainError } from "./errors";
@@ -9,6 +9,7 @@ import { DryRunRunnerAdapter, LocalCommandRunnerAdapter, RunnerRegistry } from "
 import { ensureDirectory } from "./storage";
 import type { WorkerRegistry } from "./worker-registry";
 import type { RegisteredWorker } from "./worker-schema";
+import { prepareExecutionWorkspace } from "./workspace-materializer";
 
 function requireExecutableRun(run: QuestRunDocument): void {
   if (run.status === "blocked") {
@@ -86,31 +87,6 @@ async function runAcceptanceChecks(
   return results;
 }
 
-async function prepareSliceWorkspace(
-  run: QuestRunDocument,
-  sliceState: QuestRunSliceState,
-  cwd: string,
-): Promise<void> {
-  await ensureDirectory(cwd);
-  await writeFile(
-    `${cwd}/quest-context.json`,
-    `${JSON.stringify(
-      {
-        cwd,
-        runId: run.id,
-        sliceId: sliceState.sliceId,
-        status: sliceState.status,
-        title: sliceState.title,
-        wave: sliceState.wave,
-        workspaceRoot: run.workspaceRoot,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
 export class QuestRunExecutor {
   private readonly runnerRegistry = new RunnerRegistry([
     new DryRunRunnerAdapter(),
@@ -122,9 +98,16 @@ export class QuestRunExecutor {
     private readonly workerRegistry: WorkerRegistry,
   ) {}
 
-  async executeRun(runId: string, options: { dryRun?: boolean } = {}): Promise<QuestRunDocument> {
+  async executeRun(
+    runId: string,
+    options: { dryRun?: boolean; sourceRepositoryPath?: string } = {},
+  ): Promise<QuestRunDocument> {
     const run = await this.runStore.getRun(runId);
     requireExecutableRun(run);
+
+    if (options.sourceRepositoryPath) {
+      run.sourceRepositoryPath = resolve(options.sourceRepositoryPath);
+    }
 
     const workers = await this.workerRegistry.listWorkers();
     const workerMap = new Map(workers.map((worker) => [worker.id, worker]));
@@ -195,7 +178,7 @@ export class QuestRunExecutor {
               forceDryRun: options.dryRun === true,
             });
             const cwd = resolveExecutionCwd(run, sliceState, worker);
-            await prepareSliceWorkspace(run, sliceState, cwd);
+            await prepareExecutionWorkspace(run, sliceState, cwd);
             return {
               result: await adapter.execute({
                 cwd,

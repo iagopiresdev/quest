@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +16,7 @@ import { QuestRunStore } from "../src/core/run-store";
 import type { QuestSpec } from "../src/core/spec-schema";
 import { WorkerRegistry } from "../src/core/worker-registry";
 import type { RegisteredWorker } from "../src/core/worker-schema";
+import { createCommittedRepo } from "./helpers";
 
 function createWorker(id: string, adapter = "local-cli", command?: string[]): RegisteredWorker {
   return {
@@ -103,7 +111,8 @@ test("run executor completes a planned run in dry-run mode", async () => {
     expect(existsSync(workspaceRoot)).toBe(true);
     expect(existsSync(workspacePath)).toBe(true);
     expect(
-      JSON.parse(readFileSync(join(workspacePath, "quest-context.json"), "utf8")).sliceId,
+      JSON.parse(readFileSync(join(workspacePath, ".quest-runner", "context.json"), "utf8"))
+        .sliceId,
     ).toBe("parser");
     expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
     expect(executed.events.some((event) => event.type === "run_completed")).toBe(true);
@@ -214,6 +223,70 @@ test("run executor executes the worker inside the slice workspace", async () => 
       realpathSync(workspacePath),
     );
     expect(existsSync(join(workspacePath, "worker-marker.txt"))).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor materializes a committed git repository into the slice workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-materialized.ts");
+    Bun.write(
+      scriptPath,
+      [
+        "const tracked = await Bun.file('tracked.txt').text();",
+        "await Bun.write('worker-marker.txt', tracked.trim());",
+        "await Bun.write(Bun.stdout, tracked.trim());",
+      ].join("\n"),
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    const executed = await executor.executeRun(run.id);
+    const workspacePath = executed.slices[0]?.workspacePath ?? "";
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.stdout.trim()).toBe("from-source-repo");
+    expect(readFileSync(join(workspacePath, "worker-marker.txt"), "utf8")).toBe("from-source-repo");
+    expect(existsSync(join(workspacePath, ".git"))).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor fails when the source repository is dirty", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    writeFileSync(join(repositoryRoot, "tracked.txt"), "dirty\n", "utf8");
+    await workerRegistry.upsertWorker(createWorker("ember"));
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+
+    try {
+      await executor.executeRun(run.id, { dryRun: true });
+      throw new Error("Expected quest_source_repo_dirty");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_source_repo_dirty");
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

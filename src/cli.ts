@@ -180,10 +180,14 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "run",
     run: async ({ args, registry, runStore }) => {
       const spec = questSpecSchema.parse(await readJsonInput(args));
-      return { run: await runStore.createRun(spec, await registry.listWorkers()) };
+      return {
+        run: await runStore.createRun(spec, await registry.listWorkers(), {
+          sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
+        }),
+      };
     },
     usage:
-      "quest run --file <path> [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest run --file <path> [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:list",
@@ -205,10 +209,15 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rerun",
     run: async ({ args, registry, runStore }) => {
       const previousRun = await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>"));
-      return { run: await runStore.createRun(previousRun.spec, await registry.listWorkers()) };
+      return {
+        run: await runStore.createRun(previousRun.spec, await registry.listWorkers(), {
+          sourceRepositoryPath:
+            findOptionValue(args, "--source-repo") ?? previousRun.sourceRepositoryPath,
+        }),
+      };
     },
     usage:
-      "quest runs rerun --id <run-id> [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest runs rerun --id <run-id> [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:execute",
@@ -216,10 +225,11 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, runExecutor }) => ({
       run: await runExecutor.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
         dryRun: hasFlag(args, "--dry-run"),
+        sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
       }),
     }),
     usage:
-      "quest runs execute --id <run-id> [--dry-run] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest runs execute --id <run-id> [--dry-run] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:logs",

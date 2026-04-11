@@ -6,6 +6,7 @@ import {
   type CliTestContext,
   cleanupTempRoot,
   createCliContext,
+  createCommittedRepo,
   createSlice,
   createSpec,
   createWorkerJson,
@@ -223,6 +224,38 @@ test("quest cli executes a real local-command worker", () => {
   const executedRun = JSON.parse(executed.stdout).run;
   expect(executedRun.status).toBe("completed");
   expect(executedRun.slices[0].lastOutput.stdout).toContain("real:parser:ember");
+});
+
+test("quest cli executes a run against a source git repository", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-materialized.ts");
+  writeFileSync(
+    scriptPath,
+    [
+      "const tracked = await Bun.file('tracked.txt').text();",
+      "await Bun.write(Bun.stdout, tracked.trim());",
+    ].join("\n"),
+    "utf8",
+  );
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(createSpec({ title: "Execute source repo run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(0);
+  const executedRun = JSON.parse(executed.stdout).run;
+  expect(executedRun.status).toBe("completed");
+  expect(executedRun.sourceRepositoryPath).toBe(repositoryRoot);
+  expect(executedRun.slices[0].lastOutput.stdout.trim()).toBe("from-source-repo");
 });
 
 test("quest cli fails a run when acceptance checks fail", () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,6 +26,32 @@ export function createTempRoot(prefix: string): string {
 
 export function cleanupTempRoot(root: string): void {
   rmSync(root, { force: true, recursive: true });
+}
+
+export function runCommandOrThrow(cmd: string[], cwd: string): void {
+  const result = Bun.spawnSync({
+    cmd,
+    cwd,
+    env: Bun.env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (result.exitCode !== 0) {
+    throw new Error(`Command failed: ${cmd.join(" ")}\n${new TextDecoder().decode(result.stderr)}`);
+  }
+}
+
+export function createCommittedRepo(root: string): string {
+  const repositoryRoot = join(root, "source-repo");
+  mkdirSync(repositoryRoot, { recursive: true });
+  runCommandOrThrow(["git", "init"], repositoryRoot);
+  runCommandOrThrow(["git", "config", "user.name", "Quest Runner"], repositoryRoot);
+  runCommandOrThrow(["git", "config", "user.email", "quest-runner@example.com"], repositoryRoot);
+  writeFileSync(join(repositoryRoot, "tracked.txt"), "from-source-repo\n", "utf8");
+  runCommandOrThrow(["git", "add", "tracked.txt"], repositoryRoot);
+  runCommandOrThrow(["git", "commit", "-m", "Initial commit"], repositoryRoot);
+  return repositoryRoot;
 }
 
 export function createCliContext(): CliTestContext {

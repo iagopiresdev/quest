@@ -150,6 +150,7 @@ export const questRunDocumentSchema = z
     createdAt: isoDateStringSchema,
     id: questRunIdSchema,
     plan: questPlanSchema,
+    sourceRepositoryPath: nonEmptyString(400).optional(),
     spec: questSpecSchema,
     slices: z.array(questRunSliceStateSchema),
     status: z.enum(questRunStatusValues),

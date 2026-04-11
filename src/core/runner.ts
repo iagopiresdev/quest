@@ -1,4 +1,5 @@
 import { QuestDomainError } from "./errors";
+import { runSubprocess } from "./process";
 import type { QuestRunDocument, QuestRunSliceState } from "./run-schema";
 import type { QuestSliceSpec } from "./spec-schema";
 import type { RegisteredWorker } from "./worker-schema";
@@ -17,42 +18,6 @@ export type RunnerExecutionContext = {
   sliceState: QuestRunSliceState;
   worker: RegisteredWorker;
 };
-
-async function readPipe(stream: ReadableStream<Uint8Array> | null): Promise<string> {
-  if (!stream) {
-    return "";
-  }
-
-  return await new Response(stream).text();
-}
-
-async function runCommand(options: {
-  cmd: string[];
-  cwd: string;
-  env: Record<string, string | undefined>;
-  stdin: string;
-}): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  const process = Bun.spawn({
-    cmd: options.cmd,
-    cwd: options.cwd,
-    env: options.env,
-    stdin: new TextEncoder().encode(options.stdin),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [exitCode, stdout, stderr] = await Promise.all([
-    process.exited,
-    readPipe(process.stdout),
-    readPipe(process.stderr),
-  ]);
-
-  return {
-    exitCode,
-    stderr,
-    stdout,
-  };
-}
 
 function buildLocalCommandPayload(context: RunnerExecutionContext): string {
   return JSON.stringify(
@@ -130,7 +95,7 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
     }
 
     const payload = buildLocalCommandPayload(context);
-    const { exitCode, stderr, stdout } = await runCommand({
+    const { exitCode, stderr, stdout } = await runSubprocess({
       cmd: command,
       cwd: context.cwd,
       env: {

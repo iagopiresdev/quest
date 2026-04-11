@@ -1,4 +1,5 @@
 import { readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { QuestDomainError } from "./errors";
 import { planQuest } from "./planner";
@@ -141,7 +142,11 @@ export class QuestRunStore {
     private readonly workspacesRoot: string = resolveQuestWorkspacesRoot(),
   ) {}
 
-  async createRun(spec: QuestSpec, workers: RegisteredWorker[]): Promise<QuestRunDocument> {
+  async createRun(
+    spec: QuestSpec,
+    workers: RegisteredWorker[],
+    options: { sourceRepositoryPath?: string } = {},
+  ): Promise<QuestRunDocument> {
     const createdAt = nowIsoString();
     const plan = planQuest(spec, workers);
     const runId = createQuestRunId();
@@ -172,6 +177,9 @@ export class QuestRunStore {
       events,
       id: runId,
       plan,
+      sourceRepositoryPath: options.sourceRepositoryPath
+        ? resolve(options.sourceRepositoryPath)
+        : undefined,
       spec,
       workspaceRoot: resolveRunWorkspaceRootForStore(runId, this.workspacesRoot),
     };
