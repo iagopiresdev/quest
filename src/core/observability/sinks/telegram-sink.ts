@@ -24,15 +24,17 @@ export const telegramSinkSchema = z
     type: z.literal("telegram"),
   })
   .strict()
-  .superRefine((value, ctx) => {
-    if (!value.botTokenEnv && !value.botTokenSecretRef) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "telegram sink requires botTokenEnv or botTokenSecretRef",
-        path: ["botTokenEnv"],
-      });
-    }
-  });
+  .check(
+    z.superRefine((value, ctx) => {
+      if (!value.botTokenEnv && !value.botTokenSecretRef) {
+        ctx.addIssue({
+          code: "custom",
+          message: "telegram sink requires botTokenEnv or botTokenSecretRef",
+          path: ["botTokenEnv"],
+        });
+      }
+    }),
+  );
 export type TelegramSink = z.infer<typeof telegramSinkSchema>;
 
 function createFailureDelivery(

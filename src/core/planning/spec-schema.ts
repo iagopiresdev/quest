@@ -57,33 +57,35 @@ export const questSpecSchema = z
     workspace: nonEmptyString(160),
   })
   .strict()
-  .superRefine((value, ctx) => {
-    const sliceIds = new Set<string>();
+  .check(
+    z.superRefine((value, ctx) => {
+      const sliceIds = new Set<string>();
 
-    value.slices.forEach((slice, index) => {
-      if (sliceIds.has(slice.id)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Duplicate slice id: ${slice.id}`,
-          path: ["slices", index, "id"],
-        });
-        return;
-      }
-
-      sliceIds.add(slice.id);
-    });
-
-    value.slices.forEach((slice, index) => {
-      slice.dependsOn.forEach((dependencyId, dependencyIndex) => {
-        if (!sliceIds.has(dependencyId)) {
+      value.slices.forEach((slice, index) => {
+        if (sliceIds.has(slice.id)) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: `Unknown dependency: ${dependencyId}`,
-            path: ["slices", index, "dependsOn", dependencyIndex],
+            code: "custom",
+            message: `Duplicate slice id: ${slice.id}`,
+            path: ["slices", index, "id"],
           });
+          return;
         }
+
+        sliceIds.add(slice.id);
       });
-    });
-  });
+
+      value.slices.forEach((slice, index) => {
+        slice.dependsOn.forEach((dependencyId, dependencyIndex) => {
+          if (!sliceIds.has(dependencyId)) {
+            ctx.addIssue({
+              code: "custom",
+              message: `Unknown dependency: ${dependencyId}`,
+              path: ["slices", index, "dependsOn", dependencyIndex],
+            });
+          }
+        });
+      });
+    }),
+  );
 
 export type QuestSpec = z.infer<typeof questSpecSchema>;

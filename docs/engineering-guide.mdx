@@ -95,6 +95,7 @@ Preferred patterns:
 
 - Small pure helpers around domain decisions.
 - Schema-first validation with `zod`.
+- Prefer current Zod 4 APIs over deprecated compatibility shims.
 - Narrow orchestration methods that delegate repeated state mutation to shared helpers.
 - Explicit domain errors with stable `code` values.
 - Sparse comments that explain why a boundary or invariant exists, not what the next line of code does.
@@ -102,6 +103,8 @@ Preferred patterns:
 - Circular imports in `src/**` must fail lint. Keep shared contracts below the modules that consume them instead of using barrel files as two-way dependency hubs.
 - Cognitive complexity and function-size limits are hard gates. If a function needs an explicit override in `biome.json`, treat that as temporary design debt and pay it down before adding more behavior to the same function.
 - Nested ternaries are forbidden. Plain ternaries and `??` are still under active cleanup; do not add new dense conditional-expression chains when a helper or guard clause would be clearer.
+- Prefer first-party Zod schema primitives like `z.url()`, `z.email()`, `z.uuid()`, and `z.enum()` when they model the format directly. Keep regex for project-specific lexical contracts like ids or env-var names.
+- When adding custom Zod issues, use the string issue codes from the current API and prefer `.check(z.superRefine(...))` over deprecated instance `.superRefine(...)`.
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 - Redaction before delegation:

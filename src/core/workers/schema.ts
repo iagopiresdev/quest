@@ -70,23 +70,25 @@ export const workerBackendAuthSchema = z
     targetEnvVar: nonEmptyString(120).default("OPENAI_API_KEY"),
   })
   .strict()
-  .superRefine((value, ctx) => {
-    if (value.mode === "env-var" && !value.envVar) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "env-var auth requires auth.envVar",
-        path: ["envVar"],
-      });
-    }
+  .check(
+    z.superRefine((value, ctx) => {
+      if (value.mode === "env-var" && !value.envVar) {
+        ctx.addIssue({
+          code: "custom",
+          message: "env-var auth requires auth.envVar",
+          path: ["envVar"],
+        });
+      }
 
-    if (value.mode === "secret-store" && !value.secretRef) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "secret-store auth requires auth.secretRef",
-        path: ["secretRef"],
-      });
-    }
-  });
+      if (value.mode === "secret-store" && !value.secretRef) {
+        ctx.addIssue({
+          code: "custom",
+          message: "secret-store auth requires auth.secretRef",
+          path: ["secretRef"],
+        });
+      }
+    }),
+  );
 
 export const workerBackendSchema = z
   .object({
@@ -110,31 +112,33 @@ export const workerBackendSchema = z
     workingDirectory: nonEmptyString(240).optional(),
   })
   .strict()
-  .superRefine((value, ctx) => {
-    if (value.adapter === "local-command" && (!value.command || value.command.length === 0)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "local-command adapter requires backend.command",
-        path: ["command"],
-      });
-    }
+  .check(
+    z.superRefine((value, ctx) => {
+      if (value.adapter === "local-command" && (!value.command || value.command.length === 0)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "local-command adapter requires backend.command",
+          path: ["command"],
+        });
+      }
 
-    if (value.adapter === "codex-cli" && value.command) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "codex-cli adapter does not use backend.command",
-        path: ["command"],
-      });
-    }
+      if (value.adapter === "codex-cli" && value.command) {
+        ctx.addIssue({
+          code: "custom",
+          message: "codex-cli adapter does not use backend.command",
+          path: ["command"],
+        });
+      }
 
-    if (value.adapter === "hermes-api" && !value.baseUrl) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "hermes-api adapter requires backend.baseUrl",
-        path: ["baseUrl"],
-      });
-    }
-  });
+      if (value.adapter === "hermes-api" && !value.baseUrl) {
+        ctx.addIssue({
+          code: "custom",
+          message: "hermes-api adapter requires backend.baseUrl",
+          path: ["baseUrl"],
+        });
+      }
+    }),
+  );
 
 export const workerPersonaSchema = z
   .object({
@@ -217,21 +221,23 @@ export const workerRegistrySchema = z
     workers: z.array(registeredWorkerSchema),
   })
   .strict()
-  .superRefine((value, ctx) => {
-    const ids = new Set<string>();
+  .check(
+    z.superRefine((value, ctx) => {
+      const ids = new Set<string>();
 
-    value.workers.forEach((worker, index) => {
-      if (ids.has(worker.id)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Duplicate worker id: ${worker.id}`,
-          path: ["workers", index, "id"],
-        });
-        return;
-      }
+      value.workers.forEach((worker, index) => {
+        if (ids.has(worker.id)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `Duplicate worker id: ${worker.id}`,
+            path: ["workers", index, "id"],
+          });
+          return;
+        }
 
-      ids.add(worker.id);
-    });
-  });
+        ids.add(worker.id);
+      });
+    }),
+  );
 
 export type WorkerRegistryDocument = z.infer<typeof workerRegistrySchema>;
