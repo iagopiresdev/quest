@@ -5,9 +5,11 @@ import { join } from "node:path";
 import {
   type CliTestContext,
   cleanupTempRoot,
+  createCalibrationCommandScript,
   createCliContext,
   createCommand,
   createCommittedRepo,
+  createLocalCommandWorkerJson,
   createSlice,
   createSpec,
   createWorkerJson,
@@ -108,6 +110,47 @@ test("quest cli adds a codex worker from flags", () => {
   const listed = runCli(context, ["workers", "list"]);
   expect(listed.code).toBe(0);
   expect(JSON.parse(listed.stdout).workers).toHaveLength(1);
+});
+
+test("quest cli calibrates a worker through the training grounds suite", () => {
+  const context = trackContext();
+  const scriptPath = createCalibrationCommandScript(context.stateRoot);
+
+  const upsert = runCli(context, ["workers", "upsert", "--stdin"], {
+    input: createLocalCommandWorkerJson("sparrow", ["bun", scriptPath]),
+  });
+  expect(upsert.code).toBe(0);
+
+  const calibrated = runCli(context, ["workers", "calibrate", "--id", "sparrow"]);
+  expect(calibrated.code).toBe(0);
+  const result = JSON.parse(calibrated.stdout).result;
+  expect(result.calibration.suiteId).toBe("training-grounds-v1");
+  expect(result.calibration.status).toBe("passed");
+  expect(result.calibration.score).toBe(100);
+  expect(result.run.status).toBe("completed");
+  expect(result.worker.calibration.history).toHaveLength(1);
+  expect(result.worker.calibration.history[0].runId).toBe(result.run.id);
+  expect(result.worker.progression.xp).toBeGreaterThan(1840);
+  expect(result.worker.trust.rating).toBeGreaterThan(0.74);
+});
+
+test("quest cli records failed calibration runs without crashing the command", () => {
+  const context = trackContext();
+  const scriptPath = join(context.stateRoot, "broken-calibration-worker.ts");
+  writeFileSync(scriptPath, 'console.log("no-op calibration worker");\n', "utf8");
+
+  const upsert = runCli(context, ["workers", "upsert", "--stdin"], {
+    input: createLocalCommandWorkerJson("rook", ["bun", scriptPath]),
+  });
+  expect(upsert.code).toBe(0);
+
+  const calibrated = runCli(context, ["workers", "calibrate", "--id", "rook"]);
+  expect(calibrated.code).toBe(0);
+  const result = JSON.parse(calibrated.stdout).result;
+  expect(result.calibration.status).toBe("failed");
+  expect(result.run.status).toBe("failed");
+  expect(result.worker.calibration.history[0].status).toBe("failed");
+  expect(result.worker.progression.xp).toBe(1840);
 });
 
 test("quest cli plans from file and reports unassigned slices", () => {

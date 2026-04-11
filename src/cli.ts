@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 
 import { ZodError } from "zod";
 
+import { listCalibrationSuites, WorkerCalibrator } from "./core/calibration";
 import { isQuestDomainError } from "./core/errors";
 import { planQuest } from "./core/planner";
 import { runSubprocess } from "./core/process";
@@ -18,13 +19,18 @@ import { SecretStore } from "./core/secret-store";
 import { questSpecSchema } from "./core/spec-schema";
 import {
   ensureDirectory,
+  resolveQuestCalibrationsRoot,
   resolveQuestRunsRoot,
   resolveQuestStateRoot,
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
 import { WorkerRegistry } from "./core/worker-registry";
-import { type RegisteredWorker, registeredWorkerSchema } from "./core/worker-schema";
+import {
+  type RegisteredWorker,
+  registeredWorkerSchema,
+  type WorkerCalibrationSuite,
+} from "./core/worker-schema";
 
 type QuestCliCommand =
   | "doctor"
@@ -43,11 +49,13 @@ type QuestCliCommand =
   | "secrets:set"
   | "secrets:status"
   | "workers:add:codex"
+  | "workers:calibrate"
   | "workers:list"
   | "workers:upsert";
 
 type QuestCliContext = {
   args: string[];
+  calibrator: WorkerCalibrator;
   runCleanup: QuestRunCleanup;
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
@@ -207,6 +215,9 @@ function buildCodexWorker(args: string[]): RegisteredWorker {
         allow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
         deny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
       },
+    },
+    calibration: {
+      history: [],
     },
     class: findOptionValue(args, "--class") ?? "engineer",
     enabled: true,
@@ -373,6 +384,7 @@ async function runDoctor(
   args: string[],
   secretStore: SecretStore,
   stateRoot: string,
+  calibrationsRoot: string,
   runsRoot: string,
   workspacesRoot: string,
   registryPath: string,
@@ -394,6 +406,7 @@ async function runDoctor(
       ok: true,
     },
     await checkPathWritable(stateRoot),
+    await checkPathWritable(calibrationsRoot),
     await checkPathWritable(runsRoot),
     await checkPathWritable(workspacesRoot),
     await checkPathWritable(dirname(registryPath)),
@@ -485,6 +498,10 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         args,
         secretStore,
         resolveQuestStateRoot(findOptionValue(args, "--state-root") ?? undefined),
+        resolveQuestCalibrationsRoot({
+          explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
+          stateRoot: findOptionValue(args, "--state-root") ?? undefined,
+        }),
         resolveQuestRunsRoot({
           explicitRunsRoot: findOptionValue(args, "--runs-root") ?? undefined,
           stateRoot: findOptionValue(args, "--state-root") ?? undefined,
@@ -499,7 +516,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         }),
       ),
     usage:
-      "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--state-root <path>]",
   },
   {
     id: "secrets:set",
@@ -541,6 +558,29 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+  },
+  {
+    id: "workers:calibrate",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "calibrate",
+    run: async ({ args, calibrator }) => {
+      if (hasFlag(args, "--list-suites")) {
+        return { suites: listCalibrationSuites() };
+      }
+
+      const requestedSuite = findOptionValue(args, "--suite");
+      const suiteId = (requestedSuite ?? "training-grounds-v1") as WorkerCalibrationSuite;
+      return {
+        result: await calibrator.calibrateWorker(
+          requireOptionValue(args, "--id", "--id <worker-id>"),
+          {
+            dryRun: hasFlag(args, "--dry-run"),
+            suiteId,
+          },
+        ),
+      };
+    },
+    usage:
+      "quest workers calibrate --id <worker-id> [--suite <training-grounds-v1>] [--dry-run] [--list-suites] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--state-root <path>]",
   },
   {
     id: "workers:list",
@@ -707,17 +747,23 @@ async function main(): Promise<number> {
     explicitWorkspacesRoot: findOptionValue(args, "--workspaces-root") ?? undefined,
     stateRoot,
   });
+  const calibrationsRoot = resolveQuestCalibrationsRoot({
+    explicitCalibrationsRoot: findOptionValue(args, "--calibrations-root") ?? undefined,
+    stateRoot,
+  });
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const secretStore = new SecretStore();
   const runCleanup = new QuestRunCleanup(runStore);
   const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
+  const calibrator = new WorkerCalibrator(registry, runStore, runExecutor, calibrationsRoot);
 
   try {
     writeJson(
       await command.run({
         args,
+        calibrator,
         registry,
         runCleanup,
         runExecutor,

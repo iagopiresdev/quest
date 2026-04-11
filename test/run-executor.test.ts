@@ -34,6 +34,9 @@ function createWorker(
       toolPolicy: { allow: [], deny: [] },
       ...backendOverrides,
     },
+    calibration: {
+      history: [],
+    },
     class: "engineer",
     enabled: true,
     id,

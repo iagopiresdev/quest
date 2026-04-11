@@ -17,6 +17,9 @@ Current adapters:
 - `local-command` for real local subprocess execution
 - `codex-cli` for native Codex CLI execution with optional native login, env-var auth, or keychain-backed secret lookup
 
+Current built-in worker evaluation:
+- `training-grounds-v1` calibration suite for scoring a worker on throwaway coding, testing, and docs tasks
+
 Example `local-command` worker:
 
 ```json
@@ -157,6 +160,17 @@ If any check exits non-zero:
 - `runs execute` exits non-zero
 - `runs logs` shows both the worker output and the failing check result
 
+## Worker Calibration
+
+`quest workers calibrate` reuses the normal run planner and executor against a throwaway fixture repo under the calibrations root. The current built-in suite is `training-grounds-v1`.
+
+The suite is intentionally made of independent slices. Calibration slices must be solvable from a clean base because Quest Runner isolates slice workspaces; later slices do not inherit file changes from earlier ones unless integration happens.
+
+Calibration results are written back onto the worker record:
+- calibration history entry with suite id, run id, score, and per-discipline scores
+- updated trust rating and `calibratedAt` timestamp
+- XP gain when the suite passes
+
 ## Commands
 
 ```sh
@@ -168,6 +182,12 @@ cat worker.json | quest workers upsert --stdin
 
 # add a Codex worker from flags instead of hand-writing worker JSON
 quest workers add codex --name "Quest Codex" --profile gpt-5.4
+
+# list built-in calibration suites
+quest workers calibrate --list-suites
+
+# run the default training-grounds calibration for one worker
+quest workers calibrate --id quest-codex
 
 # list workers
 quest workers list
@@ -242,6 +262,7 @@ Defaults:
 - worker registry: `~/.quest-runner/workers.json`
 - runs root: `~/.quest-runner/runs`
 - workspaces root: `~/.quest-runner/workspaces`
+- calibrations root: `~/.quest-runner/calibrations`
 - secret-store service name: `quest-runner`
 
 Overrides:
@@ -249,10 +270,12 @@ Overrides:
 - `QUEST_RUNNER_WORKER_REGISTRY_PATH`
 - `QUEST_RUNNER_RUNS_ROOT`
 - `QUEST_RUNNER_WORKSPACES_ROOT`
+- `QUEST_RUNNER_CALIBRATIONS_ROOT`
 - `QUEST_RUNNER_SECRET_STORE_SERVICE_NAME`
 - `--registry <path>`
 - `--runs-root <path>`
 - `--workspaces-root <path>`
+- `--calibrations-root <path>`
 - `--state-root <path>`
 
 Do not commit runtime state, tokens, or local config.
@@ -276,6 +299,8 @@ Do not commit runtime state, tokens, or local config.
 - explicit workspace cleanup via `runs cleanup`
 - cleanup confinement under the configured workspaces root
 - local keychain-backed secret storage for runner auth
+- built-in worker calibration through the throwaway `training-grounds-v1` suite
+- persisted calibration history, trust updates, and XP awards on workers
 
 Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
 

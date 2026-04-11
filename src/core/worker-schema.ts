@@ -16,6 +16,8 @@ export type WorkerRunner = (typeof workerRunnerValues)[number];
 
 export const workerDisciplineValues = ["coding", "testing", "docs", "research"] as const;
 export type WorkerDiscipline = (typeof workerDisciplineValues)[number];
+export const workerCalibrationSuiteValues = ["training-grounds-v1"] as const;
+export type WorkerCalibrationSuite = (typeof workerCalibrationSuiteValues)[number];
 
 export const workerStatsSchema = z
   .object({
@@ -127,9 +129,42 @@ export const workerProgressionSchema = z
   })
   .strict();
 
+export const workerCalibrationRecordSchema = z
+  .object({
+    at: nonEmptyString(80),
+    checkPassRate: z.number().min(0).max(1),
+    completedSliceCount: z.number().int().min(0).max(64),
+    disciplineScores: z
+      .object({
+        coding: statSchema.optional(),
+        testing: statSchema.optional(),
+        docs: statSchema.optional(),
+        research: statSchema.optional(),
+      })
+      .strict(),
+    passedCheckCount: z.number().int().min(0).max(128),
+    runId: nonEmptyString(80),
+    score: statSchema,
+    status: z.enum(["passed", "failed"]),
+    suiteId: z.enum(workerCalibrationSuiteValues),
+    totalCheckCount: z.number().int().min(0).max(128),
+    totalSliceCount: z.number().int().min(1).max(64),
+    workspacePath: nonEmptyString(400),
+    xpAwarded: z.number().int().min(0).max(5000),
+  })
+  .strict();
+
+export const workerCalibrationSchema = z
+  .object({
+    history: z.array(workerCalibrationRecordSchema).max(16).default([]),
+  })
+  .strict()
+  .default({ history: [] });
+
 export const registeredWorkerSchema = z
   .object({
     backend: workerBackendSchema,
+    calibration: workerCalibrationSchema.default({ history: [] }),
     class: nonEmptyString(80),
     enabled: z.boolean().default(true),
     id: workerIdSchema,
@@ -145,6 +180,7 @@ export const registeredWorkerSchema = z
   .strict();
 
 export type RegisteredWorker = z.infer<typeof registeredWorkerSchema>;
+export type WorkerCalibrationRecord = z.infer<typeof workerCalibrationRecordSchema>;
 
 export const workerRegistrySchema = z
   .object({

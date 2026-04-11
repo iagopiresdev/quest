@@ -46,6 +46,9 @@ Current architectural layers:
 - `src/core/runner.ts`
   Runner adapter boundary.
 
+- `src/core/calibration.ts`
+  Built-in worker evaluation suites that must reuse normal run planning and execution instead of inventing a parallel orchestration model.
+
 - `src/core/run-lifecycle.ts`
   Shared lifecycle helpers for run and slice state mutation.
 
@@ -71,7 +74,9 @@ Core planning and schema code must not import CLI concerns.
 The following invariants should stay true:
 
 - A run is created from one immutable spec snapshot.
+- Calibration suites are just typed throwaway specs plus fixtures, not a separate lifecycle model.
 - A slice either has a worker assignment or is explicitly unassigned/blocked.
+- Calibration slices must be independently solvable from a clean base unless the executor grows explicit cross-slice replay semantics.
 - Lifecycle transitions must go through shared helpers when possible.
 - Worker command failure is different from runner unavailability.
 - JSON output is the public CLI contract.
@@ -257,6 +262,7 @@ Rules:
 - test data should be built from small overrideable helpers
 - CLI tests should verify the stable JSON contract
 - executor tests should cover both success and failure state persistence
+- calibration tests should exercise both passed and failed suites through the real CLI path
 - storage tests should assert typed error behavior for missing or invalid files
 - process and workspace boundary code should have direct unit coverage for edge cases like timeouts, truncation, env filtering, path canonicalization, and tampered persisted state
 

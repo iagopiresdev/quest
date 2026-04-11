@@ -62,6 +62,57 @@ export function createCliContext(): CliTestContext {
   };
 }
 
+export function createCalibrationCommandScript(root: string): string {
+  const scriptPath = join(root, "calibration-worker.ts");
+  writeFileSync(
+    scriptPath,
+    [
+      "const sliceId = Bun.env.QUEST_SLICE_ID;",
+      "const workspace = Bun.env.QUEST_SLICE_WORKSPACE;",
+      "",
+      "if (!sliceId || !workspace) {",
+      '  throw new Error("missing quest runner slice context");',
+      "}",
+      "",
+      "switch (sliceId) {",
+      '  case "fix-sum": {',
+      '    const path = workspace + "/src/sum.ts";',
+      "    const text = await Bun.file(path).text();",
+      '    await Bun.write(path, text.replace("a + b + 1", "a + b"));',
+      '    console.log("fixed sum implementation");',
+      "    break;",
+      "  }",
+      '  case "add-empty-echo-test": {',
+      '    const path = workspace + "/test/echo.test.ts";',
+      "    const text = await Bun.file(path).text();",
+      '    if (!text.includes("echo(\\"\\"")) {',
+      "      await Bun.write(",
+      "        path,",
+      '        text.trimEnd() + \'\\n\\ntest("echo keeps empty strings stable", () => {\\n  expect(echo("")).toBe("");\\n});\\n\',',
+      "      );",
+      "    }",
+      '    console.log("added empty echo regression test");',
+      "    break;",
+      "  }",
+      '  case "update-readme": {',
+      '    const path = workspace + "/README.md";',
+      "    await Bun.write(",
+      "      path,",
+      '      ["# Training Grounds", "", "The `sum(a, b)` helper returns the exact arithmetic sum.", ""].join("\\n"),',
+      "    );",
+      '    console.log("updated readme");',
+      "    break;",
+      "  }",
+      "  default:",
+      '    throw new Error("unexpected slice: " + sliceId);',
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return scriptPath;
+}
+
 export function runCli(
   context: CliTestContext,
   args: string[],
@@ -99,6 +150,9 @@ export function createWorker(
       profile: "gpt-5.4",
       runner: "codex",
       toolPolicy: { allow: [], deny: [] },
+    },
+    calibration: {
+      history: [],
     },
     class: "engineer",
     enabled: true,
@@ -177,6 +231,22 @@ export function createWorkerJson(
   backendOverrides: Partial<RegisteredWorker["backend"]> = {},
 ): string {
   return JSON.stringify(createWorker(overrides, backendOverrides));
+}
+
+export function createLocalCommandWorkerJson(id: string, command: string[]): string {
+  return createWorkerJson(
+    {
+      id,
+      name: id,
+      title: "Training Ground Worker",
+    },
+    {
+      adapter: "local-command",
+      command,
+      profile: "local-command",
+      runner: "custom",
+    },
+  );
 }
 
 export function createWorkerForRunner(

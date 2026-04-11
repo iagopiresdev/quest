@@ -46,6 +46,18 @@ export function resolveQuestWorkspacesRoot(
   return join(resolveQuestStateRoot(options.stateRoot), "workspaces");
 }
 
+export function resolveQuestCalibrationsRoot(
+  options: { explicitCalibrationsRoot?: string; stateRoot?: string } = {},
+): string {
+  const configuredPath =
+    options.explicitCalibrationsRoot?.trim() || Bun.env.QUEST_RUNNER_CALIBRATIONS_ROOT?.trim();
+  if (configuredPath) {
+    return resolve(configuredPath);
+  }
+
+  return join(resolveQuestStateRoot(options.stateRoot), "calibrations");
+}
+
 export function resolveQuestRunPath(
   runId: string,
   options: {

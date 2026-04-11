@@ -43,6 +43,21 @@ export class WorkerRegistry {
     return document.workers;
   }
 
+  async getWorker(workerId: string): Promise<RegisteredWorker> {
+    const document = await this.read();
+    const worker = document.workers.find((candidate) => candidate.id === workerId);
+    if (!worker) {
+      throw new QuestDomainError({
+        code: "quest_worker_not_found",
+        details: { workerId },
+        message: `Worker ${workerId} is not registered`,
+        statusCode: 1,
+      });
+    }
+
+    return worker;
+  }
+
   async upsertWorker(candidate: RegisteredWorker): Promise<RegisteredWorker> {
     const parsedWorker = registeredWorkerSchema.safeParse(candidate);
     if (!parsedWorker.success) {
