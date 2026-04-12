@@ -175,6 +175,61 @@ test("quest cli adds a hermes worker from flags", () => {
   });
 });
 
+test("quest cli shows worker status with strengths and calibration summary", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const status = runCli(context, ["workers", "status", "--id", "ember"]);
+  expect(status.code).toBe(0);
+  const payload = JSON.parse(status.stdout);
+
+  expect(payload.worker.id).toBe("ember");
+  expect(payload.status.strengths).toHaveLength(3);
+  expect(payload.status.strengths[0].score).toBeGreaterThanOrEqual(
+    payload.status.strengths[1].score,
+  );
+  expect(payload.status.calibrationHistoryCount).toBe(0);
+});
+
+test("quest cli updates worker strengths and runtime settings", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const updated = runCli(context, [
+    "workers",
+    "update",
+    "--id",
+    "ember",
+    "--name",
+    "Quest Worker",
+    "--coding",
+    "95",
+    "--testing",
+    "88",
+    "--cpu-cost",
+    "1",
+    "--profile",
+    "gpt-5.4-mini",
+    "--reasoning-effort",
+    "medium",
+    "--max-output-tokens",
+    "6000",
+    "--tags",
+    "typescript,hotfiles",
+  ]);
+
+  expect(updated.code).toBe(0);
+  const worker = JSON.parse(updated.stdout).worker;
+  expect(worker.name).toBe("Quest Worker");
+  expect(worker.stats.coding).toBe(95);
+  expect(worker.stats.testing).toBe(88);
+  expect(worker.resources.cpuCost).toBe(1);
+  expect(worker.backend.profile).toBe("gpt-5.4-mini");
+  expect(worker.backend.runtime.reasoningEffort).toBe("medium");
+  expect(worker.backend.runtime.maxOutputTokens).toBe(6000);
+  expect(worker.tags).toEqual(["typescript", "hotfiles"]);
+});
+
 test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
@@ -267,6 +322,57 @@ test("quest cli can force planning and runs to a specific worker", () => {
   expect(createdRun.plan.waves[0].slices[0].assignedWorkerId).toBe("rook");
   expect(createdRun.spec.slices[0].preferredWorkerId).toBe("rook");
   expect(createdRun.events[0].details.forcedWorkerId).toBe("rook");
+});
+
+test("quest cli can explain planner worker ranking", () => {
+  const context = trackContext();
+  expect(
+    runCli(context, ["workers", "upsert", "--stdin"], {
+      input: createWorkerJson({ id: "ember", name: "Ember" }),
+    }).code,
+  ).toBe(0);
+  expect(
+    runCli(context, ["workers", "upsert", "--stdin"], {
+      input: createWorkerJson(
+        {
+          id: "scribe",
+          name: "Scribe",
+          stats: {
+            coding: 45,
+            contextEndurance: 60,
+            docs: 96,
+            mergeSafety: 72,
+            research: 70,
+            speed: 55,
+            testing: 50,
+          },
+        },
+        { runner: "codex" },
+      ),
+    }).code,
+  ).toBe(0);
+
+  const plan = runCli(context, ["plan", "--explain", "--stdin"], {
+    input: JSON.stringify(
+      createSpec({
+        slices: [
+          createSlice({
+            discipline: "docs",
+            goal: "Write feature notes",
+            id: "docs",
+            owns: ["docs/features/**"],
+            title: "Docs",
+          }),
+        ],
+        title: "Explain planner",
+      }),
+    ),
+  });
+
+  expect(plan.code).toBe(0);
+  const payload = JSON.parse(plan.stdout);
+  expect(payload.explanation.slices[0].sliceId).toBe("docs");
+  expect(payload.explanation.slices[0].candidates[0].workerId).toBe("scribe");
 });
 
 test("quest cli configures webhook sinks and delivers run events", async () => {

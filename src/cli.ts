@@ -16,8 +16,8 @@ import {
   webhookSinkSchema,
 } from "./core/observability/schema";
 import { ObservabilityStore } from "./core/observability/store";
-import { planQuest } from "./core/planning/planner";
-import { questSpecSchema } from "./core/planning/spec-schema";
+import { planQuest, rankWorkersForSlice } from "./core/planning/planner";
+import { type QuestSpec, questSpecSchema } from "./core/planning/spec-schema";
 import { QuestRunCleanup } from "./core/runs/cleanup";
 import { QuestRunExecutor } from "./core/runs/executor";
 import { QuestRunIntegrator } from "./core/runs/integrator";
@@ -37,6 +37,12 @@ import {
   resolveWorkerRegistryPath,
 } from "./core/storage";
 import { listCalibrationSuites, WorkerCalibrator } from "./core/workers/calibration";
+import {
+  applyWorkerUpdate,
+  getLatestCalibration,
+  topWorkerStrengths,
+  type WorkerUpdate,
+} from "./core/workers/management";
 import {
   createCodexWorkerPreset,
   createHermesWorkerPreset,
@@ -77,6 +83,8 @@ type QuestCliCommand =
   | "workers:add:codex"
   | "workers:add:hermes"
   | "workers:calibrate"
+  | "workers:status"
+  | "workers:update"
   | "workers:list"
   | "workers:upsert";
 
@@ -136,6 +144,18 @@ type RunDetailSummary = {
   updatedAt: string;
   waves: number;
   slices: RunSliceSummary[];
+};
+
+type WorkerStatusSummary = {
+  calibrationHistoryCount: number;
+  enabled: boolean;
+  id: string;
+  latestCalibration: ReturnType<typeof getLatestCalibration>;
+  name: string;
+  runner: RegisteredWorker["backend"]["runner"];
+  strengths: ReturnType<typeof topWorkerStrengths>;
+  title: string;
+  trustRating: number;
 };
 
 function printUsage(): void {
@@ -299,6 +319,129 @@ function parseWorkerRuntime(args: string[]): RegisteredWorker["backend"]["runtim
   return workerRuntimeSchema.parse(runtimeCandidate);
 }
 
+function parseWorkerStatOverrides(args: string[]): Partial<RegisteredWorker["stats"]> {
+  const stats: Partial<RegisteredWorker["stats"]> = {};
+  const assignStat = (key: keyof RegisteredWorker["stats"], flag: string): void => {
+    const value = parseIntegerOptionValue(args, flag);
+    if (value !== undefined) {
+      stats[key] = value;
+    }
+  };
+
+  assignStat("coding", "--coding");
+  assignStat("testing", "--testing");
+  assignStat("docs", "--docs");
+  assignStat("research", "--research");
+  assignStat("speed", "--speed");
+  assignStat("mergeSafety", "--merge-safety");
+  assignStat("contextEndurance", "--context-endurance");
+  return stats;
+}
+
+function parseWorkerResourceOverrides(args: string[]): Partial<RegisteredWorker["resources"]> {
+  const resources: Partial<RegisteredWorker["resources"]> = {};
+  const assignResource = (key: keyof RegisteredWorker["resources"], flag: string): void => {
+    const value = parseIntegerOptionValue(args, flag);
+    if (value !== undefined) {
+      resources[key] = value;
+    }
+  };
+
+  assignResource("cpuCost", "--cpu-cost");
+  assignResource("memoryCost", "--memory-cost");
+  assignResource("gpuCost", "--gpu-cost");
+  assignResource("maxParallel", "--max-parallel");
+  return resources;
+}
+
+function parseWorkerUpdate(args: string[]): WorkerUpdate {
+  const stats = parseWorkerStatOverrides(args);
+  const resources = parseWorkerResourceOverrides(args);
+  const runtime = parseWorkerRuntime(args);
+  let enabled: boolean | undefined;
+  if (hasFlag(args, "--enable")) {
+    enabled = true;
+  } else if (hasFlag(args, "--disable")) {
+    enabled = false;
+  }
+  const tagsOption = findOptionValue(args, "--tags");
+  const trustRating = parseNumberOptionValue(args, "--trust-rating");
+  const level = parseIntegerOptionValue(args, "--level");
+  const xp = parseIntegerOptionValue(args, "--xp");
+
+  const update: WorkerUpdate = {};
+  const name = findOptionValue(args, "--name");
+  const title = findOptionValue(args, "--title");
+  const workerClass = findOptionValue(args, "--class");
+  const voice = findOptionValue(args, "--voice");
+  const approach = findOptionValue(args, "--approach");
+  const personaPrompt = findOptionValue(args, "--prompt");
+
+  if (enabled !== undefined) update.enabled = enabled;
+  if (name) update.name = name;
+  if (title) update.title = title;
+  if (workerClass) update.workerClass = workerClass;
+  if (voice) update.voice = voice;
+  if (approach) update.approach = approach;
+  if (personaPrompt) update.personaPrompt = personaPrompt;
+  if (Object.keys(stats).length > 0) update.stats = stats;
+  if (Object.keys(resources).length > 0) update.resources = resources;
+  if (tagsOption !== undefined) update.tags = parseCommaSeparatedValues(tagsOption);
+  if (trustRating !== undefined) update.trustRating = trustRating;
+  if (level !== undefined) update.level = level;
+  if (xp !== undefined) update.xp = xp;
+
+  const backend: NonNullable<WorkerUpdate["backend"]> = {};
+  const profile = findOptionValue(args, "--profile");
+  const executable = findOptionValue(args, "--executable");
+  const baseUrl = findOptionValue(args, "--base-url");
+  const allowTools = findOptionValue(args, "--allow-tools");
+  const denyTools = findOptionValue(args, "--deny-tools");
+
+  if (profile) backend.profile = profile;
+  if (executable) backend.executable = executable;
+  if (baseUrl) backend.baseUrl = baseUrl;
+  if (runtime) backend.runtime = runtime;
+  if (allowTools !== undefined) backend.toolAllow = parseCommaSeparatedValues(allowTools);
+  if (denyTools !== undefined) backend.toolDeny = parseCommaSeparatedValues(denyTools);
+  if (Object.keys(backend).length > 0) update.backend = backend;
+
+  return update;
+}
+
+function buildWorkerStatusSummary(worker: RegisteredWorker): WorkerStatusSummary {
+  return {
+    calibrationHistoryCount: worker.calibration.history.length,
+    enabled: worker.enabled,
+    id: worker.id,
+    latestCalibration: getLatestCalibration(worker),
+    name: worker.name,
+    runner: worker.backend.runner,
+    strengths: topWorkerStrengths(worker),
+    title: worker.title,
+    trustRating: worker.trust.rating,
+  };
+}
+
+function buildPlanExplanation(spec: QuestSpec, workers: RegisteredWorker[]) {
+  return {
+    slices: spec.slices.map((slice) => ({
+      candidates: rankWorkersForSlice(slice, workers).map((assignment) => ({
+        runner: assignment.worker.backend.runner,
+        score: assignment.score,
+        strengths: topWorkerStrengths(assignment.worker),
+        trustRating: assignment.worker.trust.rating,
+        workerId: assignment.worker.id,
+      })),
+      discipline: slice.discipline,
+      preferredRunner: slice.preferredRunner ?? null,
+      preferredWorkerId: slice.preferredWorkerId ?? null,
+      sliceId: slice.id,
+      title: slice.title,
+    })),
+  };
+}
+
 function parseObservableEventTypes(value: string | undefined): ObservableEventType[] {
   return parseCommaSeparatedValues(value).map((entry) => observableEventTypeSchema.parse(entry));
 }
@@ -455,7 +598,7 @@ function buildCodexWorker(args: string[]): RegisteredWorker {
   if (voice) input.voice = voice;
   if (workerClass) input.workerClass = workerClass;
 
-  return createCodexWorkerPreset(input);
+  return applyWorkerUpdate(createCodexWorkerPreset(input), parseWorkerUpdate(args));
 }
 
 function buildHermesWorker(args: string[]): RegisteredWorker {
@@ -498,7 +641,7 @@ function buildHermesWorker(args: string[]): RegisteredWorker {
   if (voice) input.voice = voice;
   if (workerClass) input.workerClass = workerClass;
 
-  return createHermesWorkerPreset(input);
+  return applyWorkerUpdate(createHermesWorkerPreset(input), parseWorkerUpdate(args));
 }
 
 function summarizeSliceState(slice: QuestRunSliceState): RunSliceSummary {
@@ -940,11 +1083,26 @@ async function runSetup(
       pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
       pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
       pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
+      pushOption(workerArgs, "--tags", findOptionValue(args, "--tags"));
       pushOption(workerArgs, "--reasoning-effort", findOptionValue(args, "--reasoning-effort"));
       pushOption(workerArgs, "--max-output-tokens", findOptionValue(args, "--max-output-tokens"));
       pushOption(workerArgs, "--temperature", findOptionValue(args, "--temperature"));
       pushOption(workerArgs, "--top-p", findOptionValue(args, "--top-p"));
       pushOption(workerArgs, "--context-window", findOptionValue(args, "--context-window"));
+      pushOption(workerArgs, "--coding", findOptionValue(args, "--coding"));
+      pushOption(workerArgs, "--testing", findOptionValue(args, "--testing"));
+      pushOption(workerArgs, "--docs", findOptionValue(args, "--docs"));
+      pushOption(workerArgs, "--research", findOptionValue(args, "--research"));
+      pushOption(workerArgs, "--speed", findOptionValue(args, "--speed"));
+      pushOption(workerArgs, "--merge-safety", findOptionValue(args, "--merge-safety"));
+      pushOption(workerArgs, "--context-endurance", findOptionValue(args, "--context-endurance"));
+      pushOption(workerArgs, "--cpu-cost", findOptionValue(args, "--cpu-cost"));
+      pushOption(workerArgs, "--memory-cost", findOptionValue(args, "--memory-cost"));
+      pushOption(workerArgs, "--gpu-cost", findOptionValue(args, "--gpu-cost"));
+      pushOption(workerArgs, "--max-parallel", findOptionValue(args, "--max-parallel"));
+      pushOption(workerArgs, "--trust-rating", findOptionValue(args, "--trust-rating"));
+      pushOption(workerArgs, "--level", findOptionValue(args, "--level"));
+      pushOption(workerArgs, "--xp", findOptionValue(args, "--xp"));
       findOptionValues(args, "--provider-option").forEach((entry) => {
         workerArgs.push("--provider-option", entry);
       });
@@ -1075,8 +1233,33 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
       return ["Workers", ...workers.map((worker) => `  - ${formatWorkerLine(worker)}`)].join("\n");
     }
+    case "workers:status": {
+      const worker = candidate.worker as RegisteredWorker | undefined;
+      const status = candidate.status as WorkerStatusSummary | undefined;
+      if (!worker || !status) {
+        return JSON.stringify(value, null, 2);
+      }
+
+      return [
+        `Worker ${worker.id}`,
+        `  name: ${worker.name}`,
+        `  title: ${worker.title}`,
+        `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
+        `  profile: ${worker.backend.profile}`,
+        `  enabled: ${worker.enabled}`,
+        `  trust: ${worker.trust.rating.toFixed(2)}`,
+        `  level/xp: ${worker.progression.level}/${worker.progression.xp}`,
+        `  strengths: ${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+        `  latest calibration: ${
+          status.latestCalibration
+            ? `${status.latestCalibration.suiteId} ${status.latestCalibration.status} ${status.latestCalibration.score}`
+            : "none"
+        }`,
+      ].join("\n");
+    }
     case "workers:add:codex":
     case "workers:add:hermes":
+    case "workers:update":
     case "workers:upsert": {
       const worker = candidate.worker as RegisteredWorker | undefined;
       if (!worker) {
@@ -1192,11 +1375,26 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
             }>;
           }
         | undefined;
+      const explanation = candidate.explanation as
+        | {
+            slices: Array<{
+              candidates: Array<{
+                runner: string;
+                score: number;
+                strengths: Array<{ key: string; score: number }>;
+                trustRating: number;
+                workerId: string;
+              }>;
+              discipline: string;
+              sliceId: string;
+            }>;
+          }
+        | undefined;
       if (!plan) {
         return JSON.stringify(value, null, 2);
       }
 
-      return [
+      const lines = [
         `Plan: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
         ...plan.waves.map(
           (wave) =>
@@ -1206,7 +1404,21 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
         ),
         ...plan.unassigned.map((slice) => `  unassigned: ${slice.id} (${slice.reason})`),
         ...plan.warnings.map((warning) => `  warning: ${warning}`),
-      ].join("\n");
+      ];
+
+      if (explanation) {
+        lines.push("", "Worker candidates");
+        explanation.slices.forEach((slice) => {
+          lines.push(`  ${slice.sliceId} (${slice.discipline})`);
+          slice.candidates.slice(0, 3).forEach((candidateEntry) => {
+            lines.push(
+              `    - ${candidateEntry.workerId} ${candidateEntry.runner} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+            );
+          });
+        });
+      }
+
+      return lines.join("\n");
     }
     case "run":
     case "runs:status":
@@ -1346,7 +1558,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "setup",
     run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--hermes-base-url <url>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--hermes-base-url <url>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",
@@ -1565,7 +1777,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:add:hermes",
@@ -1576,7 +1788,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:calibrate",
@@ -1602,10 +1814,31 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest workers calibrate --id <worker-id> [--suite <training-grounds-v1>] [--dry-run] [--list-suites] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--state-root <path>]",
   },
   {
+    id: "workers:status",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "status",
+    run: async ({ args, registry }) => {
+      const worker = await registry.getWorker(requireOptionValue(args, "--id", "--id <worker-id>"));
+      return { status: buildWorkerStatusSummary(worker), worker };
+    },
+    usage: "quest workers status --id <worker-id> [--registry <path>]",
+  },
+  {
     id: "workers:list",
     matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "list",
     run: async ({ registry }) => ({ workers: await registry.listWorkers() }),
     usage: "quest workers list [--registry <path>]",
+  },
+  {
+    id: "workers:update",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "update",
+    run: async ({ args, registry }) => {
+      const workerId = requireOptionValue(args, "--id", "--id <worker-id>");
+      const worker = await registry.getWorker(workerId);
+      const updated = applyWorkerUpdate(worker, parseWorkerUpdate(args));
+      return { worker: await registry.upsertWorker(updated) };
+    },
+    usage:
+      "quest workers update --id <worker-id> [--enable|--disable] [--name <name>] [--title <title>] [--class <class>] [--voice <voice>] [--approach <text>] [--prompt <text>] [--tags <a,b>] [--profile <model>] [--executable <path>] [--base-url <url>] [--allow-tools <a,b>] [--deny-tools <a,b>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--registry <path>]",
   },
   {
     id: "workers:upsert",
@@ -1636,9 +1869,12 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         throw new Error(`Forced worker ${workerId} is not registered`);
       }
 
-      return { plan: planQuest(plannedSpec, selectedWorkers) };
+      const plan = planQuest(plannedSpec, selectedWorkers);
+      return hasFlag(args, "--explain")
+        ? { explanation: buildPlanExplanation(plannedSpec, selectedWorkers), plan }
+        : { plan };
     },
-    usage: "quest plan --file <path> [--worker-id <worker-id>] [--registry <path>]",
+    usage: "quest plan --file <path> [--worker-id <worker-id>] [--explain] [--registry <path>]",
   },
   {
     id: "run",

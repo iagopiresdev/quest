@@ -298,6 +298,9 @@ cat worker.json | quest workers upsert --stdin
 quest workers add codex \
   --name "Quest Codex" \
   --profile gpt-5.4 \
+  --coding 90 \
+  --testing 72 \
+  --merge-safety 84 \
   --reasoning-effort high \
   --max-output-tokens 12000 \
   --temperature 0.2 \
@@ -310,11 +313,24 @@ quest workers add hermes \
   --name "Quest Hermes" \
   --base-url http://127.0.0.1:8000/v1 \
   --profile hermes-local \
+  --testing 92 \
+  --gpu-cost 1 \
   --reasoning-effort medium \
   --max-output-tokens 4096 \
   --temperature 0.3 \
   --top-p 0.8 \
   --provider-option frequency_penalty=0.5
+
+# inspect one worker with strengths and calibration summary
+quest workers status --id quest-codex
+
+# tune a worker after calibration or real runs
+quest workers update \
+  --id quest-codex \
+  --coding 95 \
+  --testing 80 \
+  --trust-rating 0.84 \
+  --profile gpt-5.4-mini
 
 # list configured observability sinks
 quest observability sinks list
@@ -358,6 +374,9 @@ cat spec.json | quest plan --stdin
 
 # plan using only one registered worker
 cat spec.json | quest plan --stdin --worker-id quest-codex
+
+# explain why workers rank the way they do for each slice
+cat spec.json | quest plan --stdin --explain
 
 # plan a quest from file
 quest plan --file ./spec.json

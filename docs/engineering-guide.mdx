@@ -34,6 +34,9 @@ Read [Design System](/docs/design-system) first when the question is about proje
 7. Keep runtime controls typed at the worker boundary.
    Reasoning, token, sampling, and context-window settings belong in the persisted worker model first. CLI flags and provider-specific launch args should compile down from that shared runtime object instead of inventing backend-only transport fields.
 
+8. Keep worker tuning explicit and inspectable.
+   If the planner is meant to choose “the best worker for the task,” operators need a first-class way to inspect worker strengths, update them, and explain ranking decisions without editing raw JSON by hand.
+
 ## System Design
 
 Current architectural layers:
@@ -52,6 +55,9 @@ Current architectural layers:
 
 - `src/core/runs/adapters/*`
   Provider-specific translation logic. Codex, Hermes, Claude, OpenClaw, and local-command implementations belong here so the executor coordinates lifecycle instead of learning provider syntax.
+
+- planner explanation and worker tuning
+  These should reuse the same scoring and worker-update helpers as the runtime path instead of inventing a second ranking model in the CLI.
 
 - `src/core/observability/*`
   Event schemas, sink config, delivery logs, and sink handlers. This layer observes run state; it must not become a second execution path.
@@ -124,6 +130,7 @@ Avoid:
 - Adding framework-level dependencies for problems a small helper can solve.
 - Letting adapters leak into the core data model.
 - Letting CLI parsing become the only place a backend feature exists. If a runtime flag matters after worker creation, it belongs in the worker schema.
+- Letting operators tune worker strengths only through raw registry JSON. If the strengths drive orchestration, the CLI must expose them cleanly too.
 - Comments that restate the code without adding the operational reason behind it.
 
 ## Typing Rules

@@ -49,7 +49,7 @@ export type QuestPlan = {
   workspace: string;
 };
 
-type WorkerAssignment = {
+export type WorkerAssignment = {
   score: number;
   worker: RegisteredWorker;
 };
@@ -116,72 +116,22 @@ function collectConflictPaths(
   return [...conflicts].sort();
 }
 
-function buildWorkerCandidates(
+export function isWorkerCompatibleWithSlice(
+  worker: RegisteredWorker,
   slice: QuestSliceSpec,
-  workers: RegisteredWorker[],
-  warnings: QuestPlanWarning[],
-): WorkerAssignment[] {
-  const enabledWorkers = workers.filter((worker) => worker.enabled);
-  const compatibleWorkers = enabledWorkers.filter((worker) => {
-    if (slice.preferredRunner && worker.backend.runner !== slice.preferredRunner) {
-      return false;
-    }
-
-    return true;
-  });
-
-  const sortCandidates = (candidates: RegisteredWorker[]): WorkerAssignment[] =>
-    [...candidates]
-      .sort(
-        (left, right) =>
-          scoreWorkerForSlice(right, slice, false) - scoreWorkerForSlice(left, slice, false),
-      )
-      .map((worker) => ({
-        score: scoreWorkerForSlice(worker, slice, false),
-        worker,
-      }));
-
-  if (slice.preferredWorkerId) {
-    const preferredWorker = enabledWorkers.find((worker) => worker.id === slice.preferredWorkerId);
-    if (!preferredWorker) {
-      warnings.push({
-        code: "preferred_worker_missing",
-        message: `Preferred worker ${slice.preferredWorkerId} is not registered or enabled`,
-        sliceId: slice.id,
-      });
-    } else if (slice.preferredRunner && preferredWorker.backend.runner !== slice.preferredRunner) {
-      warnings.push({
-        code: "preferred_worker_incompatible",
-        message: `Preferred worker ${slice.preferredWorkerId} uses ${preferredWorker.backend.runner}, not ${slice.preferredRunner}`,
-        sliceId: slice.id,
-      });
-    } else {
-      const fallbackWorkers = compatibleWorkers.filter(
-        (worker) => worker.id !== preferredWorker.id,
-      );
-      return [
-        {
-          score: scoreWorkerForSlice(preferredWorker, slice, true),
-          worker: preferredWorker,
-        },
-        ...sortCandidates(fallbackWorkers),
-      ];
-    }
+): boolean {
+  if (!worker.enabled) {
+    return false;
   }
 
-  if (compatibleWorkers.length === 0) {
-    warnings.push({
-      code: "no_worker_available",
-      message: `No enabled worker is compatible with slice ${slice.id}`,
-      sliceId: slice.id,
-    });
-    return [];
+  if (slice.preferredRunner && worker.backend.runner !== slice.preferredRunner) {
+    return false;
   }
 
-  return sortCandidates(compatibleWorkers);
+  return true;
 }
 
-function scoreWorkerForSlice(
+export function scoreWorkerForSlice(
   worker: RegisteredWorker,
   slice: QuestSliceSpec,
   preferredWorker: boolean,
@@ -206,6 +156,72 @@ function scoreWorkerForSlice(
       resourcePenalty
     ).toFixed(2),
   );
+}
+
+export function rankWorkersForSlice(
+  slice: QuestSliceSpec,
+  workers: RegisteredWorker[],
+): WorkerAssignment[] {
+  return [...workers]
+    .filter((worker) => isWorkerCompatibleWithSlice(worker, slice))
+    .sort(
+      (left, right) =>
+        scoreWorkerForSlice(right, slice, false) - scoreWorkerForSlice(left, slice, false),
+    )
+    .map((worker) => ({
+      score: scoreWorkerForSlice(worker, slice, false),
+      worker,
+    }));
+}
+
+function buildWorkerCandidates(
+  slice: QuestSliceSpec,
+  workers: RegisteredWorker[],
+  warnings: QuestPlanWarning[],
+): WorkerAssignment[] {
+  const enabledWorkers = workers.filter((worker) => worker.enabled);
+  const compatibleWorkers = enabledWorkers.filter((worker) =>
+    isWorkerCompatibleWithSlice(worker, slice),
+  );
+
+  if (slice.preferredWorkerId) {
+    const preferredWorker = enabledWorkers.find((worker) => worker.id === slice.preferredWorkerId);
+    if (!preferredWorker) {
+      warnings.push({
+        code: "preferred_worker_missing",
+        message: `Preferred worker ${slice.preferredWorkerId} is not registered or enabled`,
+        sliceId: slice.id,
+      });
+    } else if (slice.preferredRunner && preferredWorker.backend.runner !== slice.preferredRunner) {
+      warnings.push({
+        code: "preferred_worker_incompatible",
+        message: `Preferred worker ${slice.preferredWorkerId} uses ${preferredWorker.backend.runner}, not ${slice.preferredRunner}`,
+        sliceId: slice.id,
+      });
+    } else {
+      const fallbackWorkers = compatibleWorkers.filter(
+        (worker) => worker.id !== preferredWorker.id,
+      );
+      return [
+        {
+          score: scoreWorkerForSlice(preferredWorker, slice, true),
+          worker: preferredWorker,
+        },
+        ...rankWorkersForSlice(slice, fallbackWorkers),
+      ];
+    }
+  }
+
+  if (compatibleWorkers.length === 0) {
+    warnings.push({
+      code: "no_worker_available",
+      message: `No enabled worker is compatible with slice ${slice.id}`,
+      sliceId: slice.id,
+    });
+    return [];
+  }
+
+  return rankWorkersForSlice(slice, compatibleWorkers);
 }
 
 function assertNoDependencyCycles(spec: QuestSpec): void {
