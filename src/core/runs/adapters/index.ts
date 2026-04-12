@@ -4,6 +4,7 @@ import { CodexCliRunnerAdapter } from "./codex-cli";
 import { DryRunRunnerAdapter } from "./dry-run";
 import { HermesApiRunnerAdapter } from "./hermes-api";
 import { LocalCommandRunnerAdapter } from "./local-command";
+import { OpenClawCliRunnerAdapter } from "./openclaw-cli";
 import type { RunnerAdapter } from "./types";
 
 export type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
@@ -12,6 +13,7 @@ export {
   DryRunRunnerAdapter,
   HermesApiRunnerAdapter,
   LocalCommandRunnerAdapter,
+  OpenClawCliRunnerAdapter,
 };
 
 export class RunnerRegistry {

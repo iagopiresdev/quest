@@ -142,6 +142,80 @@ export function createCodexMockExecutable(
   return scriptPath;
 }
 
+export function createOpenClawMockExecutable(
+  root: string,
+  options: {
+    agentId?: string;
+    captureArgsPath?: string | undefined;
+    gatewayReachable?: boolean;
+    jsonToStderr?: boolean;
+    noisyAgent?: boolean;
+    noisyStatus?: boolean;
+    version?: string;
+    writeFile?: { content: string; path: string } | undefined;
+  } = {},
+): string {
+  const scriptPath = join(root, "openclaw-mock.sh");
+  const version = options.version ?? "OpenClaw 0.0.0-test";
+  const agentId = options.agentId ?? "main";
+  const captureArgsPath = options.captureArgsPath;
+  const gatewayReachable = options.gatewayReachable ?? true;
+  const jsonToStderr = options.jsonToStderr ?? false;
+  const noisyAgent = options.noisyAgent ?? false;
+  const noisyStatus = options.noisyStatus ?? false;
+  const writeFile = options.writeFile;
+  const mutationBlock = writeFile
+    ? [
+        `  target="$QUEST_SLICE_WORKSPACE/${writeFile.path}"`,
+        '  mkdir -p "$(dirname "$target")"',
+        `  cat <<'EOF' > "$target"`,
+        writeFile.content,
+        "EOF",
+      ].join("\n")
+    : "  :";
+
+  writeFileSync(
+    scriptPath,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'if [ "$1" = "--version" ]; then',
+      `  printf '%s\\n' '${version}'`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "status" ] && [ "$2" = "--json" ]; then',
+      ...(noisyStatus ? ["  printf 'plugins booted\\n'"] : []),
+      "  cat <<'EOF'",
+      JSON.stringify({
+        gateway: { reachable: gatewayReachable },
+        agents: { agents: [{ id: agentId }, { id: "codex" }] },
+      }),
+      "EOF",
+      gatewayReachable ? "  exit 0" : "  exit 1",
+      "fi",
+      'if [ "$1" = "agent" ]; then',
+      ...(captureArgsPath ? [`  printf '%s\\n' "$*" > '${captureArgsPath}'`] : []),
+      mutationBlock,
+      ...(noisyAgent ? ["  printf 'plugins booted\\n'"] : []),
+      jsonToStderr ? "  cat >&2 <<'EOF'" : "  cat <<'EOF'",
+      JSON.stringify({
+        result: {
+          payloads: [{ text: "OpenClaw updated the workspace" }],
+          summary: "OpenClaw completed the slice",
+        },
+      }),
+      "EOF",
+      "  exit 0",
+      "fi",
+      "printf 'unsupported openclaw mock command\\n' >&2",
+      "exit 1",
+      "",
+    ].join("\n"),
+    { encoding: "utf8", mode: 0o755 },
+  );
+  return scriptPath;
+}
+
 export function runCli(
   context: CliTestContext,
   args: string[],

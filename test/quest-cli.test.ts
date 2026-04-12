@@ -11,6 +11,7 @@ import {
   createCommand,
   createCommittedRepo,
   createLocalCommandWorkerJson,
+  createOpenClawMockExecutable,
   createSlice,
   createSpec,
   createWorkerJson,
@@ -175,6 +176,47 @@ test("quest cli adds a hermes worker from flags", () => {
   });
 });
 
+test("quest cli adds an openclaw worker from flags", () => {
+  const context = trackContext();
+
+  const added = runCli(context, [
+    "workers",
+    "add",
+    "openclaw",
+    "--name",
+    "Quest OpenClaw",
+    "--agent-id",
+    "main",
+    "--gateway-url",
+    "http://127.0.0.1:4400",
+    "--local",
+    "--profile",
+    "openclaw/main",
+    "--reasoning-effort",
+    "high",
+    "--max-output-tokens",
+    "2048",
+    "--provider-option",
+    "mode=delegated",
+  ]);
+
+  expect(added.code).toBe(0);
+  const worker = JSON.parse(added.stdout).worker;
+  expect(worker.id).toBe("quest-openclaw");
+  expect(worker.backend.adapter).toBe("openclaw-cli");
+  expect(worker.backend.agentId).toBe("main");
+  expect(worker.backend.gatewayUrl).toBe("http://127.0.0.1:4400");
+  expect(worker.backend.local).toBe(true);
+  expect(worker.backend.runner).toBe("openclaw");
+  expect(worker.backend.runtime).toEqual({
+    maxOutputTokens: 2048,
+    providerOptions: {
+      mode: "delegated",
+    },
+    reasoningEffort: "high",
+  });
+});
+
 test("quest cli shows worker status with strengths and calibration summary", () => {
   const context = trackContext();
   expectWorkerUpserted(context);
@@ -333,6 +375,61 @@ test("quest cli setup bootstraps a hermes worker from detected api", async () =>
   } finally {
     server.stop(true);
   }
+});
+
+test("quest cli setup bootstraps an openclaw worker from detected gateway", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot);
+
+  const setup = await runCliAsync(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "openclaw",
+    "--openclaw-executable",
+    openClawExecutable,
+    "--worker-name",
+    "Quest OpenClaw",
+    "--agent-id",
+    "main",
+    "--profile",
+    "openclaw/main",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.doctor.ok).toBe(true);
+  expect(result.createdWorker.id).toBe("quest-openclaw");
+  expect(result.createdWorker.backend.adapter).toBe("openclaw-cli");
+  expect(result.createdWorker.backend.agentId).toBe("main");
+});
+
+test("quest cli doctor tolerates noisy openclaw status output", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    noisyStatus: true,
+  });
+
+  const doctor = runCli(context, [
+    "doctor",
+    "--codex-executable",
+    codexExecutable,
+    "--openclaw-executable",
+    openClawExecutable,
+    "--check-openclaw",
+    "--agent-id",
+    "main",
+  ]);
+
+  expect(doctor.code).toBe(0);
+  const report = JSON.parse(doctor.stdout);
+  expect(
+    report.checks.find((check: { name: string }) => check.name === "openclaw-binary")?.ok,
+  ).toBe(true);
+  expect(
+    report.checks.find((check: { name: string }) => check.name === "openclaw-status")?.ok,
+  ).toBe(true);
 });
 
 test("quest cli can force planning and runs to a specific worker", () => {

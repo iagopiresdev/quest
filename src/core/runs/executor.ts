@@ -10,6 +10,7 @@ import {
   DryRunRunnerAdapter,
   HermesApiRunnerAdapter,
   LocalCommandRunnerAdapter,
+  OpenClawCliRunnerAdapter,
   RunnerRegistry,
 } from "./adapters";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
@@ -160,6 +161,7 @@ export class QuestRunExecutor {
       new LocalCommandRunnerAdapter(),
       new CodexCliRunnerAdapter(secretStore),
       new HermesApiRunnerAdapter(secretStore),
+      new OpenClawCliRunnerAdapter(secretStore),
     ]);
   }
 
@@ -341,15 +343,18 @@ export class QuestRunExecutor {
             const failureSummary = truncatePersistedMessage(
               `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
             );
+            const combinedSummary = truncatePersistedMessage(
+              [result.summary, failureSummary].filter((entry) => entry.length > 0).join("\n\n"),
+            );
             const eventAt = nowIsoString();
             setSliceStatus(sliceState, "failed", {
               completedAt: eventAt,
               lastError: failureSummary,
               lastOutput: {
-                exitCode: failedCheck.exitCode,
-                stderr: failedCheck.stderr,
-                stdout: failedCheck.stdout,
-                summary: failureSummary,
+                exitCode: result.exitCode,
+                stderr: result.stderr,
+                stdout: result.stdout,
+                summary: combinedSummary,
               },
             });
             appendEvent(

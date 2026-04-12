@@ -17,7 +17,7 @@ import { QuestRunStore } from "../src/core/runs/store";
 import { SecretStore } from "../src/core/secret-store";
 import { WorkerRegistry } from "../src/core/workers/registry";
 import type { RegisteredWorker } from "../src/core/workers/schema";
-import { createCommand, createCommittedRepo } from "./helpers";
+import { createCommand, createCommittedRepo, createOpenClawMockExecutable } from "./helpers";
 
 function createWorker(
   id: string,
@@ -467,7 +467,9 @@ test("run executor fails when acceptance checks fail", async () => {
     expect(failedRun.status).toBe("failed");
     expect(failedRun.slices[0]?.status).toBe("failed");
     expect(failedRun.slices[0]?.lastChecks?.[0]?.exitCode).toBe(3);
+    expect(failedRun.slices[0]?.lastOutput?.stdout).toBe("completed:parser:ember");
     expect(failedRun.slices[0]?.lastOutput?.summary).toContain("Acceptance check failed");
+    expect(failedRun.slices[0]?.lastOutput?.summary).toContain("completed:parser:ember");
     expect(failedRun.slices.some((slice) => slice.status === "testing")).toBe(false);
     expect(failedRun.events.some((event) => event.type === "slice_testing_failed")).toBe(true);
   } finally {
@@ -834,6 +836,87 @@ test("run executor completes a planned run with the hermes-api adapter", async (
     expect(readFileSync(join(workspacePath, "sum.ts"), "utf8")).toContain("return a + b;");
   } finally {
     server.stop(true);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor completes a planned run with the openclaw-cli adapter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry, new SecretStore());
+
+  try {
+    const capturedArgsPath = join(root, "openclaw-args.txt");
+    const openClawExecutable = createOpenClawMockExecutable(root, {
+      captureArgsPath: capturedArgsPath,
+      jsonToStderr: true,
+      noisyAgent: true,
+      writeFile: {
+        content: "export const status = 'openclaw-fixed';\n",
+        path: "status.ts",
+      },
+    });
+
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "openclaw-cli", undefined, {
+        agentId: "main",
+        executable: openClawExecutable,
+        profile: "openclaw/main",
+        runner: "openclaw",
+        runtime: {
+          providerOptions: {
+            timeout_seconds: "90",
+            verbose: "on",
+          },
+          reasoningEffort: "medium",
+        },
+      }),
+    );
+    const repositoryRoot = createCommittedRepo(root);
+    writeFileSync(join(repositoryRoot, "status.ts"), "export const status = 'stale';\n", "utf8");
+    Bun.spawnSync({ cmd: ["git", "add", "status.ts"], cwd: repositoryRoot });
+    Bun.spawnSync({ cmd: ["git", "commit", "-m", "Add status.ts"], cwd: repositoryRoot });
+
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Fix status export",
+          id: "fix-status",
+          owns: ["status.ts"],
+          preferredRunner: "openclaw",
+          title: "Fix status",
+        },
+      ],
+      title: "OpenClaw run",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers(), {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    const executed = await executor.executeRun(run.id);
+    const workspacePath = executed.slices[0]?.workspacePath ?? "";
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.summary).toBe("OpenClaw updated the workspace");
+    const capturedArgs = readFileSync(capturedArgsPath, "utf8");
+    expect(capturedArgs).toContain("--thinking medium");
+    expect(capturedArgs).toContain("--timeout 90");
+    expect(capturedArgs).toContain("--verbose on");
+    expect(readFileSync(join(workspacePath, "status.ts"), "utf8")).toContain("openclaw-fixed");
+  } finally {
     rmSync(root, { force: true, recursive: true });
   }
 });

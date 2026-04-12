@@ -18,6 +18,7 @@ import {
 import { ObservabilityStore } from "./core/observability/store";
 import { planQuest, rankWorkersForSlice } from "./core/planning/planner";
 import { type QuestSpec, questSpecSchema } from "./core/planning/spec-schema";
+import { parseOpenClawJsonOutput } from "./core/runs/adapters/openclaw-shared";
 import { QuestRunCleanup } from "./core/runs/cleanup";
 import { QuestRunExecutor } from "./core/runs/executor";
 import { QuestRunIntegrator } from "./core/runs/integrator";
@@ -46,6 +47,7 @@ import {
 import {
   createCodexWorkerPreset,
   createHermesWorkerPreset,
+  createOpenClawWorkerPreset,
   slugifyWorkerId,
 } from "./core/workers/presets";
 import { WorkerRegistry } from "./core/workers/registry";
@@ -87,6 +89,7 @@ type QuestCliCommand =
   | "setup"
   | "workers:add:codex"
   | "workers:add:hermes"
+  | "workers:add:openclaw"
   | "workers:calibrate"
   | "workers:history"
   | "workers:status"
@@ -401,13 +404,21 @@ function parseWorkerUpdate(args: string[]): WorkerUpdate {
   const backend: NonNullable<WorkerUpdate["backend"]> = {};
   const profile = findOptionValue(args, "--profile");
   const executable = findOptionValue(args, "--executable");
+  const agentId = findOptionValue(args, "--agent-id");
   const baseUrl = findOptionValue(args, "--base-url");
+  const gatewayUrl = findOptionValue(args, "--gateway-url");
   const allowTools = findOptionValue(args, "--allow-tools");
   const denyTools = findOptionValue(args, "--deny-tools");
+  const sessionId = findOptionValue(args, "--session-id");
 
+  if (agentId) backend.agentId = agentId;
   if (profile) backend.profile = profile;
   if (executable) backend.executable = executable;
   if (baseUrl) backend.baseUrl = baseUrl;
+  if (gatewayUrl) backend.gatewayUrl = gatewayUrl;
+  if (sessionId) backend.sessionId = sessionId;
+  if (hasFlag(args, "--local")) backend.local = true;
+  if (hasFlag(args, "--no-local")) backend.local = false;
   if (runtime) backend.runtime = runtime;
   if (allowTools !== undefined) backend.toolAllow = parseCommaSeparatedValues(allowTools);
   if (denyTools !== undefined) backend.toolDeny = parseCommaSeparatedValues(denyTools);
@@ -651,6 +662,90 @@ function buildHermesWorker(args: string[]): RegisteredWorker {
   return applyWorkerUpdate(createHermesWorkerPreset(input), parseWorkerUpdate(args));
 }
 
+function buildOpenClawWorker(args: string[]): RegisteredWorker {
+  const name = findOptionValue(args, "--name") ?? "OpenClaw Worker";
+  const authMode = findOptionValue(args, "--auth-mode");
+  const targetEnvVar = findOptionValue(args, "--target-env-var") ?? "OPENCLAW_GATEWAY_TOKEN";
+  let auth: Parameters<typeof createOpenClawWorkerPreset>[0]["auth"];
+  if (authMode === "env-var") {
+    auth = {
+      envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
+      mode: "env-var",
+      targetEnvVar,
+    };
+  } else if (authMode === "secret-store") {
+    auth = {
+      mode: "secret-store",
+      secretRef: requireOptionValue(args, "--secret-ref", "--secret-ref <name>"),
+      targetEnvVar,
+    };
+  }
+
+  const agentId = findOptionValue(args, "--agent-id") ?? "main";
+  const input: Parameters<typeof createOpenClawWorkerPreset>[0] = {
+    agentId,
+    ...(auth ? { auth } : {}),
+    executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
+    gatewayUrl: findOptionValue(args, "--gateway-url") ?? Bun.env.OPENCLAW_GATEWAY_URL,
+    id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "openclaw-worker"),
+    ...(hasFlag(args, "--local") ? { local: true } : {}),
+    name,
+    profile: findOptionValue(args, "--profile") ?? `openclaw/${agentId}`,
+    runtime: parseWorkerRuntime(args),
+    sessionId: findOptionValue(args, "--session-id"),
+    tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")),
+  };
+  const approach = findOptionValue(args, "--approach");
+  const prompt = findOptionValue(args, "--prompt");
+  const title = findOptionValue(args, "--title");
+  const voice = findOptionValue(args, "--voice");
+  const workerClass = findOptionValue(args, "--class");
+
+  if (approach) input.approach = approach;
+  if (prompt) input.prompt = prompt;
+  if (title) input.title = title;
+  if (voice) input.voice = voice;
+  if (workerClass) input.workerClass = workerClass;
+
+  return applyWorkerUpdate(createOpenClawWorkerPreset(input), parseWorkerUpdate(args));
+}
+
+function defaultSetupWorkerName(backend: string): string {
+  if (backend === "hermes") {
+    return "Hermes Worker";
+  }
+
+  if (backend === "openclaw") {
+    return "OpenClaw Worker";
+  }
+
+  return "Codex Worker";
+}
+
+function defaultSetupProfile(backend: string): string {
+  if (backend === "hermes") {
+    return "hermes";
+  }
+
+  if (backend === "openclaw") {
+    return "openclaw/main";
+  }
+
+  return "gpt-5.4";
+}
+
+function buildSetupWorker(backend: string, workerArgs: string[]): RegisteredWorker {
+  if (backend === "hermes") {
+    return buildHermesWorker(workerArgs);
+  }
+
+  if (backend === "openclaw") {
+    return buildOpenClawWorker(workerArgs);
+  }
+
+  return buildCodexWorker(workerArgs);
+}
+
 function summarizeSliceState(slice: QuestRunSliceState): RunSliceSummary {
   return {
     id: slice.sliceId,
@@ -867,6 +962,102 @@ async function checkHermesApi(baseUrl: string): Promise<DoctorCheck> {
   }
 }
 
+async function checkOpenClawExecutable(executable: string): Promise<DoctorCheck> {
+  try {
+    const result = await runSubprocess({
+      cmd: [executable, "--version"],
+      cwd: Bun.env.PWD ?? ".",
+      env: buildProcessEnv(),
+      timeoutMs: 30_000,
+    });
+
+    return {
+      details: {
+        executable,
+        exitCode: result.exitCode,
+        version: result.stdout.trim() || null,
+      },
+      name: "openclaw-binary",
+      ok: result.exitCode === 0,
+    };
+  } catch (error: unknown) {
+    return {
+      details: {
+        executable,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      name: "openclaw-binary",
+      ok: false,
+    };
+  }
+}
+
+async function checkOpenClawStatus(
+  executable: string,
+  options: {
+    agentId?: string | undefined;
+    gatewayUrl?: string | undefined;
+  } = {},
+): Promise<DoctorCheck> {
+  try {
+    const result = await runSubprocess({
+      cmd: [executable, "status", "--json"],
+      cwd: Bun.env.PWD ?? ".",
+      env: buildProcessEnv(
+        options.gatewayUrl ? { OPENCLAW_GATEWAY_URL: options.gatewayUrl } : undefined,
+      ),
+      timeoutMs: 30_000,
+    });
+    if (result.exitCode !== 0) {
+      return {
+        details: {
+          executable,
+          exitCode: result.exitCode,
+          stderr: result.stderr.trim() || null,
+          stdout: result.stdout.trim() || null,
+        },
+        name: "openclaw-status",
+        ok: false,
+      };
+    }
+
+    const parsed = parseOpenClawJsonOutput(result.stdout, result.stderr) as {
+      agents?: { agents?: Array<{ id?: string }> };
+      gateway?: { reachable?: boolean; url?: string };
+    };
+    const agentIds =
+      parsed.agents?.agents
+        ?.map((agent) => (typeof agent.id === "string" ? agent.id : null))
+        .filter((agentId): agentId is string => agentId !== null) ?? [];
+    const agentExists =
+      options.agentId === undefined ||
+      options.agentId.length === 0 ||
+      agentIds.includes(options.agentId);
+
+    return {
+      details: {
+        agentExists,
+        agentId: options.agentId ?? null,
+        executable,
+        gatewayReachable: parsed.gateway?.reachable ?? null,
+        gatewayUrl: parsed.gateway?.url ?? null,
+      },
+      name: "openclaw-status",
+      ok: (parsed.gateway?.reachable ?? false) && agentExists,
+    };
+  } catch (error: unknown) {
+    return {
+      details: {
+        agentId: options.agentId ?? null,
+        executable,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      name: "openclaw-status",
+      ok: false,
+    };
+  }
+}
+
 async function runDoctor(
   args: string[],
   secretStore: SecretStore,
@@ -882,6 +1073,17 @@ async function runDoctor(
     findOptionValue(args, "--codex-executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE ?? "codex";
   const hermesBaseUrl =
     findOptionValue(args, "--hermes-base-url") ?? Bun.env.QUEST_RUNNER_HERMES_BASE_URL ?? null;
+  const openClawExecutable =
+    findOptionValue(args, "--openclaw-executable") ??
+    Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE ??
+    "openclaw";
+  const openClawGatewayUrl =
+    findOptionValue(args, "--gateway-url") ?? Bun.env.OPENCLAW_GATEWAY_URL ?? null;
+  const openClawAgentId = findOptionValue(args, "--agent-id") ?? undefined;
+  const shouldCheckOpenClaw =
+    (findOptionValue(args, "--backend") ?? "") === "openclaw" ||
+    hasFlag(args, "--check-openclaw") ||
+    findOptionValue(args, "--openclaw-executable") !== undefined;
   const writableChecks = await Promise.all(
     dedupePaths([
       stateRoot,
@@ -915,6 +1117,15 @@ async function runDoctor(
   checks.push(codexLogin);
   if (hermesBaseUrl) {
     checks.push(await checkHermesApi(hermesBaseUrl));
+  }
+  if (shouldCheckOpenClaw) {
+    checks.push(await checkOpenClawExecutable(openClawExecutable));
+    checks.push(
+      await checkOpenClawStatus(openClawExecutable, {
+        agentId: openClawAgentId,
+        gatewayUrl: openClawGatewayUrl ?? undefined,
+      }),
+    );
   }
 
   try {
@@ -1036,21 +1247,22 @@ async function runSetup(
       ((backend === "codex" &&
         checkOk(doctor.checks, "codex-binary") &&
         checkOk(doctor.checks, "codex-login")) ||
-        (backend === "hermes" && checkOk(doctor.checks, "hermes-api"))));
+        (backend === "hermes" && checkOk(doctor.checks, "hermes-api")) ||
+        (backend === "openclaw" &&
+          checkOk(doctor.checks, "openclaw-binary") &&
+          checkOk(doctor.checks, "openclaw-status"))));
 
   const interactive = stdinIsTty() && !hasFlag(args, "--yes");
   let createdWorker: RegisteredWorker | null = null;
 
   if (shouldCreateWorker) {
-    let workerName =
-      findOptionValue(args, "--worker-name") ??
-      (backend === "hermes" ? "Hermes Worker" : "Codex Worker");
-    let profile =
-      findOptionValue(args, "--profile") ?? (backend === "hermes" ? "hermes" : "gpt-5.4");
+    let workerName = findOptionValue(args, "--worker-name") ?? defaultSetupWorkerName(backend);
+    let profile = findOptionValue(args, "--profile") ?? defaultSetupProfile(backend);
     let baseUrl =
       findOptionValue(args, "--base-url") ??
       findOptionValue(args, "--hermes-base-url") ??
       "http://127.0.0.1:8000/v1";
+    let agentId = findOptionValue(args, "--agent-id") ?? "main";
     let createWorker = true;
 
     if (interactive) {
@@ -1060,6 +1272,9 @@ async function runSetup(
         profile = await promptWithDefault("Worker profile", profile);
         if (backend === "hermes") {
           baseUrl = await promptWithDefault("Hermes base URL", baseUrl);
+        }
+        if (backend === "openclaw") {
+          agentId = await promptWithDefault("OpenClaw agent id", agentId);
         }
       }
     }
@@ -1076,9 +1291,12 @@ async function runSetup(
       if (backend === "hermes") {
         workerArgs.push("--base-url", baseUrl);
       }
+      if (backend === "openclaw") {
+        workerArgs.push("--agent-id", agentId);
+      }
       if (backend === "codex") {
         workerArgs.push("--auth-mode", findOptionValue(args, "--auth-mode") ?? "native-login");
-      } else {
+      } else if (backend === "hermes" || backend === "openclaw") {
         pushOption(workerArgs, "--auth-mode", findOptionValue(args, "--auth-mode"));
       }
       pushOption(workerArgs, "--env-var", findOptionValue(args, "--env-var"));
@@ -1090,6 +1308,11 @@ async function runSetup(
       pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
       pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
       pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
+      pushOption(workerArgs, "--gateway-url", findOptionValue(args, "--gateway-url"));
+      pushOption(workerArgs, "--session-id", findOptionValue(args, "--session-id"));
+      if (hasFlag(args, "--local")) {
+        workerArgs.push("--local");
+      }
       pushOption(workerArgs, "--tags", findOptionValue(args, "--tags"));
       pushOption(workerArgs, "--reasoning-effort", findOptionValue(args, "--reasoning-effort"));
       pushOption(workerArgs, "--max-output-tokens", findOptionValue(args, "--max-output-tokens"));
@@ -1115,9 +1338,7 @@ async function runSetup(
       });
 
       createdWorker = await registry.upsertWorker(
-        registeredWorkerSchema.parse(
-          (backend === "hermes" ? buildHermesWorker : buildCodexWorker)(workerArgs),
-        ),
+        registeredWorkerSchema.parse(buildSetupWorker(backend, workerArgs)),
       );
     }
   }
@@ -1398,6 +1619,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "workers:add:codex":
     case "workers:add:hermes":
+    case "workers:add:openclaw":
     case "workers:update":
     case "workers:upsert": {
       const worker = candidate.worker as RegisteredWorker | undefined;
@@ -1624,7 +1846,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "setup",
     run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--hermes-base-url <url>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",
@@ -1678,7 +1900,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         ),
       ),
     usage:
-      "quest doctor [--codex-executable <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
+      "quest doctor [--codex-executable <path>] [--openclaw-executable <path>] [--check-openclaw] [--gateway-url <url>] [--agent-id <id>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
   },
   {
     id: "observability:events:list",
@@ -1855,6 +2077,17 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+  },
+  {
+    id: "workers:add:openclaw",
+    matches: (args) =>
+      args.length >= 3 && args[0] === "workers" && args[1] === "add" && args[2] === "openclaw",
+    run: async ({ args, registry }) => {
+      const worker = registeredWorkerSchema.parse(buildOpenClawWorker(args));
+      return { worker: await registry.upsertWorker(worker) };
+    },
+    usage:
+      "quest workers add openclaw [--agent-id <id> | --session-id <id>] [--gateway-url <url>] [--local] [--executable <path>] [--id <id>] [--name <name>] [--profile <name>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--target-env-var <name>]",
   },
   {
     id: "workers:calibrate",

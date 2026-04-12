@@ -37,6 +37,7 @@ Current adapters:
 - `local-command` for real local subprocess execution
 - `codex-cli` for native Codex CLI execution with optional native login, env-var auth, or keychain-backed secret lookup
 - `hermes-api` for Hermes/OpenAI-compatible HTTP execution with controlled owned-path file writes
+- `openclaw-cli` for real OpenClaw agent execution through the installed `openclaw` CLI
 
 Current built-in worker evaluation:
 - `training-grounds-v1` calibration suite for scoring a worker on throwaway coding, testing, and docs tasks
@@ -230,6 +231,72 @@ Example `hermes-api` worker:
 `hermes-api` calls an OpenAI-compatible `/chat/completions` endpoint, asks Hermes for a strict JSON write plan, and applies only owned-path writes inside the slice workspace. The runner rejects responses that try to write outside the owned paths or escape the slice workspace.
 For Hermes, the same `backend.runtime` object maps onto request-body controls such as `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, and provider-specific extra request fields from `providerOptions`.
 
+Example `openclaw-cli` worker:
+
+```json
+{
+  "id": "ember-openclaw",
+  "name": "Ember OpenClaw",
+  "title": "Guild Operator",
+  "class": "captain",
+  "enabled": true,
+  "backend": {
+    "runner": "openclaw",
+    "profile": "openclaw/codex",
+    "adapter": "openclaw-cli",
+    "agentId": "codex",
+    "local": true,
+    "runtime": {
+      "reasoningEffort": "medium",
+      "providerOptions": {
+        "timeout_seconds": "120",
+        "verbose": "off"
+      }
+    },
+    "toolPolicy": { "allow": [], "deny": [] }
+  },
+  "persona": {
+    "voice": "steady",
+    "approach": "route the work through the configured OpenClaw agent with minimal churn",
+    "prompt": "Use the configured OpenClaw agent and keep the final report terse."
+  },
+  "stats": {
+    "coding": 82,
+    "testing": 70,
+    "docs": 52,
+    "research": 58,
+    "speed": 54,
+    "mergeSafety": 80,
+    "contextEndurance": 78
+  },
+  "resources": {
+    "cpuCost": 1,
+    "memoryCost": 1,
+    "gpuCost": 0,
+    "maxParallel": 1
+  },
+  "trust": {
+    "rating": 0.78,
+    "calibratedAt": "2026-04-12T00:00:00Z"
+  },
+  "progression": {
+    "level": 1,
+    "xp": 0
+  },
+  "tags": ["openclaw"]
+}
+```
+
+`openclaw-cli` runs `openclaw agent` inside the slice workspace and currently maps:
+- `reasoningEffort` to `--thinking`
+- `providerOptions.timeout_seconds` or `providerOptions.timeoutSeconds` to `--timeout`
+- `providerOptions.verbose` to `--verbose`
+
+Operational notes:
+- the installed OpenClaw CLI may print plugin banners and even its structured `--json` payload on `stderr`, not just `stdout`
+- Quest Runner parses structured OpenClaw output from either stream instead of assuming clean JSON on stdout
+- real OpenClaw code-edit canaries should always include acceptance checks, because the current adapter plumbing is working but the agent may still return successfully without applying the requested change
+
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
@@ -295,6 +362,9 @@ quest setup --yes
 # bootstrap a Hermes worker instead
 quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
 
+# bootstrap an OpenClaw worker instead
+quest setup --yes --backend openclaw --agent-id codex --local
+
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
 
@@ -324,6 +394,16 @@ quest workers add hermes \
   --temperature 0.3 \
   --top-p 0.8 \
   --provider-option frequency_penalty=0.5
+
+# add an OpenClaw worker from flags
+quest workers add openclaw \
+  --name "Quest OpenClaw" \
+  --agent-id codex \
+  --local \
+  --profile openclaw/codex \
+  --reasoning-effort medium \
+  --provider-option timeout_seconds=120 \
+  --provider-option verbose=off
 
 # inspect one worker with strengths and calibration summary
 quest workers status --id quest-codex
@@ -447,6 +527,7 @@ quest secrets delete --name codex.api
 
 # verify the local operator/runtime prerequisites
 quest doctor
+quest doctor --check-openclaw --agent-id codex
 
 # remove quest-managed workspaces for a run
 # completed source-repo runs must be integrated before cleanup

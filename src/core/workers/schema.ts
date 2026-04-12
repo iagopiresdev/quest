@@ -94,6 +94,7 @@ export const workerBackendAuthSchema = z
 export const workerBackendSchema = z
   .object({
     adapter: nonEmptyString(80),
+    agentId: nonEmptyString(120).optional(),
     auth: workerBackendAuthSchema.optional(),
     baseUrl: nonEmptyString(240).optional(),
     command: z.array(nonEmptyString(240)).min(1).max(24).optional(),
@@ -101,9 +102,11 @@ export const workerBackendSchema = z
     executable: nonEmptyString(240).optional(),
     gatewayAuthTokenEnv: nonEmptyString(120).optional(),
     gatewayUrl: nonEmptyString(240).optional(),
+    local: z.boolean().optional(),
     profile: nonEmptyString(120),
     runtime: workerRuntimeSchema.optional(),
     runner: workerRunnerSchema,
+    sessionId: nonEmptyString(160).optional(),
     toolPolicy: z
       .object({
         allow: z.array(nonEmptyString(80)).max(24).default([]),
@@ -137,6 +140,14 @@ export const workerBackendSchema = z
           code: "custom",
           message: "hermes-api adapter requires backend.baseUrl",
           path: ["baseUrl"],
+        });
+      }
+
+      if (value.adapter === "openclaw-cli" && !value.agentId && !value.sessionId) {
+        ctx.addIssue({
+          code: "custom",
+          message: "openclaw-cli adapter requires backend.agentId or backend.sessionId",
+          path: ["agentId"],
         });
       }
     }),

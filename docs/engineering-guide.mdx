@@ -164,6 +164,8 @@ Preferred patterns:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 - Redaction before delegation:
   prompts sent to external runners should carry only the context needed to finish the slice, not raw secrets. Preserve literal argv only for low-risk, common test and build tools when hiding them would make the runner guess the wrong command.
+- Treat provider CLI output as hostile transport:
+  some backends print banners, warnings, or even structured `--json` payloads on `stderr`. Adapters must parse the real provider behavior seen in live canaries instead of assuming clean JSON on stdout.
 
 Avoid:
 

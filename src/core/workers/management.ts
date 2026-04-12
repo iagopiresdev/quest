@@ -4,10 +4,14 @@ import { type RegisteredWorker, registeredWorkerSchema } from "./schema";
 export type WorkerUpdate = {
   approach?: string;
   backend?: {
+    agentId?: string;
     baseUrl?: string;
     executable?: string;
+    gatewayUrl?: string;
+    local?: boolean;
     profile?: string;
     runtime?: WorkerRuntimeConfig;
+    sessionId?: string;
     toolAllow?: string[];
     toolDeny?: string[];
   };
@@ -49,10 +53,14 @@ export function applyWorkerUpdate(
     ...worker,
     backend: {
       ...worker.backend,
+      ...(update.backend?.agentId ? { agentId: update.backend.agentId } : {}),
       ...(update.backend?.baseUrl ? { baseUrl: update.backend.baseUrl } : {}),
       ...(update.backend?.executable ? { executable: update.backend.executable } : {}),
+      ...(update.backend?.gatewayUrl ? { gatewayUrl: update.backend.gatewayUrl } : {}),
+      ...(update.backend?.local !== undefined ? { local: update.backend.local } : {}),
       ...(update.backend?.profile ? { profile: update.backend.profile } : {}),
       ...(update.backend?.runtime ? { runtime: update.backend.runtime } : {}),
+      ...(update.backend?.sessionId ? { sessionId: update.backend.sessionId } : {}),
       ...(update.backend?.toolAllow || update.backend?.toolDeny
         ? {
             toolPolicy: {
