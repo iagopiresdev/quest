@@ -324,6 +324,12 @@ quest workers add hermes \
 # inspect one worker with strengths and calibration summary
 quest workers status --id quest-codex
 
+# inspect the whole worker roster
+quest workers summary
+
+# inspect one worker's calibration history
+quest workers history --id quest-codex
+
 # tune a worker after calibration or real runs
 quest workers update \
   --id quest-codex \

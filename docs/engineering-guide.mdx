@@ -37,6 +37,9 @@ Read [Design System](/docs/design-system) first when the question is about proje
 8. Keep worker tuning explicit and inspectable.
    If the planner is meant to choose “the best worker for the task,” operators need a first-class way to inspect worker strengths, update them, and explain ranking decisions without editing raw JSON by hand.
 
+9. Keep worker progression inspectable too.
+   Calibration history, trust changes, and top strengths should be visible through the CLI so the RPG layer stays grounded in real measured outcomes instead of hidden registry state.
+
 ## System Design
 
 Current architectural layers:

@@ -191,6 +191,51 @@ test("quest cli shows worker status with strengths and calibration summary", () 
   expect(payload.status.calibrationHistoryCount).toBe(0);
 });
 
+test("quest cli lists a worker summary roster", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const listed = runCli(context, ["workers", "summary"]);
+  expect(listed.code).toBe(0);
+  const payload = JSON.parse(listed.stdout);
+  expect(payload.workers).toHaveLength(1);
+  expect(payload.workers[0].status.strengths).toHaveLength(3);
+});
+
+test("quest cli shows worker calibration history", () => {
+  const context = trackContext();
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({
+      calibration: {
+        history: [
+          {
+            at: "2026-04-12T00:00:00.000Z",
+            checkPassRate: 1,
+            completedSliceCount: 3,
+            disciplineScores: { coding: 80, docs: 70, research: 60, testing: 90 },
+            passedCheckCount: 4,
+            runId: "quest-00000000-deadbeef",
+            score: 92,
+            status: "passed",
+            suiteId: "training-grounds-v1",
+            totalCheckCount: 4,
+            totalSliceCount: 3,
+            workspacePath: "/tmp/quest-runner/training",
+            xpAwarded: 200,
+          },
+        ],
+      },
+    }),
+  );
+
+  const history = runCli(context, ["workers", "history", "--id", "ember"]);
+  expect(history.code).toBe(0);
+  const payload = JSON.parse(history.stdout);
+  expect(payload.worker.calibration.history).toHaveLength(1);
+  expect(payload.worker.calibration.history[0].score).toBe(92);
+});
+
 test("quest cli updates worker strengths and runtime settings", () => {
   const context = trackContext();
   expectWorkerUpserted(context);

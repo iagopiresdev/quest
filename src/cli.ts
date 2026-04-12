@@ -88,7 +88,9 @@ type QuestCliCommand =
   | "workers:add:codex"
   | "workers:add:hermes"
   | "workers:calibrate"
+  | "workers:history"
   | "workers:status"
+  | "workers:summary"
   | "workers:update"
   | "workers:list"
   | "workers:upsert";
@@ -1218,6 +1220,29 @@ function formatWorkerStatusPretty(worker: RegisteredWorker, status: WorkerStatus
   ].join("\n");
 }
 
+function formatWorkersSummaryPretty(
+  entries: Array<{ status: WorkerStatusSummary; worker: RegisteredWorker }>,
+): string {
+  return [
+    `Workers (${entries.length})`,
+    ...entries.map(
+      ({ status, worker }) =>
+        `  - ${worker.id} | ${worker.backend.profile} | trust=${status.trustRating.toFixed(2)} | strengths=${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+    ),
+  ].join("\n");
+}
+
+function formatWorkerHistoryPretty(worker: RegisteredWorker): string {
+  return [
+    `Worker ${worker.id} history`,
+    `  calibration entries: ${worker.calibration.history.length}`,
+    ...worker.calibration.history.map(
+      (entry) =>
+        `  - ${entry.at} | ${entry.suiteId} | ${entry.status} | score=${entry.score} | xp=${entry.xpAwarded} | run=${entry.runId}`,
+    ),
+  ].join("\n");
+}
+
 function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown): string {
   const plan = candidate.plan as
     | {
@@ -1350,6 +1375,17 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "workers:list": {
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
       return ["Workers", ...workers.map((worker) => `  - ${formatWorkerLine(worker)}`)].join("\n");
+    }
+    case "workers:summary": {
+      const entries =
+        (candidate.workers as
+          | Array<{ status: WorkerStatusSummary; worker: RegisteredWorker }>
+          | undefined) ?? [];
+      return formatWorkersSummaryPretty(entries);
+    }
+    case "workers:history": {
+      const worker = candidate.worker as RegisteredWorker | undefined;
+      return worker ? formatWorkerHistoryPretty(worker) : JSON.stringify(value, null, 2);
     }
     case "workers:status": {
       const worker = candidate.worker as RegisteredWorker | undefined;
@@ -1844,6 +1880,14 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest workers calibrate --id <worker-id> [--suite <training-grounds-v1>] [--dry-run] [--list-suites] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--state-root <path>]",
   },
   {
+    id: "workers:history",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "history",
+    run: async ({ args, registry }) => ({
+      worker: await registry.getWorker(requireOptionValue(args, "--id", "--id <worker-id>")),
+    }),
+    usage: "quest workers history --id <worker-id> [--registry <path>]",
+  },
+  {
     id: "workers:status",
     matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "status",
     run: async ({ args, registry }) => {
@@ -1851,6 +1895,20 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { status: buildWorkerStatusSummary(worker), worker };
     },
     usage: "quest workers status --id <worker-id> [--registry <path>]",
+  },
+  {
+    id: "workers:summary",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "summary",
+    run: async ({ registry }) => {
+      const workers = await registry.listWorkers();
+      return {
+        workers: workers.map((worker) => ({
+          status: buildWorkerStatusSummary(worker),
+          worker,
+        })),
+      };
+    },
+    usage: "quest workers summary [--registry <path>]",
   },
   {
     id: "workers:list",
