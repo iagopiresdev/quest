@@ -6,10 +6,50 @@ import { runSubprocess } from "../process";
 import { buildProcessEnv } from "../process-env";
 import type { RunnerExecutionContext } from "./types";
 
+const promptVisibleCommandNames = new Set([
+  "biome",
+  "bun",
+  "cargo",
+  "deno",
+  "eslint",
+  "go",
+  "node",
+  "npm",
+  "pnpm",
+  "pytest",
+  "python",
+  "python3",
+  "ruff",
+  "tsc",
+  "uv",
+  "yarn",
+]);
+
+function formatPromptArg(arg: string): string {
+  if (arg.length === 0) {
+    return '""';
+  }
+
+  return /[\s"'`$\\]/.test(arg) ? JSON.stringify(arg) : arg;
+}
+
+function shouldShowCommandArguments(command: QuestSliceSpec["acceptanceChecks"][number]): boolean {
+  const executable = command.argv[0]?.split("/").at(-1)?.toLowerCase();
+  return executable !== undefined && promptVisibleCommandNames.has(executable);
+}
+
 function describeCommandForPrompt(command: QuestSliceSpec["acceptanceChecks"][number]): string {
   const envOverrideCount = Object.keys(command.env).length;
-  const argCount = Math.max(0, command.argv.length - 1);
   const envSuffix = envOverrideCount > 0 ? `, ${envOverrideCount} env override(s)` : "";
+
+  // Real runner prompts need enough literal command detail for the model to avoid inventing a
+  // nearby test invocation, but generic commands still stay summarized to avoid leaking ad hoc
+  // literals from operator-authored checks.
+  if (shouldShowCommandArguments(command)) {
+    return `${command.argv.map((arg) => formatPromptArg(arg)).join(" ")}${envSuffix}`;
+  }
+
+  const argCount = Math.max(0, command.argv.length - 1);
   return `${command.argv[0]} (${argCount} arg(s) redacted${envSuffix})`;
 }
 

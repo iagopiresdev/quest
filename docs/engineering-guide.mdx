@@ -124,7 +124,7 @@ Preferred patterns:
 - One place per concern:
   command metadata in one table, lifecycle helpers in one module, fixtures in one helper file.
 - Redaction before delegation:
-  prompts sent to external runners should carry only the context needed to finish the slice, not raw secrets or literal command payloads.
+  prompts sent to external runners should carry only the context needed to finish the slice, not raw secrets. Preserve literal argv only for low-risk, common test and build tools when hiding them would make the runner guess the wrong command.
 
 Avoid:
 
@@ -208,6 +208,7 @@ Minimum standard:
 - acceptance check results are persisted
 - timestamps are updated consistently
 - secret values never appear in persisted logs, prompts, or argv when a safer channel exists
+- generic acceptance-check payloads stay summarized in prompts; only an allowlisted set of common test and build commands should appear verbatim
 - sink delivery state is persisted separately from run state
 
 When adding behavior, ask:

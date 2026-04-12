@@ -633,9 +633,22 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
       }),
     );
 
+    const baseSpec = createSpec();
+    const [parserSlice, docsSlice] = baseSpec.slices;
+    if (!parserSlice || !docsSlice) {
+      throw new Error("expected default spec slices");
+    }
+
     const run = await runStore.createRun(
       {
-        ...createSpec(),
+        ...baseSpec,
+        slices: [
+          {
+            ...parserSlice,
+            acceptanceChecks: [createCommand(["node", "--test"])],
+          },
+          docsSlice,
+        ],
         acceptanceChecks: [createCommand(["grep", "-q", "top-secret-value", "note.txt"])],
       },
       await workerRegistry.listWorkers(),
@@ -650,6 +663,7 @@ test("run executor completes a planned run with the codex-cli adapter", async ()
     expect(executed.status).toBe("completed");
     expect(executed.slices[0]?.lastOutput?.summary).toBe("codex summary from fake cli");
     expect(readFileSync(join(workspacePath, "codex-marker.txt"), "utf8")).toBe("ok");
+    expect(prompt).toContain("node --test");
     expect(prompt).toContain("Global acceptance checks before integration:");
     expect(prompt).toContain("grep (3 arg(s) redacted)");
     expect(prompt).not.toContain("top-secret-value");

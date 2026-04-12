@@ -166,6 +166,10 @@ function findSpecSlice(run: QuestRunDocument, sliceId: string) {
   return slice;
 }
 
+function removeWarningsForSlice(run: QuestRunDocument, sliceId: string): void {
+  run.plan.warnings = run.plan.warnings.filter((warning) => warning.sliceId !== sliceId);
+}
+
 function reconcileRunStatus(run: QuestRunDocument): QuestRunStatus {
   if (run.slices.some((slice) => slice.status === "running" || slice.status === "testing")) {
     return "running";
@@ -604,21 +608,19 @@ export class QuestRunStore {
     requirePendingLikeSlice(run, sliceState, "be reassigned");
     const specSlice = findSpecSlice(run, sliceId);
 
-    if (!isWorkerCompatibleWithSlice(worker, specSlice)) {
-      throw new QuestDomainError({
-        code: "quest_slice_not_steerable",
-        details: { runId, sliceId, workerId: worker.id },
-        message: `Worker ${worker.id} is incompatible with slice ${sliceId}`,
-        statusCode: 1,
-      });
-    }
-
     const eventAt = nowIsoString();
+    specSlice.preferredWorkerId = worker.id;
+    if (!isWorkerCompatibleWithSlice(worker, specSlice)) {
+      // Explicit operator steering should become the persisted intent for future execution, even
+      // when it overrides a stale preferred runner from the original plan snapshot.
+      specSlice.preferredRunner = worker.backend.runner;
+    }
     sliceState.assignedWorkerId = worker.id;
     sliceState.assignedRunner = worker.backend.runner;
     if (sliceState.status === "blocked") {
       const assignedWave = appendBlockedSliceToWave(run, sliceId, worker);
       sliceState.wave = assignedWave;
+      removeWarningsForSlice(run, sliceId);
       setSliceStatus(sliceState, "pending");
       delete sliceState.completedAt;
       delete sliceState.lastChecks;

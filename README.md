@@ -155,7 +155,7 @@ Example `codex-cli` worker:
 ```
 
 `codex-cli` runs `codex exec` inside the slice workspace, persists Codex stdout/stderr, and captures the final response through `--output-last-message`.
-The prompt includes owned paths, dependencies, and redacted acceptance-check summaries. It does not forward raw acceptance-check argv or env values to the model.
+The prompt includes owned paths, dependencies, and acceptance-check summaries. It shows exact argv for known safe test and build tools so runners do not have to guess common commands, while still redacting generic command payloads and all env override values.
 Common runtime controls such as reasoning effort, output-token limits, sampling, and context window live under `backend.runtime`, and Quest Runner translates them into Codex `-c key=value` overrides when it starts `codex exec`.
 If a Codex-specific knob does not have a first-class runtime field yet, put it in `backend.runtime.providerOptions`.
 

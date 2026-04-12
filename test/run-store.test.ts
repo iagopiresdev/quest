@@ -146,6 +146,27 @@ test("run store can reassign a blocked slice into a new executable wave", async 
   }
 });
 
+test("run store reassignment overrides a stale preferred runner on the persisted spec", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(
+      createSpec({
+        maxParallel: 1,
+        slices: [createSlice({ id: "parser", preferredRunner: "openclaw" })],
+      }),
+      [],
+    );
+    const steered = await store.reassignSlice(run.id, "parser", createWorkerForRunner("ember"));
+    expect(steered.spec.slices[0]?.preferredWorkerId).toBe("ember");
+    expect(steered.spec.slices[0]?.preferredRunner).toBe("codex");
+    expect(steered.plan.warnings).toHaveLength(0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store can skip a blocked slice and unblock the run", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);

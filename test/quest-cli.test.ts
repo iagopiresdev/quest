@@ -418,7 +418,9 @@ test("quest cli can reassign a blocked slice and turn it into an executable wave
   const steeredRun = JSON.parse(reassigned.stdout).run;
   expect(steeredRun.status).toBe("planned");
   expect(steeredRun.plan.unassigned).toHaveLength(0);
+  expect(steeredRun.plan.warnings).toHaveLength(0);
   expect(steeredRun.plan.waves.at(-1).slices[0].assignedWorkerId).toBe("rook");
+  expect(steeredRun.spec.slices[0].preferredWorkerId).toBe("rook");
 
   const executed = runCli(context, ["runs", "execute", "--id", runId, "--dry-run"]);
   expect(executed.code).toBe(0);
