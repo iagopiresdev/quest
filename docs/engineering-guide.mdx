@@ -40,6 +40,9 @@ Read [Design System](/docs/design-system) first when the question is about proje
 9. Keep worker progression inspectable too.
    Calibration history, trust changes, and top strengths should be visible through the CLI so the RPG layer stays grounded in real measured outcomes instead of hidden registry state.
 
+10. Treat mocked coverage as necessary but insufficient.
+   If a feature touches real execution, steering, integration, or sink delivery, validate it through at least one real canary path in addition to unit and CLI tests.
+
 ## System Design
 
 Current architectural layers:
@@ -104,6 +107,42 @@ The following invariants should stay true:
 - New state should be appended, not inferred from logs after the fact.
 
 If a future change makes these rules harder to see, the design is getting worse.
+
+## Validation Strategy
+
+Quest Runner is an orchestration tool. That means the dangerous bugs often live in the seams between typed state and real backends.
+
+Rules:
+
+- Every feature needs automated coverage for happy path and edge cases.
+- Execution-facing features also need a real canary when the dependency exists locally.
+- A canary should use the real interface the operator will use:
+  - real `codex exec`
+  - real Hermes HTTP endpoint
+  - real webhook or Telegram sink
+  - real git-backed workspace and integration flow
+- Canaries should run in disposable state roots and throwaway repos so they are safe to repeat.
+- When a real canary finds a bug, add or strengthen an automated regression test before closing the work.
+- Do not treat a mocked subprocess test as proof that a runner adapter behaves correctly in practice.
+- Do not ship adapter, steering, or integration changes after only testing the happy path.
+
+Minimum edge cases to consider for execution-facing work:
+
+- blocked and unassigned slices
+- explicit operator steering after a stale plan choice
+- oversized runner output
+- timeout and abort paths
+- env filtering and secret redaction
+- source-repo dirtiness and cleanup safety
+- integration drift or stale target ref
+- sink delivery failure and replay
+
+For runner adapters specifically:
+
+- verify the exact prompt or request payload sent to the backend
+- verify the persisted run state after a real run
+- verify that a disposable repo or workspace reflects the expected post-run result
+- verify that sensitive data still stays out of prompts, logs, and argv when a safer path exists
 
 ## Coding Patterns
 
@@ -313,11 +352,14 @@ Rules:
 - calibration tests should exercise both passed and failed suites through the real CLI path
 - storage tests should assert typed error behavior for missing or invalid files
 - process and workspace boundary code should have direct unit coverage for edge cases like timeouts, truncation, env filtering, path canonicalization, and tampered persisted state
+- runner, steering, integration, and sink changes should add or update a real canary procedure in the implementation notes, not just a mocked test
+- battle testing should prefer disposable repos plus real backends over synthetic fixtures when validating orchestration behavior
 
 Add tests for:
 
 - new error codes
 - new run or slice statuses
+- real-world regressions discovered during canary runs
 - new adapter behavior
 - migration-sensitive persisted shapes
 - boundary failures that would otherwise only show up under real subprocess, filesystem, or git state

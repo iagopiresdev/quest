@@ -20,6 +20,10 @@ Engineering guidance for future work lives in [docs/engineering-guide.mdx](./doc
 Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.mdx](./docs/design-system.mdx).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
 
+Testing rule:
+- mocked coverage is not enough for execution-facing work
+- runner, steering, integration, and sink changes should also be battle-tested through disposable real canaries when the backend exists locally
+
 Mintlify powers the docs surface for this repo. Local preview runs from the project root with:
 
 ```sh

@@ -27,6 +27,7 @@ That means:
 - plans narrow the work before code is written
 - implementation follows an explicit spec
 - acceptance checks and tests are derived from the spec
+- real canary runs are part of validation for execution-facing features, not optional follow-up work
 - feature docs and operator docs are updated as part of the same change
 
 The implementation is allowed to teach us something new, but it must not become the primary design artifact.
@@ -68,6 +69,7 @@ Rules:
 - Research should name the existing boundary that is being changed.
 - Plans should identify scope, non-goals, risks, and validation.
 - Implementation should trace back to the plan, not wander into adjacent cleanup unless it is required for correctness.
+- Validation for orchestration, runner, integration, or steering changes must include both automated coverage and at least one real canary path when the backend exists locally.
 - If the plan changes materially, the spec or proposal must change too.
 
 ## Spec-Driven Development
@@ -85,6 +87,7 @@ Every meaningful feature spec should define:
 - observability events and delivery implications
 - acceptance checks
 - test plan
+- canary plan
 - rollout or migration notes
 - rollback or recovery notes
 
@@ -92,6 +95,7 @@ Specs must be written so that a reviewer can answer:
 - what is changing
 - where the boundary is
 - how correctness is validated
+- which mocked tests exist versus which live canaries must still be exercised
 - what is intentionally not being built
 
 ## Domain-Driven Design
@@ -234,6 +238,7 @@ Before merging a meaningful feature, check:
 - the spec matches the implementation
 - acceptance checks map to the stated goal
 - tests cover both happy path and edge cases
+- live canary runs were executed for execution-facing changes, or the spec explains why a real canary was impossible
 - observability events or delivery behavior are updated when needed
 - docs were updated at the right depth, not just somewhere
 
