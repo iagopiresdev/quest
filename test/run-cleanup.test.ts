@@ -118,6 +118,41 @@ test("run cleanup refuses completed source-repo runs before integration", async 
   }
 });
 
+test("run cleanup removes aborted source-repo workspaces without integration", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const cleanup = new QuestRunCleanup(runStore);
+
+  try {
+    const run = await runStore.createRun(createSpec(), [createWorker()], {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    const workspaceRoot = join(workspacesRoot, run.id);
+    const sliceWorkspace = join(workspaceRoot, "slices", "parser");
+    await Bun.$`git -C ${repositoryRoot} worktree add --detach ${sliceWorkspace}`.quiet();
+
+    run.status = "aborted";
+    run.workspaceRoot = workspaceRoot;
+    if (run.slices[0]) {
+      run.slices[0].status = "aborted";
+      run.slices[0].workspacePath = sliceWorkspace;
+    }
+    await runStore.saveRun(run);
+
+    expect(existsSync(sliceWorkspace)).toBe(true);
+
+    const cleaned = await cleanup.cleanupRun(run.id);
+
+    expect(existsSync(cleaned.workspaceRoot ?? "")).toBe(false);
+    expect(cleaned.events.some((event) => event.type === "run_workspace_cleaned")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run cleanup refuses runs that are still marked running", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
   const runsRoot = join(root, "runs");

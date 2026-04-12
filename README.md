@@ -405,7 +405,8 @@ quest secrets delete --name codex.api
 quest doctor
 
 # remove quest-managed workspaces for a run
-# source-repo runs must be integrated before cleanup
+# completed source-repo runs must be integrated before cleanup
+# aborted source-repo runs can be cleaned directly
 quest runs cleanup --id quest-abc12345-deadbeef
 
 # abort a pending or running run
