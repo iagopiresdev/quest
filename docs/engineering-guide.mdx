@@ -73,8 +73,8 @@ Recommended future layers:
 - `src/core/notifications/*`
   Event-driven notification adapters.
 
-- `src/core/steering/*`
-  Pause, resume, retry, reassignment, human intervention.
+- steering inside `src/core/runs/*` for now
+  Steering is still part of the run lifecycle layer in v0. Keep steering mutations explicit and persisted so a later `src/core/steering/*` extraction can move code without changing the domain contract.
 
 Keep the dependency direction one-way:
 
@@ -93,6 +93,7 @@ The following invariants should stay true:
 - A slice either has a worker assignment or is explicitly unassigned/blocked.
 - Calibration slices must be independently solvable from a clean base unless the executor grows explicit cross-slice replay semantics.
 - Lifecycle transitions must go through shared helpers when possible.
+- Steering must change persisted run state, not just CLI presentation. If an operator reassigns, retries, or skips a slice, the run document must reflect the new executable truth.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.

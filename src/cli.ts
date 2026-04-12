@@ -70,10 +70,15 @@ type QuestCliCommand =
   | "runs:abort"
   | "runs:cleanup"
   | "runs:integrate"
+  | "runs:pause"
+  | "runs:resume"
   | "runs:rerun"
   | "runs:execute"
   | "runs:logs"
   | "runs:list"
+  | "runs:slices:reassign"
+  | "runs:slices:retry"
+  | "runs:slices:skip"
   | "runs:status"
   | "runs:summary"
   | "secrets:delete"
@@ -1194,6 +1199,119 @@ function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): 
   ];
 }
 
+function formatWorkerStatusPretty(worker: RegisteredWorker, status: WorkerStatusSummary): string {
+  return [
+    `Worker ${worker.id}`,
+    `  name: ${worker.name}`,
+    `  title: ${worker.title}`,
+    `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
+    `  profile: ${worker.backend.profile}`,
+    `  enabled: ${worker.enabled}`,
+    `  trust: ${worker.trust.rating.toFixed(2)}`,
+    `  level/xp: ${worker.progression.level}/${worker.progression.xp}`,
+    `  strengths: ${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+    `  latest calibration: ${
+      status.latestCalibration
+        ? `${status.latestCalibration.suiteId} ${status.latestCalibration.status} ${status.latestCalibration.score}`
+        : "none"
+    }`,
+  ].join("\n");
+}
+
+function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown): string {
+  const plan = candidate.plan as
+    | {
+        unassigned: Array<{ id: string; reason: string }>;
+        warnings: string[];
+        waves: Array<{
+          index: number;
+          slices: Array<{ assignedWorkerId?: string | null; id: string }>;
+        }>;
+      }
+    | undefined;
+  const explanation = candidate.explanation as
+    | {
+        slices: Array<{
+          candidates: Array<{
+            runner: string;
+            score: number;
+            strengths: Array<{ key: string; score: number }>;
+            trustRating: number;
+            workerId: string;
+          }>;
+          discipline: string;
+          sliceId: string;
+        }>;
+      }
+    | undefined;
+  if (!plan) {
+    return JSON.stringify(fallback, null, 2);
+  }
+
+  const lines = [
+    `Plan: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
+    ...plan.waves.map(
+      (wave) =>
+        `  wave ${wave.index}: ${wave.slices
+          .map((slice) => `${slice.id}@${slice.assignedWorkerId ?? "unassigned"}`)
+          .join(", ")}`,
+    ),
+    ...plan.unassigned.map((slice) => `  unassigned: ${slice.id} (${slice.reason})`),
+    ...plan.warnings.map((warning) => `  warning: ${warning}`),
+  ];
+
+  if (explanation) {
+    lines.push("", "Worker candidates");
+    explanation.slices.forEach((slice) => {
+      lines.push(`  ${slice.sliceId} (${slice.discipline})`);
+      slice.candidates.slice(0, 3).forEach((candidateEntry) => {
+        lines.push(
+          `    - ${candidateEntry.workerId} ${candidateEntry.runner} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+        );
+      });
+    });
+  }
+
+  return lines.join("\n");
+}
+
+function formatRunPretty(candidate: Record<string, unknown>, fallback: unknown): string {
+  const run = candidate.run as QuestRunDocument | undefined;
+  return run
+    ? formatRunSummaryBlock(summarizeRunDetail(run)).join("\n")
+    : JSON.stringify(fallback, null, 2);
+}
+
+function formatRunsSummaryPretty(candidate: Record<string, unknown>): string {
+  if (candidate.summary) {
+    return formatRunSummaryBlock(candidate.summary as ReturnType<typeof summarizeRunDetail>).join(
+      "\n",
+    );
+  }
+
+  const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
+  return [
+    "Runs",
+    ...runs.map(
+      (run) => `  - ${formatRunSummaryBlock(summarizeRunDetail(run))[0]} | status=${run.status}`,
+    ),
+  ].join("\n");
+}
+
+function formatLogsPretty(candidate: Record<string, unknown>): string {
+  const logs =
+    (candidate.logs as
+      | Array<{ checkName?: string | null; sliceId: string; status?: string; stdout: string }>
+      | undefined) ?? [];
+  return [
+    `Logs (${logs.length})`,
+    ...logs.map(
+      (log) =>
+        `  - slice=${log.sliceId} ${log.checkName ? `check=${log.checkName}` : "worker"}${log.status ? ` status=${log.status}` : ""}`,
+    ),
+  ].join("\n");
+}
+
 function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string {
   const candidate =
     typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
@@ -1240,22 +1358,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
         return JSON.stringify(value, null, 2);
       }
 
-      return [
-        `Worker ${worker.id}`,
-        `  name: ${worker.name}`,
-        `  title: ${worker.title}`,
-        `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
-        `  profile: ${worker.backend.profile}`,
-        `  enabled: ${worker.enabled}`,
-        `  trust: ${worker.trust.rating.toFixed(2)}`,
-        `  level/xp: ${worker.progression.level}/${worker.progression.xp}`,
-        `  strengths: ${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
-        `  latest calibration: ${
-          status.latestCalibration
-            ? `${status.latestCalibration.suiteId} ${status.latestCalibration.status} ${status.latestCalibration.score}`
-            : "none"
-        }`,
-      ].join("\n");
+      return formatWorkerStatusPretty(worker, status);
     }
     case "workers:add:codex":
     case "workers:add:hermes":
@@ -1365,60 +1468,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       ].join("\n");
     }
     case "plan": {
-      const plan = candidate.plan as
-        | {
-            unassigned: Array<{ id: string; reason: string }>;
-            warnings: string[];
-            waves: Array<{
-              index: number;
-              slices: Array<{ assignedWorkerId?: string | null; id: string }>;
-            }>;
-          }
-        | undefined;
-      const explanation = candidate.explanation as
-        | {
-            slices: Array<{
-              candidates: Array<{
-                runner: string;
-                score: number;
-                strengths: Array<{ key: string; score: number }>;
-                trustRating: number;
-                workerId: string;
-              }>;
-              discipline: string;
-              sliceId: string;
-            }>;
-          }
-        | undefined;
-      if (!plan) {
-        return JSON.stringify(value, null, 2);
-      }
-
-      const lines = [
-        `Plan: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
-        ...plan.waves.map(
-          (wave) =>
-            `  wave ${wave.index}: ${wave.slices
-              .map((slice) => `${slice.id}@${slice.assignedWorkerId ?? "unassigned"}`)
-              .join(", ")}`,
-        ),
-        ...plan.unassigned.map((slice) => `  unassigned: ${slice.id} (${slice.reason})`),
-        ...plan.warnings.map((warning) => `  warning: ${warning}`),
-      ];
-
-      if (explanation) {
-        lines.push("", "Worker candidates");
-        explanation.slices.forEach((slice) => {
-          lines.push(`  ${slice.sliceId} (${slice.discipline})`);
-          slice.candidates.slice(0, 3).forEach((candidateEntry) => {
-            lines.push(
-              `    - ${candidateEntry.workerId} ${candidateEntry.runner} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
-            );
-          });
-        });
-      }
-
-      return lines.join("\n");
+      return formatPlanPretty(candidate, value);
     }
     case "run":
     case "runs:status":
@@ -1426,28 +1476,18 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "runs:integrate":
     case "runs:cleanup":
     case "runs:abort":
+    case "runs:pause":
+    case "runs:resume":
     case "runs:rerun": {
-      const run = candidate.run as QuestRunDocument | undefined;
-      return run
-        ? formatRunSummaryBlock(summarizeRunDetail(run)).join("\n")
-        : JSON.stringify(value, null, 2);
+      return formatRunPretty(candidate, value);
+    }
+    case "runs:slices:reassign":
+    case "runs:slices:retry":
+    case "runs:slices:skip": {
+      return formatRunPretty(candidate, value);
     }
     case "runs:summary": {
-      if (candidate.summary) {
-        return formatRunSummaryBlock(
-          candidate.summary as ReturnType<typeof summarizeRunDetail>,
-        ).join("\n");
-      }
-
-      const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
-      const lines = [
-        "Runs",
-        ...runs.map(
-          (run) =>
-            `  - ${formatRunSummaryBlock(summarizeRunDetail(run))[0]} | status=${run.status}`,
-        ),
-      ];
-      return lines.join("\n");
+      return formatRunsSummaryPretty(candidate);
     }
     case "runs:list": {
       const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
@@ -1457,17 +1497,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       ].join("\n");
     }
     case "runs:logs": {
-      const logs =
-        (candidate.logs as
-          | Array<{ checkName?: string | null; sliceId: string; status?: string; stdout: string }>
-          | undefined) ?? [];
-      return [
-        `Logs (${logs.length})`,
-        ...logs.map(
-          (log) =>
-            `  - slice=${log.sliceId} ${log.checkName ? `check=${log.checkName}` : "worker"}${log.status ? ` status=${log.status}` : ""}`,
-        ),
-      ].join("\n");
+      return formatLogsPretty(candidate);
     }
     case "secrets:status": {
       const secret = candidate.secret as
@@ -1907,6 +1937,27 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs abort --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:pause",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "pause",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.pauseRun(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+        findOptionValue(args, "--reason") ?? undefined,
+      ),
+    }),
+    usage:
+      "quest runs pause --id <run-id> [--reason <text>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:resume",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "resume",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.resumeRun(requireOptionValue(args, "--id", "--id <run-id>")),
+    }),
+    usage:
+      "quest runs resume --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:cleanup",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "cleanup",
     run: async ({ args, runCleanup }) => ({
@@ -1954,6 +2005,51 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     }),
     usage:
       "quest runs execute --id <run-id> [--dry-run] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:slices:reassign",
+    matches: (args) =>
+      args.length >= 4 && args[0] === "runs" && args[1] === "slices" && args[2] === "reassign",
+    run: async ({ args, registry, runStore }) => {
+      const workerId = requireOptionValue(args, "--worker-id", "--worker-id <worker-id>");
+      const worker = await registry.getWorker(workerId);
+      return {
+        run: await runStore.reassignSlice(
+          requireOptionValue(args, "--id", "--id <run-id>"),
+          requireOptionValue(args, "--slice", "--slice <slice-id>"),
+          worker,
+        ),
+      };
+    },
+    usage:
+      "quest runs slices reassign --id <run-id> --slice <slice-id> --worker-id <worker-id> [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:slices:retry",
+    matches: (args) =>
+      args.length >= 4 && args[0] === "runs" && args[1] === "slices" && args[2] === "retry",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.retrySlice(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+        requireOptionValue(args, "--slice", "--slice <slice-id>"),
+      ),
+    }),
+    usage:
+      "quest runs slices retry --id <run-id> --slice <slice-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:slices:skip",
+    matches: (args) =>
+      args.length >= 4 && args[0] === "runs" && args[1] === "slices" && args[2] === "skip",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.skipSlice(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+        requireOptionValue(args, "--slice", "--slice <slice-id>"),
+        findOptionValue(args, "--reason") ?? undefined,
+      ),
+    }),
+    usage:
+      "quest runs slices skip --id <run-id> --slice <slice-id> [--reason <text>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:logs",

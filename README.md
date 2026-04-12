@@ -411,6 +411,21 @@ quest runs integrate --id quest-abc12345-deadbeef --target-ref main
 # inspect persisted slice logs/output
 quest runs logs --id quest-abc12345-deadbeef
 
+# put a run on hold before the next execute call
+quest runs pause --id quest-abc12345-deadbeef --reason "waiting on review"
+
+# resume a paused run
+quest runs resume --id quest-abc12345-deadbeef
+
+# reassign one slice to a different worker
+quest runs slices reassign --id quest-abc12345-deadbeef --slice parser --worker-id quest-hermes
+
+# retry only one failed slice in place
+quest runs slices retry --id quest-abc12345-deadbeef --slice parser
+
+# skip one slice and mark it as a no-op for integration
+quest runs slices skip --id quest-abc12345-deadbeef --slice parser --reason "handled elsewhere"
+
 # store a backend secret in the local keychain backend
 printf 'sk-example' | quest secrets set --name codex.api --stdin
 
@@ -488,7 +503,7 @@ Do not commit runtime state, tokens, or local config.
 - native Codex execution through the `codex-cli` adapter
 - Hermes/OpenAI-compatible execution through the `hermes-api` adapter
 - slice-level tester lane through `acceptanceChecks`
-- basic steering commands to abort and rerun runs
+- richer steering commands for pause/resume plus per-slice reassign/retry/skip
 - runtime-managed per-run and per-slice workspace directories
 - optional Git worktree materialization via `--source-repo`
 - serial integration into a dedicated worktree via `runs integrate`
@@ -503,7 +518,7 @@ Do not commit runtime state, tokens, or local config.
 - Telegram sink delivery through the same eventing model
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 
-Additional runner adapters, automated final checks during integration, notifications, and richer steering are still pending.
+Additional runner adapters, more sinks, feature-doc generation, and a fuller setup TUI are still pending.
 
 ## Validation
 

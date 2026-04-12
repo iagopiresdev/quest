@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { QuestDomainError } from "../errors";
-import { planQuest } from "../planning/planner";
+import { isWorkerCompatibleWithSlice, planQuest } from "../planning/planner";
 import type { QuestSpec } from "../planning/spec-schema";
 import {
   readJsonFileOrDefault,
@@ -16,6 +16,7 @@ import {
   type QuestRunDocument,
   type QuestRunEvent,
   type QuestRunSliceState,
+  type QuestRunStatus,
   questRunDocumentSchema,
 } from "./schema";
 import {
@@ -135,6 +136,140 @@ function hydrateWorkspacePaths(run: QuestRunDocument, workspacesRoot: string): Q
   });
 
   return run;
+}
+
+function findSliceForMutation(run: QuestRunDocument, sliceId: string): QuestRunSliceState {
+  const sliceState = run.slices.find((slice) => slice.sliceId === sliceId);
+  if (!sliceState) {
+    throw new QuestDomainError({
+      code: "invalid_quest_run",
+      details: { runId: run.id, sliceId },
+      message: `Quest run ${run.id} is missing state for slice ${sliceId}`,
+      statusCode: 1,
+    });
+  }
+
+  return sliceState;
+}
+
+function findSpecSlice(run: QuestRunDocument, sliceId: string) {
+  const slice = run.spec.slices.find((candidate) => candidate.id === sliceId);
+  if (!slice) {
+    throw new QuestDomainError({
+      code: "invalid_quest_run",
+      details: { runId: run.id, sliceId },
+      message: `Quest run ${run.id} is missing spec for slice ${sliceId}`,
+      statusCode: 1,
+    });
+  }
+
+  return slice;
+}
+
+function reconcileRunStatus(run: QuestRunDocument): QuestRunStatus {
+  if (run.slices.some((slice) => slice.status === "running" || slice.status === "testing")) {
+    return "running";
+  }
+
+  if (run.slices.some((slice) => slice.status === "blocked")) {
+    return "blocked";
+  }
+
+  if (run.slices.some((slice) => slice.status === "failed")) {
+    return "failed";
+  }
+
+  if (run.slices.some((slice) => slice.status === "pending")) {
+    return "planned";
+  }
+
+  return "completed";
+}
+
+function requireSteerableRun(run: QuestRunDocument, action: string): void {
+  if (run.status === "running" || run.status === "paused") {
+    throw new QuestDomainError({
+      code: "quest_run_not_steerable",
+      details: { action, runId: run.id, status: run.status },
+      message: `Quest run ${run.id} cannot ${action} from status ${run.status}`,
+      statusCode: 1,
+    });
+  }
+
+  if (run.status === "aborted" || run.status === "completed") {
+    throw new QuestDomainError({
+      code: "quest_run_not_steerable",
+      details: { action, runId: run.id, status: run.status },
+      message: `Quest run ${run.id} cannot ${action} from status ${run.status}`,
+      statusCode: 1,
+    });
+  }
+}
+
+function requirePendingLikeSlice(
+  run: QuestRunDocument,
+  sliceState: QuestRunSliceState,
+  action: string,
+): void {
+  if (sliceState.status === "running" || sliceState.status === "testing") {
+    throw new QuestDomainError({
+      code: "quest_slice_not_steerable",
+      details: { action, runId: run.id, sliceId: sliceState.sliceId, status: sliceState.status },
+      message: `Slice ${sliceState.sliceId} cannot ${action} from status ${sliceState.status}`,
+      statusCode: 1,
+    });
+  }
+
+  if (sliceState.status === "completed" || sliceState.status === "aborted") {
+    throw new QuestDomainError({
+      code: "quest_slice_not_steerable",
+      details: { action, runId: run.id, sliceId: sliceState.sliceId, status: sliceState.status },
+      message: `Slice ${sliceState.sliceId} cannot ${action} from status ${sliceState.status}`,
+      statusCode: 1,
+    });
+  }
+}
+
+function findPlannedSlice(run: QuestRunDocument, sliceId: string) {
+  for (const wave of run.plan.waves) {
+    const plannedSlice = wave.slices.find((slice) => slice.id === sliceId);
+    if (plannedSlice) {
+      return plannedSlice;
+    }
+  }
+
+  return null;
+}
+
+function removeUnassignedSlice(run: QuestRunDocument, sliceId: string): void {
+  run.plan.unassigned = run.plan.unassigned.filter((slice) => slice.id !== sliceId);
+}
+
+function appendBlockedSliceToWave(
+  run: QuestRunDocument,
+  sliceId: string,
+  worker: RegisteredWorker,
+): number {
+  const specSlice = findSpecSlice(run, sliceId);
+  removeUnassignedSlice(run, sliceId);
+  const nextWaveIndex = (run.plan.waves.at(-1)?.index ?? 0) + 1;
+  run.plan.waves.push({
+    index: nextWaveIndex,
+    slices: [
+      {
+        assignedRunner: worker.backend.runner,
+        assignedWorkerId: worker.id,
+        conflictPaths: [],
+        dependsOn: [...specSlice.dependsOn],
+        hot: false,
+        id: specSlice.id,
+        score: null,
+        title: specSlice.title,
+        wave: nextWaveIndex,
+      },
+    ],
+  });
+  return nextWaveIndex;
 }
 
 function selectWorkersForRun(
@@ -406,6 +541,169 @@ export class QuestRunStore {
     });
 
     appendEvent(run, "run_aborted", { runId }, eventAt);
+    return this.saveRun(run);
+  }
+
+  async pauseRun(runId: string, reason?: string | undefined): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    if (
+      run.status === "completed" ||
+      run.status === "aborted" ||
+      run.status === "running" ||
+      run.status === "paused"
+    ) {
+      throw new QuestDomainError({
+        code: "quest_run_not_steerable",
+        details: { reason, runId, status: run.status },
+        message: `Quest run ${runId} cannot be paused from status ${run.status}`,
+        statusCode: 1,
+      });
+    }
+
+    const eventAt = nowIsoString();
+    setRunStatus(run, "paused");
+    appendEvent(run, "run_paused", { reason: reason ?? null, runId }, eventAt);
+    return this.saveRun(run);
+  }
+
+  async resumeRun(runId: string): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    if (run.status !== "paused") {
+      throw new QuestDomainError({
+        code: "quest_run_not_steerable",
+        details: { runId, status: run.status },
+        message: `Quest run ${runId} is not paused`,
+        statusCode: 1,
+      });
+    }
+
+    const eventAt = nowIsoString();
+    setRunStatus(run, reconcileRunStatus(run));
+    appendEvent(run, "run_resumed", { runId }, eventAt);
+    return this.saveRun(run);
+  }
+
+  async reassignSlice(
+    runId: string,
+    sliceId: string,
+    worker: RegisteredWorker,
+  ): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    requireSteerableRun(run, "reassign slices");
+
+    if (!worker.enabled) {
+      throw new QuestDomainError({
+        code: "quest_worker_not_found",
+        details: { runId, sliceId, workerId: worker.id },
+        message: `Worker ${worker.id} is not enabled`,
+        statusCode: 1,
+      });
+    }
+
+    const sliceState = findSliceForMutation(run, sliceId);
+    requirePendingLikeSlice(run, sliceState, "be reassigned");
+    const specSlice = findSpecSlice(run, sliceId);
+
+    if (!isWorkerCompatibleWithSlice(worker, specSlice)) {
+      throw new QuestDomainError({
+        code: "quest_slice_not_steerable",
+        details: { runId, sliceId, workerId: worker.id },
+        message: `Worker ${worker.id} is incompatible with slice ${sliceId}`,
+        statusCode: 1,
+      });
+    }
+
+    const eventAt = nowIsoString();
+    sliceState.assignedWorkerId = worker.id;
+    sliceState.assignedRunner = worker.backend.runner;
+    if (sliceState.status === "blocked") {
+      const assignedWave = appendBlockedSliceToWave(run, sliceId, worker);
+      sliceState.wave = assignedWave;
+      setSliceStatus(sliceState, "pending");
+      delete sliceState.completedAt;
+      delete sliceState.lastChecks;
+      delete sliceState.lastError;
+      delete sliceState.lastOutput;
+    } else {
+      const plannedSlice = findPlannedSlice(run, sliceId);
+      if (plannedSlice) {
+        plannedSlice.assignedRunner = worker.backend.runner;
+        plannedSlice.assignedWorkerId = worker.id;
+      }
+    }
+    setRunStatus(run, reconcileRunStatus(run));
+    appendEvent(
+      run,
+      "slice_reassigned",
+      {
+        runId,
+        runner: worker.backend.runner,
+        sliceId,
+        workerId: worker.id,
+      },
+      eventAt,
+    );
+    return this.saveRun(run);
+  }
+
+  async retrySlice(runId: string, sliceId: string): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    requireSteerableRun(run, "retry slices");
+
+    const sliceState = findSliceForMutation(run, sliceId);
+    if (sliceState.status !== "failed") {
+      throw new QuestDomainError({
+        code: "quest_slice_not_steerable",
+        details: { runId, sliceId, status: sliceState.status },
+        message: `Slice ${sliceId} cannot be retried from status ${sliceState.status}`,
+        statusCode: 1,
+      });
+    }
+
+    const eventAt = nowIsoString();
+    setSliceStatus(sliceState, "pending");
+    delete sliceState.completedAt;
+    delete sliceState.startedAt;
+    delete sliceState.lastChecks;
+    delete sliceState.lastError;
+    delete sliceState.lastOutput;
+    sliceState.integrationStatus = "pending";
+    delete sliceState.integratedCommit;
+    delete sliceState.resultRevision;
+    delete sliceState.driftedFromBase;
+    setRunStatus(run, reconcileRunStatus(run));
+    appendEvent(run, "slice_retry_queued", { runId, sliceId }, eventAt);
+    return this.saveRun(run);
+  }
+
+  async skipSlice(
+    runId: string,
+    sliceId: string,
+    reason?: string | undefined,
+  ): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    requireSteerableRun(run, "skip slices");
+
+    const sliceState = findSliceForMutation(run, sliceId);
+    requirePendingLikeSlice(run, sliceState, "be skipped");
+
+    const eventAt = nowIsoString();
+    const previousStatus = sliceState.status;
+    setSliceStatus(sliceState, "skipped", { completedAt: eventAt });
+    delete sliceState.lastChecks;
+    if (reason) {
+      sliceState.lastError = reason;
+    } else {
+      delete sliceState.lastError;
+    }
+    delete sliceState.lastOutput;
+    sliceState.integrationStatus = "noop";
+    delete sliceState.integratedCommit;
+    if (previousStatus === "blocked") {
+      removeUnassignedSlice(run, sliceId);
+    }
+    setRunStatus(run, reconcileRunStatus(run));
+    appendEvent(run, "slice_skipped", { reason: reason ?? null, runId, sliceId }, eventAt);
     return this.saveRun(run);
   }
 

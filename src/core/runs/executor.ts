@@ -52,6 +52,15 @@ function requireExecutableRun(run: QuestRunDocument): void {
     });
   }
 
+  if (run.status === "paused") {
+    throw new QuestDomainError({
+      code: "quest_run_not_executable",
+      details: { runId: run.id, status: run.status },
+      message: `Quest run ${run.id} is paused and cannot be executed`,
+      statusCode: 1,
+    });
+  }
+
   if (run.status === "failed") {
     throw new QuestDomainError({
       code: "quest_run_not_rerunnable",
@@ -180,7 +189,9 @@ export class QuestRunExecutor {
       for (const wave of run.plan.waves) {
         const waveSliceStates = wave.slices
           .map((plannedSlice) => findSliceState(run, plannedSlice.id))
-          .filter((sliceState) => sliceState.status !== "completed");
+          .filter(
+            (sliceState) => sliceState.status !== "completed" && sliceState.status !== "skipped",
+          );
 
         if (waveSliceStates.length === 0) {
           continue;

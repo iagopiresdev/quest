@@ -126,6 +126,43 @@ test("run store returns slice logs and supports aborting pending runs", async ()
   }
 });
 
+test("run store can reassign a blocked slice into a new executable wave", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 1 }), []);
+    expect(run.status).toBe("blocked");
+    expect(run.plan.unassigned).toHaveLength(1);
+
+    const steered = await store.reassignSlice(run.id, "parser", createWorkerForRunner("ember"));
+    expect(steered.status).toBe("planned");
+    expect(steered.plan.unassigned).toHaveLength(0);
+    expect(steered.plan.waves.at(-1)?.slices[0]?.assignedWorkerId).toBe("ember");
+    expect(steered.slices[0]?.status).toBe("pending");
+    expect(steered.events.at(-1)?.type).toBe("slice_reassigned");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run store can skip a blocked slice and unblock the run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 1 }), []);
+    const steered = await store.skipSlice(run.id, "parser", "not worth doing");
+    expect(steered.status).toBe("completed");
+    expect(steered.plan.unassigned).toHaveLength(0);
+    expect(steered.slices[0]?.status).toBe("skipped");
+    expect(steered.slices[0]?.integrationStatus).toBe("noop");
+    expect(steered.events.at(-1)?.type).toBe("slice_skipped");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store hydrates missing workspace paths for legacy run documents", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const runsRoot = join(root, "runs");

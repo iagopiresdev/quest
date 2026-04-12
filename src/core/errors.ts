@@ -15,6 +15,7 @@ export const QUEST_ERROR_CODES = [
   "quest_run_not_executable",
   "quest_run_not_found",
   "quest_run_not_abortable",
+  "quest_run_not_steerable",
   "quest_run_not_rerunnable",
   "quest_runner_unavailable",
   "quest_subprocess_aborted",
@@ -22,6 +23,7 @@ export const QUEST_ERROR_CODES = [
   "quest_unknown_dependency",
   "quest_workspace_materialization_failed",
   "quest_worker_not_found",
+  "quest_slice_not_steerable",
   "quest_observability_sink_not_found",
   "quest_storage_failure",
 ] as const;

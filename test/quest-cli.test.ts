@@ -324,6 +324,141 @@ test("quest cli can force planning and runs to a specific worker", () => {
   expect(createdRun.events[0].details.forcedWorkerId).toBe("rook");
 });
 
+test("quest cli can pause and resume a planned run", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Pause and resume run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const paused = runCli(context, ["runs", "pause", "--id", runId, "--reason", "hold"]);
+  expect(paused.code).toBe(0);
+  expect(JSON.parse(paused.stdout).run.status).toBe("paused");
+
+  const resumed = runCli(context, ["runs", "resume", "--id", runId]);
+  expect(resumed.code).toBe(0);
+  expect(JSON.parse(resumed.stdout).run.status).toBe("planned");
+});
+
+test("quest cli can reassign a blocked slice and turn it into an executable wave", () => {
+  const context = trackContext();
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Blocked steering run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  expect(
+    runCli(context, ["workers", "upsert", "--stdin"], {
+      input: createWorkerJson({ id: "rook", name: "Rook" }),
+    }).code,
+  ).toBe(0);
+
+  const reassigned = runCli(context, [
+    "runs",
+    "slices",
+    "reassign",
+    "--id",
+    runId,
+    "--slice",
+    "parser",
+    "--worker-id",
+    "rook",
+  ]);
+  expect(reassigned.code).toBe(0);
+  const steeredRun = JSON.parse(reassigned.stdout).run;
+  expect(steeredRun.status).toBe("planned");
+  expect(steeredRun.plan.unassigned).toHaveLength(0);
+  expect(steeredRun.plan.waves.at(-1).slices[0].assignedWorkerId).toBe("rook");
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+  expect(executed.code).toBe(0);
+  expect(JSON.parse(executed.stdout).run.status).toBe("completed");
+});
+
+test("quest cli can retry a failed slice and re-execute the run", () => {
+  const context = trackContext();
+  const scriptPath = join(context.stateRoot, "flaky-worker.ts");
+  const markerPath = join(context.stateRoot, "flaky-state.txt");
+  writeFileSync(
+    scriptPath,
+    [
+      "const statePath = Bun.env.QUEST_STATE_PATH;",
+      'if (!statePath) throw new Error("missing state path");',
+      'const marker = await Bun.file(statePath).text().catch(() => "fail");',
+      'if (marker.trim() === "pass") {',
+      '  console.log("worker passed");',
+      "  process.exit(0);",
+      "}",
+      'console.error("worker failed");',
+      "process.exit(1);",
+    ].join("\n"),
+    "utf8",
+  );
+  expectWorkerUpserted(
+    context,
+    createWorkerJson(
+      { id: "flaky", name: "Flaky" },
+      {
+        adapter: "local-command",
+        command: ["bun", scriptPath],
+        env: { QUEST_STATE_PATH: markerPath },
+        profile: "local-command",
+        runner: "custom",
+      },
+    ),
+  );
+
+  const created = runCli(context, ["run", "--worker-id", "flaky", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Retry slice run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const failed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(failed.code).toBe(1);
+
+  writeFileSync(markerPath, "pass\n", "utf8");
+  const retried = runCli(context, ["runs", "slices", "retry", "--id", runId, "--slice", "parser"]);
+  expect(retried.code).toBe(0);
+  expect(JSON.parse(retried.stdout).run.status).toBe("planned");
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(0);
+  expect(JSON.parse(executed.stdout).run.status).toBe("completed");
+});
+
+test("quest cli can skip a blocked slice to unblock the run", () => {
+  const context = trackContext();
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Skip blocked run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const skipped = runCli(context, [
+    "runs",
+    "slices",
+    "skip",
+    "--id",
+    runId,
+    "--slice",
+    "parser",
+    "--reason",
+    "not needed",
+  ]);
+  expect(skipped.code).toBe(0);
+  const run = JSON.parse(skipped.stdout).run;
+  expect(run.status).toBe("completed");
+  expect(run.slices[0].status).toBe("skipped");
+  expect(run.slices[0].integrationStatus).toBe("noop");
+});
+
 test("quest cli can explain planner worker ranking", () => {
   const context = trackContext();
   expect(
