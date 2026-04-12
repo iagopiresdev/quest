@@ -16,6 +16,22 @@ CLI output modes:
 - `--pretty` forces human-readable output
 - `bun run lint` now also fails on circular imports in `src/**`
 
+Pretty-mode vocabulary keeps the engine plain and adds light RPG flavor:
+- `Briefing`
+  plan and quest context
+- `Party Selection`
+  worker assignment and candidate ranking
+- `Roster`
+  worker lists and summaries
+- `Encounter`
+  one slice of work
+- `Boss Fight`
+  final integration state and checks
+- `Turn-in`
+  successful integrated outcome
+- `Training Grounds`
+  calibration output
+
 Engineering guidance for future work lives in [docs/engineering-guide.mdx](./docs/engineering-guide.mdx).
 Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.mdx](./docs/design-system.mdx).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).

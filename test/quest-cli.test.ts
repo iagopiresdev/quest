@@ -1481,8 +1481,87 @@ test("quest cli pretty prints run summaries when requested", async () => {
 
   const summary = await runCliAsync(context, ["runs", "summary", "--id", runId, "--pretty"]);
   expect(summary.code).toBe(0);
-  expect(summary.stdout).toContain(`Run ${runId}`);
-  expect(summary.stdout).toContain("status: planned");
-  expect(summary.stdout).toContain("slices:");
+  expect(summary.stdout).toContain(`Quest ${runId}`);
+  expect(summary.stdout).toContain("quest status: planned");
+  expect(summary.stdout).toContain("encounters:");
+  expect(summary.stdout).toContain("boss fight:");
+  expect(summary.stdout).toContain("turn-in:");
   expect(summary.stdout).not.toContain('"summary"');
+});
+
+test("quest cli pretty prints briefing and party selection when requested", () => {
+  const context = trackContext();
+
+  expectWorkerUpserted(context);
+  const plan = runCli(context, ["plan", "--stdin", "--explain", "--pretty"], {
+    input: JSON.stringify(createSpec({ title: "RPG briefing test" })),
+  });
+
+  expect(plan.code).toBe(0);
+  expect(plan.stdout).toContain("Briefing:");
+  expect(plan.stdout).toContain("party wave 1:");
+  expect(plan.stdout).toContain("Party Selection");
+  expect(plan.stdout).toContain("encounter");
+});
+
+test("quest cli pretty prints roster views when requested", () => {
+  const context = trackContext();
+
+  expectWorkerUpserted(context);
+
+  const listed = runCli(context, ["workers", "list", "--pretty"]);
+  expect(listed.code).toBe(0);
+  expect(listed.stdout).toContain("Roster");
+  expect(listed.stdout).toContain("ember (Ember)");
+
+  const status = runCli(context, ["workers", "status", "--id", "ember", "--pretty"]);
+  expect(status.code).toBe(0);
+  expect(status.stdout).toContain("Party Member ember");
+});
+
+test("quest cli pretty prints training grounds output when requested", () => {
+  const context = trackContext();
+  const scriptPath = createCalibrationCommandScript(context.stateRoot);
+
+  const upsert = runCli(context, ["workers", "upsert", "--stdin"], {
+    input: createLocalCommandWorkerJson("sparrow", ["bun", scriptPath]),
+  });
+  expect(upsert.code).toBe(0);
+
+  const calibrated = runCli(context, ["workers", "calibrate", "--id", "sparrow", "--pretty"]);
+  expect(calibrated.code).toBe(0);
+  expect(calibrated.stdout).toContain("Training Grounds: passed");
+  expect(calibrated.stdout).toContain("party member: sparrow");
+  expect(calibrated.stdout).toContain("quest:");
+});
+
+test("quest cli pretty prints trials in chronicle output when requested", async () => {
+  const context = trackContext();
+
+  expectWorkerUpserted(context);
+  const created = await runCliAsync(context, ["run", "--stdin"], {
+    input: JSON.stringify(
+      createSpec({
+        slices: [
+          createSlice({
+            acceptanceChecks: [createCommand(["bun", "-e", "console.log('trial-ok')"])],
+            id: "trial-slice",
+            title: "Trial Slice",
+          }),
+        ],
+        title: "Trial chronicle run",
+      }),
+    ),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+  expect(executed.code).toBe(0);
+
+  const logs = await runCliAsync(context, ["runs", "logs", "--id", runId, "--pretty"]);
+  expect(logs.code).toBe(0);
+  expect(logs.stdout).toContain("Chronicle");
+  expect(logs.stdout).toContain("encounter=trial-slice");
+  expect(logs.stdout).toContain("trial=bun -e console.log('trial-ok')");
 });

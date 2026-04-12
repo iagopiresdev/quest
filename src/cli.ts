@@ -1381,6 +1381,22 @@ function formatWorkerLine(worker: RegisteredWorker): string {
   ].join(" | ");
 }
 
+const prettyLabels = {
+  bossFight: "Boss Fight",
+  briefing: "Briefing",
+  encounter: "encounter",
+  encounters: "encounters",
+  party: "party",
+  partySelection: "Party Selection",
+  quest: "Quest",
+  questLog: "Quest Log",
+  roster: "Roster",
+  trainingGrounds: "Training Grounds",
+  turnIn: "Turn-in",
+  trial: "trial",
+  trials: "trials",
+} as const;
+
 function formatDoctorCheck(check: DoctorCheck): string {
   const detailEntries = Object.entries(check.details ?? {}).filter(([, value]) => value !== null);
   const detailText =
@@ -1407,24 +1423,27 @@ function formatSinkLine(sink: {
 }
 
 function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): string[] {
+  const turnInStatus =
+    summary.integration.status === "integrated" ? prettyLabels.turnIn.toLowerCase() : "pending";
   return [
-    `Run ${summary.id}`,
-    `  title: ${summary.title}`,
-    `  status: ${summary.status}`,
+    `${prettyLabels.quest} ${summary.id}`,
+    `  briefing: ${summary.title}`,
+    `  quest status: ${summary.status}`,
     `  updated: ${summary.updatedAt}`,
-    `  waves: ${summary.waves}`,
-    `  slices: ${formatCountMap(summary.counts.slices)}`,
-    `  integration: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
+    `  party waves: ${summary.waves}`,
+    `  ${prettyLabels.encounters}: ${formatCountMap(summary.counts.slices)}`,
+    `  ${prettyLabels.bossFight.toLowerCase()}: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
+    `  ${prettyLabels.turnIn.toLowerCase()}: ${turnInStatus}`,
     ...summary.slices.map(
       (slice) =>
-        `  - [${slice.status}] ${slice.id} | worker=${slice.workerId ?? "unassigned"} | integration=${slice.integrationStatus}`,
+        `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | ${prettyLabels.party}=${slice.workerId ?? "unassigned"} | ${prettyLabels.bossFight.toLowerCase()}=${slice.integrationStatus}`,
     ),
   ];
 }
 
 function formatWorkerStatusPretty(worker: RegisteredWorker, status: WorkerStatusSummary): string {
   return [
-    `Worker ${worker.id}`,
+    `Party Member ${worker.id}`,
     `  name: ${worker.name}`,
     `  title: ${worker.title}`,
     `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
@@ -1445,7 +1464,7 @@ function formatWorkersSummaryPretty(
   entries: Array<{ status: WorkerStatusSummary; worker: RegisteredWorker }>,
 ): string {
   return [
-    `Workers (${entries.length})`,
+    `${prettyLabels.roster} (${entries.length})`,
     ...entries.map(
       ({ status, worker }) =>
         `  - ${worker.id} | ${worker.backend.profile} | trust=${status.trustRating.toFixed(2)} | strengths=${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
@@ -1455,7 +1474,7 @@ function formatWorkersSummaryPretty(
 
 function formatWorkerHistoryPretty(worker: RegisteredWorker): string {
   return [
-    `Worker ${worker.id} history`,
+    `${prettyLabels.trainingGrounds} history for ${worker.id}`,
     `  calibration entries: ${worker.calibration.history.length}`,
     ...worker.calibration.history.map(
       (entry) =>
@@ -1495,21 +1514,23 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
   }
 
   const lines = [
-    `Plan: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
+    `${prettyLabels.briefing}: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
     ...plan.waves.map(
       (wave) =>
-        `  wave ${wave.index}: ${wave.slices
+        `  party wave ${wave.index}: ${wave.slices
           .map((slice) => `${slice.id}@${slice.assignedWorkerId ?? "unassigned"}`)
           .join(", ")}`,
     ),
-    ...plan.unassigned.map((slice) => `  unassigned: ${slice.id} (${slice.reason})`),
+    ...plan.unassigned.map(
+      (slice) => `  unassigned ${prettyLabels.encounter}: ${slice.id} (${slice.reason})`,
+    ),
     ...plan.warnings.map((warning) => `  warning: ${warning}`),
   ];
 
   if (explanation) {
-    lines.push("", "Worker candidates");
+    lines.push("", prettyLabels.partySelection);
     explanation.slices.forEach((slice) => {
-      lines.push(`  ${slice.sliceId} (${slice.discipline})`);
+      lines.push(`  ${prettyLabels.encounter} ${slice.sliceId} (${slice.discipline})`);
       slice.candidates.slice(0, 3).forEach((candidateEntry) => {
         lines.push(
           `    - ${candidateEntry.workerId} ${candidateEntry.runner} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
@@ -1537,7 +1558,7 @@ function formatRunsSummaryPretty(candidate: Record<string, unknown>): string {
 
   const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
   return [
-    "Runs",
+    prettyLabels.questLog,
     ...runs.map(
       (run) => `  - ${formatRunSummaryBlock(summarizeRunDetail(run))[0]} | status=${run.status}`,
     ),
@@ -1545,17 +1566,26 @@ function formatRunsSummaryPretty(candidate: Record<string, unknown>): string {
 }
 
 function formatLogsPretty(candidate: Record<string, unknown>): string {
-  const logs =
-    (candidate.logs as
-      | Array<{ checkName?: string | null; sliceId: string; status?: string; stdout: string }>
-      | undefined) ?? [];
-  return [
-    `Logs (${logs.length})`,
-    ...logs.map(
-      (log) =>
-        `  - slice=${log.sliceId} ${log.checkName ? `check=${log.checkName}` : "worker"}${log.status ? ` status=${log.status}` : ""}`,
-    ),
-  ].join("\n");
+  const logView = candidate.logs as
+    | {
+        runId: string;
+        slices: Array<{
+          lastChecks?: Array<{ command: { argv: string[] }; exitCode: number }> | undefined;
+          lastOutput?: { exitCode: number } | undefined;
+          sliceId: string;
+          status: string;
+        }>;
+      }
+    | undefined;
+  const logLines =
+    logView?.slices.flatMap((slice) => [
+      `  - ${prettyLabels.encounter}=${slice.sliceId} ${prettyLabels.party} status=${slice.status}${slice.lastOutput ? ` exit=${slice.lastOutput.exitCode}` : ""}`,
+      ...(slice.lastChecks ?? []).map(
+        (check) =>
+          `    ${prettyLabels.trial}=${check.command.argv.join(" ")} status=${check.exitCode === 0 ? "passed" : "failed"} exit=${check.exitCode}`,
+      ),
+    ]) ?? [];
+  return [`Chronicle${logView ? ` for ${logView.runId}` : ""}`, ...logLines].join("\n");
 }
 
 function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string {
@@ -1595,7 +1625,10 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "workers:list": {
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
-      return ["Workers", ...workers.map((worker) => `  - ${formatWorkerLine(worker)}`)].join("\n");
+      return [
+        prettyLabels.roster,
+        ...workers.map((worker) => `  - ${formatWorkerLine(worker)}`),
+      ].join("\n");
     }
     case "workers:summary": {
       const entries =
@@ -1628,7 +1661,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       }
 
       return [
-        `Worker ${worker.id} saved`,
+        `${prettyLabels.roster} updated: ${worker.id}`,
         `  name: ${worker.name}`,
         `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
         `  profile: ${worker.backend.profile}`,
@@ -1653,12 +1686,12 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       }
 
       return [
-        `Calibration ${result.calibration.status}`,
-        `  worker: ${result.worker.id}`,
+        `${prettyLabels.trainingGrounds}: ${result.calibration.status}`,
+        `  party member: ${result.worker.id}`,
         `  suite: ${result.calibration.suiteId}`,
         `  score: ${result.calibration.score}`,
         `  xp awarded: ${result.calibration.xpAwarded}`,
-        `  run: ${result.run.id} (${result.run.status})`,
+        `  quest: ${result.run.id} (${result.run.status})`,
       ].join("\n");
     }
     case "observability:sinks:list": {
@@ -1750,7 +1783,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "runs:list": {
       const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
       return [
-        `Runs (${runs.length})`,
+        `${prettyLabels.questLog} (${runs.length})`,
         ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.spec.title}`),
       ].join("\n");
     }

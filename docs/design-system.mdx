@@ -158,6 +158,37 @@ That means:
 
 Do not make readers understand the whole system before they can understand one feature.
 
+## Presentation Vocabulary
+
+The repo keeps internal domain names plain and uses RPG flavor only in operator-facing presentation.
+
+Rules:
+- schemas, state, events, and code paths keep the plain model:
+  `worker`, `slice`, `run`, `integration`, `acceptance checks`
+- CLI pretty output, TUI views, and future dashboards may render presentation aliases
+- presentation aliases must stay understandable without guessing and must not hide failure states
+- a presentation label is only acceptable if it maps back to one plain domain concept
+
+Current presentation aliases:
+- `Briefing`
+  plan output and quest title context
+- `Party Selection`
+  worker assignment and candidate ranking
+- `Roster`
+  worker lists and summaries
+- `Encounter`
+  one slice of work
+- `Trial`
+  slice-level acceptance checks
+- `Boss Fight`
+  final integration checks and integration state
+- `Turn-in`
+  successful integrated outcome
+- `Training Grounds`
+  calibration and worker evaluation
+
+Do not rename the internal domain model to match the presentation layer. The presentation layer is allowed to change without forcing schema churn.
+
 ## Skills, Rules, And Gates
 
 Project skills and rules should be treated as explicit artifacts.
