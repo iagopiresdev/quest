@@ -120,11 +120,13 @@ Rules:
 
 - Every feature needs automated coverage for happy path and edge cases.
 - Execution-facing features also need a real canary when the dependency exists locally.
+- Install/setup-facing features also need a fresh-install canary through the public `quest` command in a real terminal session such as `tmux`.
 - A canary should use the real interface the operator will use:
   - real `codex exec`
   - real Hermes HTTP endpoint
   - real webhook or Telegram sink
   - real git-backed workspace and integration flow
+  - real wrapper install plus `quest` invocation from a fresh terminal for install/setup changes
 - Canaries should run in disposable state roots and throwaway repos so they are safe to repeat.
 - When a real canary finds a bug, add or strengthen an automated regression test before closing the work.
 - Do not treat a mocked subprocess test as proof that a runner adapter behaves correctly in practice.

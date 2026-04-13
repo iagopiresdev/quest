@@ -1,0 +1,89 @@
+---
+title: Fresh Install Canary v1
+description: Run a real tmux-backed fresh-install operator canary against quest-runner.
+---
+
+# Fresh Install Canary v1
+
+## Context
+
+`quest-runner` already has strong unit and CLI coverage plus disposable real canaries.
+
+That still leaves one gap:
+- package install and setup can drift from the day-to-day developer environment
+- wrapper installation can behave differently from direct source execution
+- operator flows can pass in an already-warmed shell while failing from a fresh terminal session
+
+## Goal
+
+Add one real fresh-install canary that:
+- starts from a clean temp install directory
+- runs inside a real `tmux` terminal session
+- installs the local `quest` wrapper
+- executes the same CLI surface an operator would use
+- validates the end-to-end result in disposable state and repos
+
+## Non-Goals
+
+This version does not:
+- replace targeted backend canaries
+- require every backend to pass from a hermetic fake home
+- run inside CI on every change
+
+## Workflow
+
+The canary harness should:
+
+1. create an isolated temp root
+2. install `quest` into a fresh temp bin directory
+3. launch a `tmux` session that runs the operator steps
+4. run `quest doctor`
+5. register or set up a worker
+6. create a disposable source repo
+7. create a run and execute it with `--auto-integrate`
+8. verify source-repo safety and integration-worktree correctness
+9. write a machine-readable result artifact plus terminal log
+
+## Backends
+
+v1 supports:
+- `local-command`
+  - hermetic package/install smoke
+  - distinct builder/tester lane verification
+- `codex`
+  - real backend canary using the installed Codex login
+
+## Why tmux
+
+The point is not cosmetic terminal output.
+
+`tmux` matters because it gives us:
+- a real pty-backed shell session
+- the same kind of terminal semantics a user sees
+- reproducible capture of the operator transcript
+- the option to keep a failed session open for debugging
+
+## Validation Rules
+
+- install/setup/operator workflow changes must pass a fresh-install canary
+- the canary must use the public `quest` command, not direct internal imports
+- the canary must leave the source repo unchanged after auto-integration
+- the canary must prove the integration worktree contains the landed change
+
+## Operator Surface
+
+The harness should remain a repo-maintainer tool, not a public package script surface.
+
+Invoke it directly:
+
+- `bun ./scripts/canaries/fresh-install.ts --backend local-command`
+- `bun ./scripts/canaries/fresh-install.ts --backend codex`
+
+## Acceptance Criteria
+
+The feature is correct when:
+- the harness creates a fresh terminal-backed install session
+- the wrapper install succeeds
+- the end-to-end run completes
+- result and terminal log artifacts are available after completion
+- a failed canary leaves enough artifact state to debug what happened

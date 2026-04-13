@@ -38,15 +38,27 @@ Future roadmap notes for the training-ground system live in [docs/specs/training
 Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
 Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
 Tester-lane planning notes live in [docs/specs/tester-lane-v1.mdx](./docs/specs/tester-lane-v1.mdx).
+Fresh-install canary notes live in [docs/specs/fresh-install-canary-v1.mdx](./docs/specs/fresh-install-canary-v1.mdx).
 
 Testing rule:
 - mocked coverage is not enough for execution-facing work
 - runner, steering, integration, and sink changes should also be battle-tested through disposable real canaries when the backend exists locally
+- install and setup changes should also pass a fresh-install `tmux` canary through the public `quest` command
 
 Mintlify powers the docs surface for this repo. Local preview runs from the project root with:
 
 ```sh
 bun run docs:dev
+```
+
+Fresh-install canaries:
+
+```sh
+# hermetic package-install smoke with a local-command builder/tester pair
+bun ./scripts/canaries/fresh-install.ts --backend local-command
+
+# real package-install canary through Codex
+bun ./scripts/canaries/fresh-install.ts --backend codex
 ```
 
 ## Worker Backends

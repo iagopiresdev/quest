@@ -70,6 +70,7 @@ Rules:
 - Plans should identify scope, non-goals, risks, and validation.
 - Implementation should trace back to the plan, not wander into adjacent cleanup unless it is required for correctness.
 - Validation for orchestration, runner, integration, or steering changes must include both automated coverage and at least one real canary path when the backend exists locally.
+- Validation for install or setup changes must include a fresh-install canary that runs through the public `quest` command inside a real terminal session.
 - If the plan changes materially, the spec or proposal must change too.
 
 ## Architecture Anti-Patterns
