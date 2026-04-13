@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1079,6 +1080,87 @@ test("run executor completes a planned run with the hermes-api adapter", async (
     expect(executed.status).toBe("completed");
     expect(executed.slices[0]?.lastOutput?.summary).toBe("Hermes updated sum.ts");
     expect(readFileSync(join(workspacePath, "sum.ts"), "utf8")).toContain("return a + b;");
+  } finally {
+    server.stop(true);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor rejects Hermes writes through symlinked owned paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const externalRoot = join(root, "external-write-target");
+  mkdirSync(externalRoot, { recursive: true });
+
+  const server = Bun.serve({
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  files: [
+                    {
+                      content: "escaped\n",
+                      path: "linked-owned/pwned.txt",
+                    },
+                  ],
+                  summary: "Hermes attempted an escape",
+                }),
+              },
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    port: 0,
+  });
+
+  try {
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "hermes-api", undefined, {
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        profile: "hermes-local",
+        runner: "hermes",
+      }),
+    );
+    const repositoryRoot = createCommittedRepo(root);
+    symlinkSync(externalRoot, join(repositoryRoot, "linked-owned"));
+    Bun.spawnSync({ cmd: ["git", "add", "linked-owned"], cwd: repositoryRoot });
+    Bun.spawnSync({ cmd: ["git", "commit", "-m", "Add linked owned path"], cwd: repositoryRoot });
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          {
+            acceptanceChecks: [],
+            contextHints: [],
+            dependsOn: [],
+            discipline: "coding",
+            goal: "Update the linked file",
+            id: "fix-symlink",
+            owns: ["linked-owned/**"],
+            preferredRunner: "hermes",
+            title: "Fix symlink",
+          },
+        ],
+        title: "Hermes symlink run",
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+
+    await expect(executor.executeRun(run.id)).rejects.toMatchObject({
+      code: "quest_runner_command_failed",
+    });
+    expect(existsSync(join(externalRoot, "pwned.txt"))).toBe(false);
   } finally {
     server.stop(true);
     rmSync(root, { force: true, recursive: true });

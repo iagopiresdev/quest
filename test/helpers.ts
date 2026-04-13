@@ -145,12 +145,15 @@ export function createCodexMockExecutable(
 export function createOpenClawMockExecutable(
   root: string,
   options: {
+    agents?: Array<{ id: string; model?: string }>;
     agentId?: string;
     captureArgsPath?: string | undefined;
     captureDeleteArgsPath?: string | undefined;
     gatewayReachable?: boolean;
     jsonToStderr?: boolean;
     noisyAgent?: boolean;
+    noisyAgentsList?: boolean;
+    richAgentsList?: boolean;
     noisyStatus?: boolean;
     version?: string;
     writeFile?: { content: string; path: string } | undefined;
@@ -159,11 +162,17 @@ export function createOpenClawMockExecutable(
   const scriptPath = join(root, "openclaw-mock.sh");
   const version = options.version ?? "OpenClaw 0.0.0-test";
   const agentId = options.agentId ?? "main";
+  const agents = options.agents ?? [
+    { id: agentId, model: "openai-codex/gpt-5.4" },
+    { id: "codex", model: "openai-codex/gpt-5.4" },
+  ];
   const captureArgsPath = options.captureArgsPath;
   const captureDeleteArgsPath = options.captureDeleteArgsPath;
   const gatewayReachable = options.gatewayReachable ?? true;
   const jsonToStderr = options.jsonToStderr ?? false;
   const noisyAgent = options.noisyAgent ?? false;
+  const noisyAgentsList = options.noisyAgentsList ?? false;
+  const richAgentsList = options.richAgentsList ?? false;
   const noisyStatus = options.noisyStatus ?? false;
   const writeFile = options.writeFile;
   const mutationBlock = writeFile
@@ -190,25 +199,34 @@ export function createOpenClawMockExecutable(
       "  cat <<'EOF'",
       JSON.stringify({
         gateway: { reachable: gatewayReachable },
-        agents: { agents: [{ id: agentId }, { id: "codex" }] },
+        agents: { agents: agents.map((agent) => ({ id: agent.id })) },
       }),
       "EOF",
       gatewayReachable ? "  exit 0" : "  exit 1",
       "fi",
       'if [ "$1" = "agents" ] && [ "$2" = "list" ] && [ "$3" = "--json" ]; then',
+      ...(noisyAgentsList ? ["  printf 'plugins booted\\n'"] : []),
       "  cat <<'EOF'",
-      JSON.stringify([
-        {
-          id: agentId,
-          model: "openai-codex/gpt-5.4",
-          workspace: "/tmp/openclaw-default",
-        },
-        {
-          id: "codex",
-          model: "openai-codex/gpt-5.4",
-          workspace: "/tmp/openclaw-codex",
-        },
-      ]),
+      JSON.stringify(
+        agents.map((agent) => ({
+          ...(richAgentsList
+            ? {
+                agentDir: `/tmp/openclaw-${agent.id}/agent`,
+                bindings: 0,
+                identityEmoji: "🔥",
+                identityName: agent.id,
+                identitySource: "identity",
+                isDefault: agent.id === agentId,
+                name: agent.id,
+                providers: ["test"],
+                routes: ["default"],
+              }
+            : {}),
+          id: agent.id,
+          model: agent.model ?? null,
+          workspace: `/tmp/openclaw-${agent.id}`,
+        })),
+      ),
       "EOF",
       "  exit 0",
       "fi",

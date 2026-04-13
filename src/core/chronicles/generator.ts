@@ -1,7 +1,8 @@
 import { dirname, resolve } from "node:path";
 
-import { QuestDomainError } from "../errors";
+import { isQuestDomainError, QuestDomainError } from "../errors";
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "../runs/schema";
+import { assertWorkspacePathWithinRoot } from "../runs/workspace-layout";
 import { ensureDirectory } from "../storage";
 
 function slugifyChronicleTitle(title: string): string {
@@ -13,7 +14,7 @@ function slugifyChronicleTitle(title: string): string {
     .slice(0, 80);
 }
 
-function resolveChronicleOutputPath(run: QuestRunDocument): string {
+async function resolveChronicleOutputPath(run: QuestRunDocument): Promise<string> {
   const root = run.integrationWorkspacePath ?? run.workspaceRoot;
   if (!root) {
     throw new QuestDomainError({
@@ -27,17 +28,30 @@ function resolveChronicleOutputPath(run: QuestRunDocument): string {
   const relativeOutputPath =
     run.spec.featureDoc.outputPath ?? `docs/features/${slugifyChronicleTitle(run.spec.title)}.md`;
   const outputPath = resolve(root, relativeOutputPath);
-  const resolvedRoot = resolve(root);
-  if (!(outputPath === resolvedRoot || outputPath.startsWith(`${resolvedRoot}/`))) {
+  if (!(outputPath === resolve(root) || outputPath.startsWith(`${resolve(root)}/`))) {
     throw new QuestDomainError({
       code: "quest_feature_doc_failed",
-      details: { outputPath: relativeOutputPath, root: resolvedRoot, runId: run.id },
+      details: { outputPath: relativeOutputPath, root: resolve(root), runId: run.id },
       message: `Feature doc path escapes the quest workspace: ${relativeOutputPath}`,
       statusCode: 1,
     });
   }
 
-  return outputPath;
+  try {
+    return await assertWorkspacePathWithinRoot(root, outputPath, "Feature doc path");
+  } catch (error: unknown) {
+    throw new QuestDomainError({
+      code: "quest_feature_doc_failed",
+      details: {
+        cause: isQuestDomainError(error) ? error.details : error,
+        outputPath: relativeOutputPath,
+        root: resolve(root),
+        runId: run.id,
+      },
+      message: `Feature doc path escapes the quest workspace: ${relativeOutputPath}`,
+      statusCode: 1,
+    });
+  }
 }
 
 function formatCommand(check: QuestRunCheckResult): string {
@@ -150,7 +164,7 @@ export function generateRunChronicle(run: QuestRunDocument): string {
 }
 
 export async function writeRunChronicle(run: QuestRunDocument): Promise<string> {
-  const outputPath = resolveChronicleOutputPath(run);
+  const outputPath = await resolveChronicleOutputPath(run);
   await ensureDirectory(dirname(outputPath));
   await Bun.write(outputPath, generateRunChronicle(run));
   return outputPath;

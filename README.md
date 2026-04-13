@@ -475,7 +475,13 @@ quest setup
 quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
 
 # bootstrap an OpenClaw worker instead
-quest setup --yes --backend openclaw --agent-id codex --profile openai-codex/gpt-5.4
+quest setup --yes --backend openclaw --openclaw-executable /path/to/openclaw
+
+# when flags are omitted, setup imports usable backend defaults from the local machine
+# examples:
+# - Codex native login or OPENAI_API_KEY
+# - first reachable Hermes model from /models
+# - preferred OpenClaw agent (codex first, then first listed agent)
 
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
@@ -494,11 +500,10 @@ quest workers add codex \
   --context-window 240000 \
   --provider-option 'model_provider="responses"'
 
-# add a Hermes worker from flags
+# add a Hermes worker from flags, or let quest import the first detected model
 quest workers add hermes \
   --name "Quest Hermes" \
   --base-url http://127.0.0.1:8000/v1 \
-  --profile hermes-local \
   --testing 92 \
   --gpu-cost 1 \
   --reasoning-effort medium \
@@ -507,14 +512,16 @@ quest workers add hermes \
   --top-p 0.8 \
   --provider-option frequency_penalty=0.5
 
-# add an OpenClaw worker from flags
+# add an OpenClaw worker from flags, or let quest import the preferred local agent/profile
 quest workers add openclaw \
   --name "Quest OpenClaw" \
-  --agent-id codex \
-  --profile openai-codex/gpt-5.4 \
+  --executable /path/to/openclaw \
   --reasoning-effort medium \
   --provider-option timeout_seconds=120 \
   --provider-option verbose=off
+
+# inspect one worker with strengths, runtime, and backend detail
+quest workers inspect --id quest-codex
 
 # inspect one worker with strengths and calibration summary
 quest workers status --id quest-codex
@@ -532,6 +539,9 @@ quest workers update \
   --testing 80 \
   --trust-rating 0.84 \
   --profile gpt-5.4-mini
+
+# remove a worker from the roster
+quest workers remove --id quest-codex --yes
 
 # list configured observability sinks
 quest observability sinks list

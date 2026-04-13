@@ -29,7 +29,12 @@ export type SetupWizardResult = {
 };
 
 type SetupWizardDefaults = {
+  agentId?: string;
   backend: SetupWizardBackend;
+  baseUrl?: string;
+  envVar?: string;
+  importSummary?: string;
+  profile?: string;
 };
 
 type SetupWizardPromptContext = {
@@ -155,6 +160,7 @@ async function promptWorkerPlan(
   cli: ReturnType<typeof createInterface>,
   backend: SetupWizardBackend,
   role: "builder" | "tester" | "hybrid",
+  defaults: SetupWizardDefaults,
 ): Promise<SetupWizardWorkerPlan> {
   let sectionDetail = "Pick a solo operator that can clear encounters and trials.";
   if (role === "builder") {
@@ -165,7 +171,11 @@ async function promptWorkerPlan(
 
   await writeSetupSection(renderRoleStationTitle(role), sectionDetail);
   const name = await promptWithDefault(cli, `${role} name`, defaultWorkerName(backend, role));
-  const profile = await promptWithDefault(cli, `${role} profile`, defaultProfile(backend));
+  const profile = await promptWithDefault(
+    cli,
+    `${role} profile`,
+    defaults.profile ?? defaultProfile(backend),
+  );
   const args = ["--name", name, "--profile", profile, "--role", role];
   const archetypes = listSetupArchetypesForRole(role);
   const defaultArchetype = defaultSetupArchetype(role);
@@ -179,14 +189,18 @@ async function promptWorkerPlan(
     archetypes.find((candidate) => candidate.id === archetypeId) ?? defaultArchetype;
 
   if (backend === "hermes") {
-    const baseUrl = await promptWithDefault(cli, "Hermes base URL", "http://127.0.0.1:8000/v1");
+    const baseUrl = await promptWithDefault(
+      cli,
+      "Hermes base URL",
+      defaults.baseUrl ?? "http://127.0.0.1:8000/v1",
+    );
     args.push("--base-url", baseUrl);
   }
 
   if (backend === "openclaw") {
-    const agentId = await promptWithDefault(cli, "OpenClaw agent id", "main");
+    const agentId = await promptWithDefault(cli, "OpenClaw agent id", defaults.agentId ?? "main");
     args.push("--agent-id", agentId);
-    const gatewayUrl = await promptWithDefault(cli, "Gateway URL", "");
+    const gatewayUrl = await promptWithDefault(cli, "Gateway URL", defaults.baseUrl ?? "");
     if (gatewayUrl.length > 0) {
       args.push("--gateway-url", gatewayUrl);
     }
@@ -304,7 +318,7 @@ export async function runSetupWizard(
   });
 
   try {
-    await writeSetupBanner(context.defaults.backend);
+    await writeSetupBanner(context.defaults.backend, context.defaults.importSummary);
     const backend = await chooseOne(
       cli,
       "Backend",
@@ -320,10 +334,10 @@ export async function runSetupWizard(
 
     const workerPlans: SetupWizardWorkerPlan[] = [];
     if (partyMode === "hybrid") {
-      workerPlans.push(await promptWorkerPlan(cli, backend, "hybrid"));
+      workerPlans.push(await promptWorkerPlan(cli, backend, "hybrid", context.defaults));
     } else {
-      workerPlans.push(await promptWorkerPlan(cli, backend, "builder"));
-      workerPlans.push(await promptWorkerPlan(cli, backend, "tester"));
+      workerPlans.push(await promptWorkerPlan(cli, backend, "builder", context.defaults));
+      workerPlans.push(await promptWorkerPlan(cli, backend, "tester", context.defaults));
     }
 
     await writeSetupSection("Observability", "Choose where quest events should be delivered.");

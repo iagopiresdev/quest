@@ -2,10 +2,11 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 
 import { z } from "zod";
-import { QuestDomainError } from "../../errors";
+import { isQuestDomainError, QuestDomainError } from "../../errors";
 import type { SecretStore } from "../../secret-store";
 import type { WorkerRuntimeConfig } from "../../workers/runtime";
 import { matchesQuestPathPattern } from "../path-patterns";
+import { assertWorkspacePathWithinRoot } from "../workspace-layout";
 import { buildRunnerPrompt, resolveAuthEnv } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
 
@@ -191,18 +192,27 @@ async function applyHermesWrites(
     }
 
     const absolutePath = resolve(cwd, normalizedPath);
-    const workspaceRoot = resolve(cwd);
-    if (!(absolutePath === workspaceRoot || absolutePath.startsWith(`${workspaceRoot}/`))) {
+    let confinedPath: string;
+    try {
+      confinedPath = await assertWorkspacePathWithinRoot(
+        cwd,
+        absolutePath,
+        `Hermes output ${normalizedPath}`,
+      );
+    } catch (error: unknown) {
       throw new QuestDomainError({
         code: "quest_runner_command_failed",
-        details: { path: normalizedPath },
+        details: {
+          cause: isQuestDomainError(error) ? error.details : error,
+          path: normalizedPath,
+        },
         message: `Hermes attempted to escape the slice workspace: ${normalizedPath}`,
         statusCode: 1,
       });
     }
 
-    await mkdir(dirname(absolutePath), { recursive: true });
-    await writeFile(absolutePath, file.content, "utf8");
+    await mkdir(dirname(confinedPath), { recursive: true });
+    await writeFile(confinedPath, file.content, "utf8");
   }
 }
 

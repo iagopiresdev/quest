@@ -176,6 +176,38 @@ test("quest cli adds a hermes worker from flags", () => {
   });
 });
 
+test("quest cli imports a hermes profile from detected models when flags omit it", async () => {
+  const context = trackContext();
+  const server = Bun.serve({
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          data: [{ id: "hermes-imported" }, { id: "backup-model" }],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    port: 0,
+  });
+
+  try {
+    const added = await runCliAsync(context, [
+      "workers",
+      "add",
+      "hermes",
+      "--name",
+      "Imported Hermes",
+      "--base-url",
+      `http://127.0.0.1:${server.port}/v1`,
+    ]);
+
+    expect(added.code).toBe(0);
+    const worker = JSON.parse(added.stdout).worker;
+    expect(worker.backend.profile).toBe("hermes-imported");
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("quest cli adds an openclaw worker from flags", () => {
   const context = trackContext();
 
@@ -217,6 +249,101 @@ test("quest cli adds an openclaw worker from flags", () => {
   });
 });
 
+test("quest cli imports openclaw agent and profile from detected agents", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    agents: [
+      { id: "main", model: "glm-5.1" },
+      { id: "codex", model: "openai-codex/gpt-5.4" },
+    ],
+  });
+
+  const added = await runCliAsync(context, [
+    "workers",
+    "add",
+    "openclaw",
+    "--name",
+    "Imported OpenClaw",
+    "--executable",
+    openClawExecutable,
+  ]);
+
+  expect(added.code).toBe(0);
+  const worker = JSON.parse(added.stdout).worker;
+  expect(worker.backend.agentId).toBe("codex");
+  expect(worker.backend.profile).toBe("openai-codex/gpt-5.4");
+});
+
+test("quest cli imports openclaw defaults when agents list includes plugin noise", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    agents: [
+      { id: "main", model: "glm-5.1" },
+      { id: "codex", model: "openai-codex/gpt-5.4" },
+    ],
+    noisyAgentsList: true,
+  });
+
+  const added = await runCliAsync(context, [
+    "workers",
+    "add",
+    "openclaw",
+    "--name",
+    "Imported Noisy OpenClaw",
+    "--executable",
+    openClawExecutable,
+  ]);
+
+  expect(added.code).toBe(0);
+  const worker = JSON.parse(added.stdout).worker;
+  expect(worker.backend.agentId).toBe("codex");
+  expect(worker.backend.profile).toBe("openai-codex/gpt-5.4");
+});
+
+test("quest cli imports openclaw defaults from rich agent metadata", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    agents: [
+      { id: "main", model: "anthropic/claude-opus-4-6" },
+      { id: "codex", model: "openai-codex/gpt-5.4" },
+    ],
+    richAgentsList: true,
+  });
+
+  const setup = await runCliAsync(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "openclaw",
+    "--openclaw-executable",
+    openClawExecutable,
+    "--worker-name",
+    "Imported Rich OpenClaw",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.createdWorker.backend.agentId).toBe("codex");
+  expect(result.createdWorker.backend.profile).toBe("openai-codex/gpt-5.4");
+});
+
+test("quest cli imports codex env auth when native login is unavailable", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot, { loginOk: false });
+
+  const added = runCli(context, ["workers", "add", "codex", "--name", "Imported Codex"], {
+    env: {
+      OPENAI_API_KEY: "test-openai-key",
+      QUEST_RUNNER_CODEX_EXECUTABLE: codexExecutable,
+    },
+  });
+
+  expect(added.code).toBe(0);
+  const worker = JSON.parse(added.stdout).worker;
+  expect(worker.backend.auth.mode).toBe("env-var");
+  expect(worker.backend.auth.envVar).toBe("OPENAI_API_KEY");
+});
+
 test("quest cli shows worker status with strengths and calibration summary", () => {
   const context = trackContext();
   expectWorkerUpserted(context);
@@ -231,6 +358,17 @@ test("quest cli shows worker status with strengths and calibration summary", () 
     payload.status.strengths[1].score,
   );
   expect(payload.status.calibrationHistoryCount).toBe(0);
+});
+
+test("quest cli inspects a worker with backend and runtime detail", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const inspect = runCli(context, ["workers", "inspect", "--id", "ember"]);
+  expect(inspect.code).toBe(0);
+  const payload = JSON.parse(inspect.stdout);
+  expect(payload.worker.id).toBe("ember");
+  expect(payload.status.role).toBe("hybrid");
 });
 
 test("quest cli lists a worker summary roster", () => {
@@ -404,6 +542,33 @@ test("quest cli setup bootstraps an openclaw worker from detected gateway", asyn
   expect(result.createdWorker.backend.agentId).toBe("main");
 });
 
+test("quest cli setup imports openclaw agent and profile defaults when omitted", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    agents: [
+      { id: "main", model: "glm-5.1" },
+      { id: "codex", model: "openai-codex/gpt-5.4" },
+    ],
+  });
+
+  const setup = await runCliAsync(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "openclaw",
+    "--openclaw-executable",
+    openClawExecutable,
+    "--worker-name",
+    "Imported OpenClaw",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.createdWorker.backend.agentId).toBe("codex");
+  expect(result.createdWorker.backend.profile).toBe("openai-codex/gpt-5.4");
+  expect(result.imports.summary).toContain("OpenClaw agent codex");
+});
+
 test("quest cli doctor tolerates noisy openclaw status output", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
@@ -430,6 +595,18 @@ test("quest cli doctor tolerates noisy openclaw status output", () => {
   expect(
     report.checks.find((check: { name: string }) => check.name === "openclaw-status")?.ok,
   ).toBe(true);
+});
+
+test("quest cli removes a worker from the registry", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const removed = runCli(context, ["workers", "remove", "--id", "ember", "--yes"]);
+  expect(removed.code).toBe(0);
+  expect(JSON.parse(removed.stdout).worker.id).toBe("ember");
+
+  const listed = runCli(context, ["workers", "list"]);
+  expect(JSON.parse(listed.stdout).workers).toHaveLength(0);
 });
 
 test("quest cli can force planning and runs to a specific worker", () => {

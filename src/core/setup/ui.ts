@@ -51,12 +51,16 @@ function summarizeWorkerPlan(plan: SetupWizardWorkerPlan): string {
   return `  - ${name} (${role}) · ${plan.backend}:${profile} · ${archetype}`;
 }
 
-export async function writeSetupBanner(defaultBackend: SetupWizardBackend): Promise<void> {
+export async function writeSetupBanner(
+  defaultBackend: SetupWizardBackend,
+  importSummary?: string,
+): Promise<void> {
   const lines = [
     colorize("Quest Runner Setup", "bold"),
     colorize("Build your first party, wire observability, and validate the install.", "dim"),
     "",
     `${colorize("Default backend", "cyan")}: ${defaultBackend}`,
+    ...(importSummary ? [`${colorize("Imported defaults", "cyan")}: ${importSummary}`] : []),
   ];
   await Bun.write(Bun.stdout, `${lines.join("\n")}\n\n`);
 }

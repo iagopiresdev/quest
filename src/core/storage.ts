@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { QuestDomainError } from "./errors";
 
 const DEFAULT_STATE_ROOT = join(homedir(), ".quest-runner");
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
 
 export function resolveQuestStateRoot(explicitPath?: string | undefined): string {
   const configuredPath = explicitPath?.trim() || Bun.env.QUEST_RUNNER_STATE_ROOT?.trim();
@@ -165,8 +167,11 @@ export async function writeJsonFileAtomically(path: string, payload: unknown): P
   const tempPath = `${path}.${crypto.randomUUID()}.tmp`;
 
   try {
-    await mkdir(parentDir, { recursive: true });
-    await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    await mkdir(parentDir, { mode: PRIVATE_DIRECTORY_MODE, recursive: true });
+    await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: PRIVATE_FILE_MODE,
+    });
     await rename(tempPath, path);
   } catch (error: unknown) {
     throw new QuestDomainError({
@@ -180,7 +185,7 @@ export async function writeJsonFileAtomically(path: string, payload: unknown): P
 
 export async function ensureDirectory(path: string): Promise<void> {
   try {
-    await mkdir(path, { recursive: true });
+    await mkdir(path, { mode: PRIVATE_DIRECTORY_MODE, recursive: true });
   } catch (error: unknown) {
     throw new QuestDomainError({
       code: "quest_storage_failure",

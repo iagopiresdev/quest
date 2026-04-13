@@ -89,4 +89,23 @@ export class WorkerRegistry {
     await writeJsonFileAtomically(this.registryPath, nextDocument);
     return parsedWorker.data;
   }
+
+  async removeWorker(workerId: string): Promise<RegisteredWorker> {
+    const document = await this.read();
+    const existingWorker = document.workers.find((worker) => worker.id === workerId);
+    if (!existingWorker) {
+      throw new QuestDomainError({
+        code: "quest_worker_not_found",
+        details: { workerId },
+        message: `Worker ${workerId} is not registered`,
+        statusCode: 1,
+      });
+    }
+
+    await writeJsonFileAtomically(this.registryPath, {
+      version: 1,
+      workers: document.workers.filter((worker) => worker.id !== workerId),
+    } satisfies WorkerRegistryDocument);
+    return existingWorker;
+  }
 }

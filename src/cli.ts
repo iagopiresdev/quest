@@ -33,6 +33,14 @@ import type { QuestRunDocument, QuestRunSliceState } from "./core/runs/schema";
 import { QuestRunStore } from "./core/runs/store";
 import { type RunUsageSummary, summarizeRunUsage } from "./core/runs/usage";
 import { SecretStore } from "./core/secret-store";
+import {
+  type DetectedCodexSetup,
+  type DetectedHermesSetup,
+  type DetectedOpenClawSetup,
+  detectCodexSetup,
+  detectHermesSetup,
+  detectOpenClawSetup,
+} from "./core/setup/detection";
 import { runSetupWizard } from "./core/setup/wizard";
 import {
   ensureDirectory,
@@ -104,6 +112,8 @@ type QuestCliCommand =
   | "workers:add:openclaw"
   | "workers:calibrate"
   | "workers:history"
+  | "workers:inspect"
+  | "workers:remove"
   | "workers:status"
   | "workers:summary"
   | "workers:update"
@@ -199,11 +209,11 @@ function printUsage(): void {
 }
 
 function stdinIsTty(): boolean {
-  return process.stdin.isTTY === true;
+  return Bun.env.QUEST_RUNNER_FORCE_INTERACTIVE === "1" || process.stdin.isTTY === true;
 }
 
 function stdoutIsTty(): boolean {
-  return process.stdout.isTTY === true;
+  return Bun.env.QUEST_RUNNER_FORCE_INTERACTIVE === "1" || process.stdout.isTTY === true;
 }
 
 function findOptionValue(args: string[], flag: string): string | undefined {
@@ -230,6 +240,10 @@ function findOptionValues(args: string[], flag: string): string[] {
 
 function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
+}
+
+function shouldImportExisting(args: string[]): boolean {
+  return !hasFlag(args, "--no-import-existing");
 }
 
 function requireOptionValue(args: string[], flag: string, label: string): string {
@@ -598,14 +612,573 @@ async function confirmWithDefault(question: string, fallback: boolean): Promise<
   }
 }
 
-function buildCodexWorker(args: string[]): RegisteredWorker {
+function describeImportedBackendDefaults(
+  backend: string,
+  imported: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
+): string | undefined {
+  if (!imported) {
+    return undefined;
+  }
+
+  if (backend === "codex") {
+    const codex = imported as DetectedCodexSetup;
+    if (codex.loginOk) {
+      return `Codex login active via ${codex.executable}`;
+    }
+
+    if (codex.envVar) {
+      return `Codex API key imported from ${codex.envVar}`;
+    }
+
+    return `Codex executable detected at ${codex.executable}`;
+  }
+
+  if (backend === "hermes") {
+    const hermes = imported as DetectedHermesSetup;
+    if (!hermes.ok) {
+      return `Hermes probe failed for ${hermes.baseUrl}`;
+    }
+    return `Hermes models discovered at ${hermes.baseUrl}${hermes.profile ? ` (${hermes.profile})` : ""}`;
+  }
+
+  const openClaw = imported as DetectedOpenClawSetup;
+  if (!openClaw.ok) {
+    return `OpenClaw detected at ${openClaw.executable}`;
+  }
+  return `OpenClaw agent ${openClaw.agentId ?? "unknown"}${openClaw.profile ? ` on ${openClaw.profile}` : ""}`;
+}
+
+function asCodexSetup(
+  imported: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
+): DetectedCodexSetup | null {
+  return imported && "loginOk" in imported ? imported : null;
+}
+
+function asHermesSetup(
+  imported: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
+): DetectedHermesSetup | null {
+  return imported && "models" in imported ? imported : null;
+}
+
+function asOpenClawSetup(
+  imported: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
+): DetectedOpenClawSetup | null {
+  return imported && "agents" in imported ? imported : null;
+}
+
+async function detectBackendDefaults(
+  backend: string,
+  args: string[],
+): Promise<DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null> {
+  if (!shouldImportExisting(args)) {
+    return null;
+  }
+
+  if (backend === "codex") {
+    if (
+      findOptionValue(args, "--profile") &&
+      findOptionValue(args, "--auth-mode") &&
+      findOptionValue(args, "--executable")
+    ) {
+      return null;
+    }
+    return await detectCodexSetup(
+      findOptionValue(args, "--executable") ?? findOptionValue(args, "--codex-executable"),
+    );
+  }
+
+  if (backend === "hermes") {
+    if (findOptionValue(args, "--base-url") && findOptionValue(args, "--profile")) {
+      return null;
+    }
+    return await detectHermesSetup(
+      findOptionValue(args, "--base-url") ?? findOptionValue(args, "--hermes-base-url"),
+    );
+  }
+
+  if (backend === "openclaw") {
+    if (
+      (findOptionValue(args, "--agent-id") || findOptionValue(args, "--session-id")) &&
+      findOptionValue(args, "--profile")
+    ) {
+      return null;
+    }
+    const options: Parameters<typeof detectOpenClawSetup>[0] = {};
+    const agentId = findOptionValue(args, "--agent-id");
+    const executable =
+      findOptionValue(args, "--executable") ?? findOptionValue(args, "--openclaw-executable");
+    const gatewayUrl = findOptionValue(args, "--gateway-url");
+    if (agentId) {
+      options.agentId = agentId;
+    }
+    if (executable) {
+      options.executable = executable;
+    }
+    if (gatewayUrl) {
+      options.gatewayUrl = gatewayUrl;
+    }
+    return await detectOpenClawSetup(options);
+  }
+
+  return null;
+}
+
+function buildWorkerFromDetectedBackend(
+  backend: string,
+  args: string[],
+  importedDefaults: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
+): RegisteredWorker {
+  if (backend === "codex") {
+    return buildCodexWorker(args, asCodexSetup(importedDefaults));
+  }
+
+  if (backend === "hermes") {
+    return buildHermesWorker(args, asHermesSetup(importedDefaults));
+  }
+
+  return buildOpenClawWorker(args, asOpenClawSetup(importedDefaults));
+}
+
+function buildSetupWizardDefaults(
+  backend: string,
+  importedCodex: DetectedCodexSetup | null,
+  importedHermes: DetectedHermesSetup | null,
+  importedOpenClaw: DetectedOpenClawSetup | null,
+  importedSummary: string | undefined,
+): Parameters<typeof runSetupWizard>[0]["defaults"] {
+  return {
+    backend: (backend === "hermes" || backend === "openclaw" ? backend : "codex") as
+      | "codex"
+      | "hermes"
+      | "openclaw",
+    ...(importedCodex?.envVar ? { envVar: importedCodex.envVar } : {}),
+    ...(importedHermes?.baseUrl ? { baseUrl: importedHermes.baseUrl } : {}),
+    ...(importedHermes?.profile ? { profile: importedHermes.profile } : {}),
+    ...(importedOpenClaw?.agentId ? { agentId: importedOpenClaw.agentId } : {}),
+    ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
+    ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
+    ...(importedSummary ? { importSummary: importedSummary } : {}),
+  };
+}
+
+async function buildWorkersFromSetupPlans(
+  plans: Array<{ args: string[]; backend: "codex" | "hermes" | "openclaw"; update: WorkerUpdate }>,
+): Promise<RegisteredWorker[]> {
+  const workers: RegisteredWorker[] = [];
+  for (const plan of plans) {
+    const importedDefaults = await detectBackendDefaults(plan.backend, plan.args);
+    const baseWorker = buildWorkerFromDetectedBackend(plan.backend, plan.args, importedDefaults);
+    workers.push(registeredWorkerSchema.parse(applyWorkerUpdate(baseWorker, plan.update)));
+  }
+  return workers;
+}
+
+async function configureSetupSink(
+  observabilityStore: ObservabilityStore,
+  sinkPlan: Awaited<ReturnType<typeof runSetupWizard>>["sinkPlan"],
+): Promise<Record<string, unknown> | null> {
+  if (!sinkPlan) {
+    return null;
+  }
+
+  if (sinkPlan.kind === "webhook") {
+    return await observabilityStore.upsertWebhookSink(
+      webhookSinkSchema.parse({
+        enabled: true,
+        eventTypes: [],
+        id: "setup-webhook",
+        type: "webhook",
+        url: requireOptionValue(sinkPlan.args, "--url", "--url <https://...>"),
+      }),
+    );
+  }
+
+  if (sinkPlan.kind === "telegram") {
+    return await observabilityStore.upsertTelegramSink(
+      telegramSinkSchema.parse({
+        botTokenSecretRef: findOptionValue(sinkPlan.args, "--bot-token-secret-ref"),
+        botTokenEnv: findOptionValue(sinkPlan.args, "--bot-token-env"),
+        chatId: requireOptionValue(sinkPlan.args, "--chat-id", "--chat-id <id>"),
+        enabled: true,
+        eventTypes: [],
+        id: "setup-telegram",
+        type: "telegram",
+      }),
+    );
+  }
+
+  if (sinkPlan.kind === "slack") {
+    return await observabilityStore.upsertSlackSink(
+      slackSinkSchema.parse({
+        enabled: true,
+        eventTypes: [],
+        id: "setup-slack",
+        secretRef: findOptionValue(sinkPlan.args, "--secret-ref"),
+        type: "slack",
+        url: findOptionValue(sinkPlan.args, "--url"),
+        urlEnv: findOptionValue(sinkPlan.args, "--url-env"),
+      }),
+    );
+  }
+
+  return await observabilityStore.upsertLinearSink(
+    linearSinkSchema.parse({
+      apiKeyEnv: findOptionValue(sinkPlan.args, "--api-key-env"),
+      apiKeySecretRef: findOptionValue(sinkPlan.args, "--api-key-secret-ref"),
+      enabled: true,
+      eventTypes: [],
+      id: "setup-linear",
+      issueId: requireOptionValue(sinkPlan.args, "--issue-id", "--issue-id <id>"),
+      type: "linear",
+    }),
+  );
+}
+
+async function runSetupCalibrations(
+  calibrator: WorkerCalibrator,
+  createdWorkers: RegisteredWorker[],
+  calibrateWorkerIds: string[],
+): Promise<Array<{ runId: string; status: string; workerId: string }>> {
+  const calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
+  for (const worker of createdWorkers) {
+    if (!calibrateWorkerIds.includes(worker.id)) {
+      continue;
+    }
+
+    const result = await calibrator.calibrateWorker(worker.id);
+    calibrationResults.push({
+      runId: result.run.id,
+      status: result.calibration.status,
+      workerId: result.worker.id,
+    });
+  }
+  return calibrationResults;
+}
+
+function buildNonInteractiveSetupWorkerArgs(
+  args: string[],
+  backend: string,
+  workerName: string,
+  profile: string,
+  baseUrl: string,
+  agentId: string,
+  importedCodex: DetectedCodexSetup | null,
+): string[] {
+  const workerArgs = [
+    "--name",
+    workerName,
+    "--profile",
+    profile,
+    "--id",
+    findOptionValue(args, "--worker-id") ?? slugifyWorkerId(workerName),
+  ];
+  if (backend === "hermes") {
+    workerArgs.push("--base-url", baseUrl);
+  }
+  if (backend === "openclaw") {
+    workerArgs.push("--agent-id", agentId);
+  }
+  if (backend === "codex") {
+    workerArgs.push(
+      "--auth-mode",
+      findOptionValue(args, "--auth-mode") ?? importedCodex?.authMode ?? "native-login",
+    );
+  } else if (backend === "hermes" || backend === "openclaw") {
+    pushOption(workerArgs, "--auth-mode", findOptionValue(args, "--auth-mode"));
+  }
+  pushOption(workerArgs, "--env-var", findOptionValue(args, "--env-var") ?? importedCodex?.envVar);
+  pushOption(workerArgs, "--secret-ref", findOptionValue(args, "--secret-ref"));
+  pushOption(workerArgs, "--target-env-var", findOptionValue(args, "--target-env-var"));
+  pushOption(workerArgs, "--title", findOptionValue(args, "--title"));
+  pushOption(workerArgs, "--class", findOptionValue(args, "--class"));
+  pushOption(workerArgs, "--role", findOptionValue(args, "--role"));
+  pushOption(workerArgs, "--voice", findOptionValue(args, "--voice"));
+  pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
+  pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
+  pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
+  pushOption(workerArgs, "--gateway-url", findOptionValue(args, "--gateway-url"));
+  pushOption(workerArgs, "--session-id", findOptionValue(args, "--session-id"));
+  if (hasFlag(args, "--local")) {
+    workerArgs.push("--local");
+  }
+  pushOption(workerArgs, "--tags", findOptionValue(args, "--tags"));
+  pushOption(workerArgs, "--reasoning-effort", findOptionValue(args, "--reasoning-effort"));
+  pushOption(workerArgs, "--max-output-tokens", findOptionValue(args, "--max-output-tokens"));
+  pushOption(workerArgs, "--temperature", findOptionValue(args, "--temperature"));
+  pushOption(workerArgs, "--top-p", findOptionValue(args, "--top-p"));
+  pushOption(workerArgs, "--context-window", findOptionValue(args, "--context-window"));
+  pushOption(workerArgs, "--coding", findOptionValue(args, "--coding"));
+  pushOption(workerArgs, "--testing", findOptionValue(args, "--testing"));
+  pushOption(workerArgs, "--docs", findOptionValue(args, "--docs"));
+  pushOption(workerArgs, "--research", findOptionValue(args, "--research"));
+  pushOption(workerArgs, "--speed", findOptionValue(args, "--speed"));
+  pushOption(workerArgs, "--merge-safety", findOptionValue(args, "--merge-safety"));
+  pushOption(workerArgs, "--context-endurance", findOptionValue(args, "--context-endurance"));
+  pushOption(workerArgs, "--cpu-cost", findOptionValue(args, "--cpu-cost"));
+  pushOption(workerArgs, "--memory-cost", findOptionValue(args, "--memory-cost"));
+  pushOption(workerArgs, "--gpu-cost", findOptionValue(args, "--gpu-cost"));
+  pushOption(workerArgs, "--max-parallel", findOptionValue(args, "--max-parallel"));
+  pushOption(workerArgs, "--trust-rating", findOptionValue(args, "--trust-rating"));
+  pushOption(workerArgs, "--level", findOptionValue(args, "--level"));
+  pushOption(workerArgs, "--xp", findOptionValue(args, "--xp"));
+  findOptionValues(args, "--provider-option").forEach((entry) => {
+    workerArgs.push("--provider-option", entry);
+  });
+  return workerArgs;
+}
+
+type SetupPaths = {
+  calibrationsRoot: string;
+  observabilityConfigPath: string;
+  observabilityDeliveriesPath: string;
+  registryPath: string;
+  runsRoot: string;
+  stateRoot: string;
+  workspacesRoot: string;
+};
+
+type SetupImports = {
+  backend: string;
+  importedCodex: DetectedCodexSetup | null;
+  importedDefaults: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null;
+  importedHermes: DetectedHermesSetup | null;
+  importedOpenClaw: DetectedOpenClawSetup | null;
+  importedSummary: string | undefined;
+};
+
+type SetupWorkerState = {
+  createdWorker: RegisteredWorker | null;
+  createdWorkers: RegisteredWorker[];
+};
+
+function resolveSetupPaths(args: string[]): SetupPaths {
+  const stateRootOption = findOptionValue(args, "--state-root");
+  const stateRoot = resolveQuestStateRoot(stateRootOption);
+
+  return {
+    calibrationsRoot: resolveQuestCalibrationsRoot(
+      definedPathOptions(
+        stateRoot,
+        "explicitCalibrationsRoot",
+        findOptionValue(args, "--calibrations-root"),
+      ),
+    ),
+    observabilityConfigPath: resolveQuestObservabilityConfigPath(
+      definedPathOptions(
+        stateRoot,
+        "explicitObservabilityConfigPath",
+        findOptionValue(args, "--observability-config"),
+      ),
+    ),
+    observabilityDeliveriesPath: resolveQuestObservabilityDeliveriesPath(
+      definedPathOptions(
+        stateRoot,
+        "explicitObservabilityDeliveriesPath",
+        findOptionValue(args, "--observability-deliveries"),
+      ),
+    ),
+    registryPath: resolveWorkerRegistryPath(
+      definedPathOptions(stateRoot, "explicitRegistryPath", findOptionValue(args, "--registry")),
+    ),
+    runsRoot: resolveQuestRunsRoot(
+      definedPathOptions(stateRoot, "explicitRunsRoot", findOptionValue(args, "--runs-root")),
+    ),
+    stateRoot,
+    workspacesRoot: resolveQuestWorkspacesRoot(
+      definedPathOptions(
+        stateRoot,
+        "explicitWorkspacesRoot",
+        findOptionValue(args, "--workspaces-root"),
+      ),
+    ),
+  };
+}
+
+async function detectSetupImports(args: string[]): Promise<SetupImports> {
+  const backend = findOptionValue(args, "--backend") ?? "codex";
+  const importedDefaults = await detectBackendDefaults(backend, args);
+  return {
+    backend,
+    importedCodex: asCodexSetup(importedDefaults),
+    importedDefaults,
+    importedHermes: asHermesSetup(importedDefaults),
+    importedOpenClaw: asOpenClawSetup(importedDefaults),
+    importedSummary: describeImportedBackendDefaults(backend, importedDefaults),
+  };
+}
+
+function shouldCreateSetupWorker(
+  backend: string,
+  args: string[],
+  doctorChecks: DoctorCheck[],
+  importedCodex: DetectedCodexSetup | null,
+): boolean {
+  if (hasFlag(args, "--create-worker")) {
+    return true;
+  }
+
+  if (hasFlag(args, "--skip-worker")) {
+    return false;
+  }
+
+  if (backend === "codex") {
+    return (
+      checkOk(doctorChecks, "codex-binary") &&
+      (checkOk(doctorChecks, "codex-login") || importedCodex?.authMode === "env-var")
+    );
+  }
+
+  if (backend === "hermes") {
+    return checkOk(doctorChecks, "hermes-api");
+  }
+
+  return checkOk(doctorChecks, "openclaw-binary") && checkOk(doctorChecks, "openclaw-status");
+}
+
+async function runInteractiveSetupFlow(
+  calibrator: WorkerCalibrator,
+  observabilityStore: ObservabilityStore,
+  registry: WorkerRegistry,
+  setupImports: SetupImports,
+): Promise<{
+  calibrationResults: Array<{ runId: string; status: string; workerId: string }>;
+  configuredSink: Record<string, unknown> | null;
+  workerState: SetupWorkerState;
+}> {
+  const wizardResult = await runSetupWizard({
+    defaults: buildSetupWizardDefaults(
+      setupImports.backend,
+      setupImports.importedCodex,
+      setupImports.importedHermes,
+      setupImports.importedOpenClaw,
+      setupImports.importedSummary,
+    ),
+  });
+  const createdWorkers: RegisteredWorker[] = [];
+  for (const worker of await buildWorkersFromSetupPlans(wizardResult.workerPlans)) {
+    createdWorkers.push(await registry.upsertWorker(worker));
+  }
+
+  return {
+    calibrationResults: await runSetupCalibrations(
+      calibrator,
+      createdWorkers,
+      wizardResult.calibrateWorkerIds,
+    ),
+    configuredSink: await configureSetupSink(observabilityStore, wizardResult.sinkPlan),
+    workerState: {
+      createdWorker: createdWorkers[0] ?? null,
+      createdWorkers,
+    },
+  };
+}
+
+type NonInteractiveSetupInputs = {
+  agentId: string;
+  baseUrl: string;
+  createWorker: boolean;
+  profile: string;
+  workerName: string;
+};
+
+async function resolveNonInteractiveSetupInputs(
+  args: string[],
+  backend: string,
+  importedHermes: DetectedHermesSetup | null,
+  importedOpenClaw: DetectedOpenClawSetup | null,
+  interactive: boolean,
+): Promise<NonInteractiveSetupInputs> {
+  let workerName = findOptionValue(args, "--worker-name") ?? defaultSetupWorkerName(backend);
+  let profile =
+    findOptionValue(args, "--profile") ??
+    importedHermes?.profile ??
+    importedOpenClaw?.profile ??
+    defaultSetupProfile(backend);
+  let baseUrl =
+    findOptionValue(args, "--base-url") ??
+    findOptionValue(args, "--hermes-base-url") ??
+    importedHermes?.baseUrl ??
+    importedOpenClaw?.gatewayUrl ??
+    "http://127.0.0.1:8000/v1";
+  let agentId = findOptionValue(args, "--agent-id") ?? importedOpenClaw?.agentId ?? "main";
+  let createWorker = true;
+
+  if (interactive) {
+    createWorker = await confirmWithDefault(`Create a ${backend} worker now?`, true);
+    if (createWorker) {
+      workerName = await promptWithDefault("Worker name", workerName);
+      profile = await promptWithDefault("Worker profile", profile);
+      if (backend === "hermes") {
+        baseUrl = await promptWithDefault("Hermes base URL", baseUrl);
+      }
+      if (backend === "openclaw") {
+        agentId = await promptWithDefault("OpenClaw agent id", agentId);
+      }
+    }
+  }
+
+  return {
+    agentId,
+    baseUrl,
+    createWorker,
+    profile,
+    workerName,
+  };
+}
+
+async function runNonInteractiveSetupFlow(
+  args: string[],
+  backend: string,
+  importedCodex: DetectedCodexSetup | null,
+  importedDefaults: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
+  importedHermes: DetectedHermesSetup | null,
+  importedOpenClaw: DetectedOpenClawSetup | null,
+  interactive: boolean,
+  registry: WorkerRegistry,
+): Promise<SetupWorkerState> {
+  const inputs = await resolveNonInteractiveSetupInputs(
+    args,
+    backend,
+    importedHermes,
+    importedOpenClaw,
+    interactive,
+  );
+  if (!inputs.createWorker) {
+    return {
+      createdWorker: null,
+      createdWorkers: [],
+    };
+  }
+
+  const workerArgs = buildNonInteractiveSetupWorkerArgs(
+    args,
+    backend,
+    inputs.workerName,
+    inputs.profile,
+    inputs.baseUrl,
+    inputs.agentId,
+    importedCodex,
+  );
+  const createdWorker = await registry.upsertWorker(
+    registeredWorkerSchema.parse(
+      buildWorkerFromDetectedBackend(backend, workerArgs, importedDefaults),
+    ),
+  );
+
+  return {
+    createdWorker,
+    createdWorkers: [createdWorker],
+  };
+}
+
+function buildCodexWorker(args: string[], detected?: DetectedCodexSetup | null): RegisteredWorker {
   const name = findOptionValue(args, "--name") ?? "Codex Worker";
-  const authMode = findOptionValue(args, "--auth-mode") ?? "native-login";
+  const authMode = findOptionValue(args, "--auth-mode") ?? detected?.authMode ?? "native-login";
   const targetEnvVar = findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY";
   let auth: Parameters<typeof createCodexWorkerPreset>[0]["auth"];
   if (authMode === "env-var") {
     auth = {
-      envVar: requireOptionValue(args, "--env-var", "--env-var <name>"),
+      envVar: findOptionValue(args, "--env-var") ?? detected?.envVar ?? "OPENAI_API_KEY",
       mode: "env-var",
       targetEnvVar,
     };
@@ -624,7 +1197,10 @@ function buildCodexWorker(args: string[]): RegisteredWorker {
 
   const input: Parameters<typeof createCodexWorkerPreset>[0] = {
     auth,
-    executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
+    executable:
+      findOptionValue(args, "--executable") ??
+      detected?.executable ??
+      Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "codex-worker"),
     name,
     runtime: parseWorkerRuntime(args),
@@ -649,7 +1225,10 @@ function buildCodexWorker(args: string[]): RegisteredWorker {
   return applyWorkerUpdate(createCodexWorkerPreset(input), parseWorkerUpdate(args));
 }
 
-function buildHermesWorker(args: string[]): RegisteredWorker {
+function buildHermesWorker(
+  args: string[],
+  detected?: DetectedHermesSetup | null,
+): RegisteredWorker {
   const name = findOptionValue(args, "--name") ?? "Hermes Worker";
   const authMode = findOptionValue(args, "--auth-mode");
   const targetEnvVar = findOptionValue(args, "--target-env-var") ?? "OPENAI_API_KEY";
@@ -669,7 +1248,7 @@ function buildHermesWorker(args: string[]): RegisteredWorker {
   }
 
   const input: Parameters<typeof createHermesWorkerPreset>[0] = {
-    baseUrl: findOptionValue(args, "--base-url") ?? "http://127.0.0.1:8000/v1",
+    baseUrl: findOptionValue(args, "--base-url") ?? detected?.baseUrl ?? "http://127.0.0.1:8000/v1",
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "hermes-worker"),
     name,
     runtime: parseWorkerRuntime(args),
@@ -683,7 +1262,7 @@ function buildHermesWorker(args: string[]): RegisteredWorker {
 
   if (auth) input.auth = auth;
   if (approach) input.approach = approach;
-  if (profile) input.profile = profile;
+  if (profile ?? detected?.profile) input.profile = profile ?? detected?.profile ?? undefined;
   if (prompt) input.prompt = prompt;
   if (title) input.title = title;
   if (voice) input.voice = voice;
@@ -692,7 +1271,10 @@ function buildHermesWorker(args: string[]): RegisteredWorker {
   return applyWorkerUpdate(createHermesWorkerPreset(input), parseWorkerUpdate(args));
 }
 
-function buildOpenClawWorker(args: string[]): RegisteredWorker {
+function buildOpenClawWorker(
+  args: string[],
+  detected?: DetectedOpenClawSetup | null,
+): RegisteredWorker {
   const name = findOptionValue(args, "--name") ?? "OpenClaw Worker";
   const authMode = findOptionValue(args, "--auth-mode");
   const targetEnvVar = findOptionValue(args, "--target-env-var") ?? "OPENCLAW_GATEWAY_TOKEN";
@@ -711,16 +1293,22 @@ function buildOpenClawWorker(args: string[]): RegisteredWorker {
     };
   }
 
-  const agentId = findOptionValue(args, "--agent-id") ?? "main";
+  const agentId = findOptionValue(args, "--agent-id") ?? detected?.agentId ?? "main";
   const input: Parameters<typeof createOpenClawWorkerPreset>[0] = {
     agentId,
     ...(auth ? { auth } : {}),
-    executable: findOptionValue(args, "--executable") ?? Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
-    gatewayUrl: findOptionValue(args, "--gateway-url") ?? Bun.env.OPENCLAW_GATEWAY_URL,
+    executable:
+      findOptionValue(args, "--executable") ??
+      detected?.executable ??
+      Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
+    gatewayUrl:
+      findOptionValue(args, "--gateway-url") ??
+      detected?.gatewayUrl ??
+      Bun.env.OPENCLAW_GATEWAY_URL,
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "openclaw-worker"),
     ...(hasFlag(args, "--local") ? { local: true } : {}),
     name,
-    profile: findOptionValue(args, "--profile") ?? `openclaw/${agentId}`,
+    profile: findOptionValue(args, "--profile") ?? detected?.profile ?? `openclaw/${agentId}`,
     runtime: parseWorkerRuntime(args),
     sessionId: findOptionValue(args, "--session-id"),
     tags: parseCommaSeparatedValues(findOptionValue(args, "--tags")),
@@ -762,18 +1350,6 @@ function defaultSetupProfile(backend: string): string {
   }
 
   return "gpt-5.4";
-}
-
-function buildSetupWorker(backend: string, workerArgs: string[]): RegisteredWorker {
-  if (backend === "hermes") {
-    return buildHermesWorker(workerArgs);
-  }
-
-  if (backend === "openclaw") {
-    return buildOpenClawWorker(workerArgs);
-  }
-
-  return buildCodexWorker(workerArgs);
 }
 
 function summarizeSliceState(slice: QuestRunSliceState): RunSliceSummary {
@@ -1222,272 +1798,76 @@ async function runSetup(
   registry: WorkerRegistry,
   secretStore: SecretStore,
 ): Promise<Record<string, unknown>> {
-  const stateRootOption = findOptionValue(args, "--state-root");
-  const stateRoot = resolveQuestStateRoot(stateRootOption);
-  const registryPath = resolveWorkerRegistryPath(
-    definedPathOptions(stateRoot, "explicitRegistryPath", findOptionValue(args, "--registry")),
-  );
-  const runsRoot = resolveQuestRunsRoot(
-    definedPathOptions(stateRoot, "explicitRunsRoot", findOptionValue(args, "--runs-root")),
-  );
-  const workspacesRoot = resolveQuestWorkspacesRoot(
-    definedPathOptions(
-      stateRoot,
-      "explicitWorkspacesRoot",
-      findOptionValue(args, "--workspaces-root"),
-    ),
-  );
-  const calibrationsRoot = resolveQuestCalibrationsRoot(
-    definedPathOptions(
-      stateRoot,
-      "explicitCalibrationsRoot",
-      findOptionValue(args, "--calibrations-root"),
-    ),
-  );
-  const observabilityConfigPath = resolveQuestObservabilityConfigPath(
-    definedPathOptions(
-      stateRoot,
-      "explicitObservabilityConfigPath",
-      findOptionValue(args, "--observability-config"),
-    ),
-  );
-  const observabilityDeliveriesPath = resolveQuestObservabilityDeliveriesPath(
-    definedPathOptions(
-      stateRoot,
-      "explicitObservabilityDeliveriesPath",
-      findOptionValue(args, "--observability-deliveries"),
-    ),
-  );
+  const paths = resolveSetupPaths(args);
 
   const doctor = (await runDoctor(
     args,
     secretStore,
-    stateRoot,
-    calibrationsRoot,
-    observabilityConfigPath,
-    observabilityDeliveriesPath,
-    runsRoot,
-    workspacesRoot,
-    registryPath,
+    paths.stateRoot,
+    paths.calibrationsRoot,
+    paths.observabilityConfigPath,
+    paths.observabilityDeliveriesPath,
+    paths.runsRoot,
+    paths.workspacesRoot,
+    paths.registryPath,
   )) as {
     checks: DoctorCheck[];
     ok: boolean;
   };
 
-  const backend = findOptionValue(args, "--backend") ?? "codex";
-  const shouldCreateWorker =
-    hasFlag(args, "--create-worker") ||
-    (!hasFlag(args, "--skip-worker") &&
-      ((backend === "codex" &&
-        checkOk(doctor.checks, "codex-binary") &&
-        checkOk(doctor.checks, "codex-login")) ||
-        (backend === "hermes" && checkOk(doctor.checks, "hermes-api")) ||
-        (backend === "openclaw" &&
-          checkOk(doctor.checks, "openclaw-binary") &&
-          checkOk(doctor.checks, "openclaw-status"))));
+  const setupImports = await detectSetupImports(args);
+  const shouldCreateWorker = shouldCreateSetupWorker(
+    setupImports.backend,
+    args,
+    doctor.checks,
+    setupImports.importedCodex,
+  );
 
   const interactive = stdinIsTty() && !hasFlag(args, "--yes");
-  let createdWorker: RegisteredWorker | null = null;
-  const createdWorkers: RegisteredWorker[] = [];
-  const calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
+  let workerState: SetupWorkerState = {
+    createdWorker: null,
+    createdWorkers: [],
+  };
+  let calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
   let configuredSink: Record<string, unknown> | null = null;
 
   if (interactive) {
-    const wizardResult = await runSetupWizard({
-      defaults: {
-        backend: (backend === "hermes" || backend === "openclaw" ? backend : "codex") as
-          | "codex"
-          | "hermes"
-          | "openclaw",
-      },
-    });
-
-    for (const plan of wizardResult.workerPlans) {
-      const worker = registeredWorkerSchema.parse(
-        applyWorkerUpdate(buildSetupWorker(plan.backend, plan.args), plan.update),
-      );
-      const savedWorker = await registry.upsertWorker(worker);
-      createdWorkers.push(savedWorker);
-    }
-
-    if (createdWorkers.length > 0) {
-      createdWorker = createdWorkers[0] ?? null;
-    }
-
-    if (wizardResult.sinkPlan) {
-      if (wizardResult.sinkPlan.kind === "webhook") {
-        configuredSink = await observabilityStore.upsertWebhookSink(
-          webhookSinkSchema.parse({
-            enabled: true,
-            eventTypes: [],
-            id: "setup-webhook",
-            type: "webhook",
-            url: requireOptionValue(wizardResult.sinkPlan.args, "--url", "--url <https://...>"),
-          }),
-        );
-      } else if (wizardResult.sinkPlan.kind === "telegram") {
-        configuredSink = await observabilityStore.upsertTelegramSink(
-          telegramSinkSchema.parse({
-            botTokenSecretRef: findOptionValue(
-              wizardResult.sinkPlan.args,
-              "--bot-token-secret-ref",
-            ),
-            botTokenEnv: findOptionValue(wizardResult.sinkPlan.args, "--bot-token-env"),
-            chatId: requireOptionValue(wizardResult.sinkPlan.args, "--chat-id", "--chat-id <id>"),
-            enabled: true,
-            eventTypes: [],
-            id: "setup-telegram",
-            type: "telegram",
-          }),
-        );
-      } else if (wizardResult.sinkPlan.kind === "slack") {
-        configuredSink = await observabilityStore.upsertSlackSink(
-          slackSinkSchema.parse({
-            enabled: true,
-            eventTypes: [],
-            id: "setup-slack",
-            secretRef: findOptionValue(wizardResult.sinkPlan.args, "--secret-ref"),
-            type: "slack",
-            url: findOptionValue(wizardResult.sinkPlan.args, "--url"),
-            urlEnv: findOptionValue(wizardResult.sinkPlan.args, "--url-env"),
-          }),
-        );
-      } else if (wizardResult.sinkPlan.kind === "linear") {
-        configuredSink = await observabilityStore.upsertLinearSink(
-          linearSinkSchema.parse({
-            apiKeyEnv: findOptionValue(wizardResult.sinkPlan.args, "--api-key-env"),
-            apiKeySecretRef: findOptionValue(wizardResult.sinkPlan.args, "--api-key-secret-ref"),
-            enabled: true,
-            eventTypes: [],
-            id: "setup-linear",
-            issueId: requireOptionValue(
-              wizardResult.sinkPlan.args,
-              "--issue-id",
-              "--issue-id <id>",
-            ),
-            type: "linear",
-          }),
-        );
-      }
-    }
-
-    for (const worker of createdWorkers) {
-      if (!wizardResult.calibrateWorkerIds.includes(worker.id)) {
-        continue;
-      }
-
-      const result = await calibrator.calibrateWorker(worker.id);
-      calibrationResults.push({
-        runId: result.run.id,
-        status: result.calibration.status,
-        workerId: result.worker.id,
-      });
-    }
+    const interactiveResult = await runInteractiveSetupFlow(
+      calibrator,
+      observabilityStore,
+      registry,
+      setupImports,
+    );
+    calibrationResults = interactiveResult.calibrationResults;
+    configuredSink = interactiveResult.configuredSink;
+    workerState = interactiveResult.workerState;
   } else if (shouldCreateWorker) {
-    let workerName = findOptionValue(args, "--worker-name") ?? defaultSetupWorkerName(backend);
-    let profile = findOptionValue(args, "--profile") ?? defaultSetupProfile(backend);
-    let baseUrl =
-      findOptionValue(args, "--base-url") ??
-      findOptionValue(args, "--hermes-base-url") ??
-      "http://127.0.0.1:8000/v1";
-    let agentId = findOptionValue(args, "--agent-id") ?? "main";
-    let createWorker = true;
-
-    if (interactive) {
-      createWorker = await confirmWithDefault(`Create a ${backend} worker now?`, true);
-      if (createWorker) {
-        workerName = await promptWithDefault("Worker name", workerName);
-        profile = await promptWithDefault("Worker profile", profile);
-        if (backend === "hermes") {
-          baseUrl = await promptWithDefault("Hermes base URL", baseUrl);
-        }
-        if (backend === "openclaw") {
-          agentId = await promptWithDefault("OpenClaw agent id", agentId);
-        }
-      }
-    }
-
-    if (createWorker) {
-      const workerArgs = [
-        "--name",
-        workerName,
-        "--profile",
-        profile,
-        "--id",
-        findOptionValue(args, "--worker-id") ?? slugifyWorkerId(workerName),
-      ];
-      if (backend === "hermes") {
-        workerArgs.push("--base-url", baseUrl);
-      }
-      if (backend === "openclaw") {
-        workerArgs.push("--agent-id", agentId);
-      }
-      if (backend === "codex") {
-        workerArgs.push("--auth-mode", findOptionValue(args, "--auth-mode") ?? "native-login");
-      } else if (backend === "hermes" || backend === "openclaw") {
-        pushOption(workerArgs, "--auth-mode", findOptionValue(args, "--auth-mode"));
-      }
-      pushOption(workerArgs, "--env-var", findOptionValue(args, "--env-var"));
-      pushOption(workerArgs, "--secret-ref", findOptionValue(args, "--secret-ref"));
-      pushOption(workerArgs, "--target-env-var", findOptionValue(args, "--target-env-var"));
-      pushOption(workerArgs, "--title", findOptionValue(args, "--title"));
-      pushOption(workerArgs, "--class", findOptionValue(args, "--class"));
-      pushOption(workerArgs, "--role", findOptionValue(args, "--role"));
-      pushOption(workerArgs, "--voice", findOptionValue(args, "--voice"));
-      pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
-      pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
-      pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
-      pushOption(workerArgs, "--gateway-url", findOptionValue(args, "--gateway-url"));
-      pushOption(workerArgs, "--session-id", findOptionValue(args, "--session-id"));
-      if (hasFlag(args, "--local")) {
-        workerArgs.push("--local");
-      }
-      pushOption(workerArgs, "--tags", findOptionValue(args, "--tags"));
-      pushOption(workerArgs, "--reasoning-effort", findOptionValue(args, "--reasoning-effort"));
-      pushOption(workerArgs, "--max-output-tokens", findOptionValue(args, "--max-output-tokens"));
-      pushOption(workerArgs, "--temperature", findOptionValue(args, "--temperature"));
-      pushOption(workerArgs, "--top-p", findOptionValue(args, "--top-p"));
-      pushOption(workerArgs, "--context-window", findOptionValue(args, "--context-window"));
-      pushOption(workerArgs, "--coding", findOptionValue(args, "--coding"));
-      pushOption(workerArgs, "--testing", findOptionValue(args, "--testing"));
-      pushOption(workerArgs, "--docs", findOptionValue(args, "--docs"));
-      pushOption(workerArgs, "--research", findOptionValue(args, "--research"));
-      pushOption(workerArgs, "--speed", findOptionValue(args, "--speed"));
-      pushOption(workerArgs, "--merge-safety", findOptionValue(args, "--merge-safety"));
-      pushOption(workerArgs, "--context-endurance", findOptionValue(args, "--context-endurance"));
-      pushOption(workerArgs, "--cpu-cost", findOptionValue(args, "--cpu-cost"));
-      pushOption(workerArgs, "--memory-cost", findOptionValue(args, "--memory-cost"));
-      pushOption(workerArgs, "--gpu-cost", findOptionValue(args, "--gpu-cost"));
-      pushOption(workerArgs, "--max-parallel", findOptionValue(args, "--max-parallel"));
-      pushOption(workerArgs, "--trust-rating", findOptionValue(args, "--trust-rating"));
-      pushOption(workerArgs, "--level", findOptionValue(args, "--level"));
-      pushOption(workerArgs, "--xp", findOptionValue(args, "--xp"));
-      findOptionValues(args, "--provider-option").forEach((entry) => {
-        workerArgs.push("--provider-option", entry);
-      });
-
-      createdWorker = await registry.upsertWorker(
-        registeredWorkerSchema.parse(buildSetupWorker(backend, workerArgs)),
-      );
-      createdWorkers.push(createdWorker);
-    }
+    workerState = await runNonInteractiveSetupFlow(
+      args,
+      setupImports.backend,
+      setupImports.importedCodex,
+      setupImports.importedDefaults,
+      setupImports.importedHermes,
+      setupImports.importedOpenClaw,
+      interactive,
+      registry,
+    );
   }
 
   return {
-    createdWorker,
-    createdWorkers,
+    createdWorker: workerState.createdWorker,
+    createdWorkers: workerState.createdWorkers,
     calibrationResults,
     configuredSink,
     doctor,
-    paths: {
-      calibrationsRoot,
-      observabilityConfigPath,
-      observabilityDeliveriesPath,
-      registryPath,
-      runsRoot,
-      stateRoot,
-      workspacesRoot,
-    },
+    imports:
+      setupImports.importedDefaults === null
+        ? null
+        : {
+            backend: setupImports.backend,
+            summary: setupImports.importedSummary ?? null,
+          },
+    paths,
     workers: await registry.listWorkers(),
   };
 }
@@ -1615,6 +1995,34 @@ function formatWorkerHistoryPretty(worker: RegisteredWorker): string {
       (entry) =>
         `  - ${entry.at} | ${entry.suiteId} | ${entry.status} | score=${entry.score} | xp=${entry.xpAwarded} | run=${entry.runId}`,
     ),
+  ].join("\n");
+}
+
+function formatWorkerInspectPretty(worker: RegisteredWorker, status: WorkerStatusSummary): string {
+  const runtime = worker.backend.runtime;
+  return [
+    `Party Member ${worker.id}`,
+    `  name: ${worker.name}`,
+    `  title: ${worker.title}`,
+    `  class: ${worker.class}`,
+    `  role: ${worker.role}`,
+    `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
+    `  profile: ${worker.backend.profile}`,
+    `  enabled: ${worker.enabled}`,
+    `  trust: ${worker.trust.rating.toFixed(2)}`,
+    `  level/xp: ${worker.progression.level}/${worker.progression.xp}`,
+    `  tags: ${worker.tags.join(", ") || "none"}`,
+    `  strengths: ${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+    ...(worker.backend.agentId ? [`  agent: ${worker.backend.agentId}`] : []),
+    ...(worker.backend.baseUrl ? [`  baseUrl: ${worker.backend.baseUrl}`] : []),
+    ...(worker.backend.gatewayUrl ? [`  gatewayUrl: ${worker.backend.gatewayUrl}`] : []),
+    ...(worker.backend.executable ? [`  executable: ${worker.backend.executable}`] : []),
+    ...(runtime
+      ? [
+          `  runtime: reasoning=${runtime.reasoningEffort ?? "default"}, maxOutputTokens=${runtime.maxOutputTokens ?? "default"}, temperature=${runtime.temperature ?? "default"}, topP=${runtime.topP ?? "default"}, contextWindow=${runtime.contextWindow ?? "default"}`,
+          `  providerOptions: ${Object.keys(runtime.providerOptions).length > 0 ? JSON.stringify(runtime.providerOptions) : "{}"}`,
+        ]
+      : ["  runtime: default"]),
   ].join("\n");
 }
 
@@ -1787,11 +2195,13 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
           | Array<{ runId: string; status: string; workerId: string }>
           | undefined) ?? [];
       const configuredSink = candidate.configuredSink as { id?: string; type?: string } | undefined;
+      const imports = candidate.imports as { summary?: string | null } | null | undefined;
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
       const paths = (candidate.paths as Record<string, string> | undefined) ?? {};
       return [
         "Quest Runner Setup",
         `status: ${doctor?.ok === true ? "ok" : "fail"}`,
+        `imported defaults: ${imports?.summary ?? "none"}`,
         createdWorker
           ? `created worker: ${formatWorkerLine(createdWorker)}`
           : "created worker: none",
@@ -1831,6 +2241,13 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       const worker = candidate.worker as RegisteredWorker | undefined;
       return worker ? formatWorkerHistoryPretty(worker) : JSON.stringify(value, null, 2);
     }
+    case "workers:inspect": {
+      const worker = candidate.worker as RegisteredWorker | undefined;
+      const status = candidate.status as WorkerStatusSummary | undefined;
+      return worker && status
+        ? formatWorkerInspectPretty(worker, status)
+        : JSON.stringify(value, null, 2);
+    }
     case "workers:status": {
       const worker = candidate.worker as RegisteredWorker | undefined;
       const status = candidate.status as WorkerStatusSummary | undefined;
@@ -1839,6 +2256,12 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       }
 
       return formatWorkerStatusPretty(worker, status);
+    }
+    case "workers:remove": {
+      const worker = candidate.worker as RegisteredWorker | undefined;
+      return worker
+        ? `Removed worker ${worker.id} (${worker.name})`
+        : JSON.stringify(value, null, 2);
     }
     case "workers:add:codex":
     case "workers:add:hermes":
@@ -2349,33 +2772,45 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) =>
       args.length >= 3 && args[0] === "workers" && args[1] === "add" && args[2] === "codex",
     run: async ({ args, registry }) => {
-      const worker = registeredWorkerSchema.parse(buildCodexWorker(args));
+      const importedDefaults = (await detectBackendDefaults(
+        "codex",
+        args,
+      )) as DetectedCodexSetup | null;
+      const worker = registeredWorkerSchema.parse(buildCodexWorker(args, importedDefaults));
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--no-import-existing]",
   },
   {
     id: "workers:add:hermes",
     matches: (args) =>
       args.length >= 3 && args[0] === "workers" && args[1] === "add" && args[2] === "hermes",
     run: async ({ args, registry }) => {
-      const worker = registeredWorkerSchema.parse(buildHermesWorker(args));
+      const importedDefaults = (await detectBackendDefaults(
+        "hermes",
+        args,
+      )) as DetectedHermesSetup | null;
+      const worker = registeredWorkerSchema.parse(buildHermesWorker(args, importedDefaults));
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add hermes [--base-url <http://127.0.0.1:8000/v1>] [--id <id>] [--name <name>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--no-import-existing]",
   },
   {
     id: "workers:add:openclaw",
     matches: (args) =>
       args.length >= 3 && args[0] === "workers" && args[1] === "add" && args[2] === "openclaw",
     run: async ({ args, registry }) => {
-      const worker = registeredWorkerSchema.parse(buildOpenClawWorker(args));
+      const importedDefaults = (await detectBackendDefaults(
+        "openclaw",
+        args,
+      )) as DetectedOpenClawSetup | null;
+      const worker = registeredWorkerSchema.parse(buildOpenClawWorker(args, importedDefaults));
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add openclaw [--agent-id <id> | --session-id <id>] [--gateway-url <url>] [--local] [--executable <path>] [--id <id>] [--name <name>] [--profile <name>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--target-env-var <name>]",
+      "quest workers add openclaw [--agent-id <id> | --session-id <id>] [--gateway-url <url>] [--local] [--executable <path>] [--id <id>] [--name <name>] [--profile <name>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--target-env-var <name>] [--no-import-existing]",
   },
   {
     id: "workers:calibrate",
@@ -2407,6 +2842,15 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       worker: await registry.getWorker(requireOptionValue(args, "--id", "--id <worker-id>")),
     }),
     usage: "quest workers history --id <worker-id> [--registry <path>]",
+  },
+  {
+    id: "workers:inspect",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "inspect",
+    run: async ({ args, registry }) => {
+      const worker = await registry.getWorker(requireOptionValue(args, "--id", "--id <worker-id>"));
+      return { status: buildWorkerStatusSummary(worker), worker };
+    },
+    usage: "quest workers inspect --id <worker-id> [--registry <path>]",
   },
   {
     id: "workers:status",
@@ -2448,6 +2892,23 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest workers update --id <worker-id> [--enable|--disable] [--name <name>] [--title <title>] [--class <class>] [--role <builder|tester|hybrid>] [--voice <voice>] [--approach <text>] [--prompt <text>] [--tags <a,b>] [--profile <model>] [--executable <path>] [--base-url <url>] [--allow-tools <a,b>] [--deny-tools <a,b>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--registry <path>]",
+  },
+  {
+    id: "workers:remove",
+    matches: (args) => args.length >= 2 && args[0] === "workers" && args[1] === "remove",
+    run: async ({ args, registry }) => {
+      const workerId = requireOptionValue(args, "--id", "--id <worker-id>");
+      const confirmed =
+        hasFlag(args, "--yes") || !stdinIsTty()
+          ? true
+          : await confirmWithDefault(`Remove worker ${workerId}?`, false);
+      if (!confirmed) {
+        throw new Error(`Removal cancelled for worker ${workerId}`);
+      }
+
+      return { worker: await registry.removeWorker(workerId) };
+    },
+    usage: "quest workers remove --id <worker-id> [--yes] [--registry <path>]",
   },
   {
     id: "workers:upsert",

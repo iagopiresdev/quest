@@ -1,14 +1,93 @@
 import { QuestDomainError } from "../../errors";
 
+function tryParseJson(candidate: string): unknown | null {
+  try {
+    return JSON.parse(candidate) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function findJsonTerminator(output: string, startIndex: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let index = startIndex; index < output.length; index += 1) {
+    const current = output[index];
+    if (current === undefined) {
+      continue;
+    }
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+        continue;
+      }
+
+      if (current === "\\") {
+        isEscaped = true;
+        continue;
+      }
+
+      if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (current === "{" || current === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (current === "}" || current === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractJsonFragment(output: string): unknown | null {
+  const startIndexes = [...output.matchAll(/[[{]/g)].map((match) => match.index ?? -1);
+  for (const startIndex of startIndexes) {
+    if (startIndex < 0) {
+      continue;
+    }
+
+    const endIndex = findJsonTerminator(output, startIndex);
+    if (endIndex === null) {
+      continue;
+    }
+
+    const parsed = tryParseJson(output.slice(startIndex, endIndex + 1));
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 function parseSingleOpenClawOutput(output: string): unknown | null {
   const trimmed = output.trim();
   if (trimmed.length === 0) {
     return null;
   }
 
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {}
+  const direct = tryParseJson(trimmed);
+  if (direct !== null) {
+    return direct;
+  }
 
   const lines = trimmed.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
@@ -17,12 +96,13 @@ function parseSingleOpenClawOutput(output: string): unknown | null {
       continue;
     }
 
-    try {
-      return JSON.parse(candidate) as unknown;
-    } catch {}
+    const parsed = tryParseJson(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
   }
 
-  return null;
+  return extractJsonFragment(trimmed);
 }
 
 export function parseOpenClawJsonOutput(...outputs: string[]): unknown {

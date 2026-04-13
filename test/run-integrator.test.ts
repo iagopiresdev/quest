@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -245,6 +245,56 @@ test("run integrator runs workspace preparation commands before top-level checks
     const integratedRun = await integrator.integrateRun(run.id);
 
     expect(integratedRun.lastIntegrationChecks?.[0]?.exitCode).toBe(0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator rejects chronicle writes through symlinked feature-doc paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const externalDocsRoot = join(root, "external-docs");
+
+  try {
+    mkdirSync(externalDocsRoot, { recursive: true });
+    mkdirSync(join(repositoryRoot, "docs"), { recursive: true });
+    symlinkSync(externalDocsRoot, join(repositoryRoot, "docs", "features"));
+    runCommandOrThrow(["git", "add", "docs/features"], repositoryRoot);
+    runCommandOrThrow(["git", "commit", "-m", "Add feature doc symlink"], repositoryRoot);
+
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        featureDoc: { enabled: true, outputPath: "docs/features/chronicle-run.md" },
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+
+    await expect(integrator.integrateRun(run.id)).rejects.toMatchObject({
+      code: "quest_feature_doc_failed",
+    });
+    expect(() => readFileSync(join(externalDocsRoot, "chronicle-run.md"), "utf8")).toThrow();
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
