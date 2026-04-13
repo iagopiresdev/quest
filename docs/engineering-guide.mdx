@@ -104,6 +104,7 @@ The following invariants should stay true:
 - Lifecycle transitions must go through shared helpers when possible.
 - Steering must change persisted run state, not just CLI presentation. If an operator reassigns, retries, or skips a slice, the run document must reflect the new executable truth.
 - Builder and tester output must be persisted separately when both phases run, or operators lose the ability to diagnose whether the encounter or the trial caused a failure.
+- Feature-doc / chronicle writes must append the same lifecycle event whether they happen during turn-in or through a later operator command, or observability stops being replayable from events alone.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
@@ -131,6 +132,7 @@ Rules:
 - When a real canary finds a bug, add or strengthen an automated regression test before closing the work.
 - Do not treat a mocked subprocess test as proof that a runner adapter behaves correctly in practice.
 - Do not ship adapter, steering, or integration changes after only testing the happy path.
+- When a backend needs a workspace-bound temporary identity, do not delete that identity until the quest workspace is safely past the phases that still depend on it.
 
 Minimum edge cases to consider for execution-facing work:
 
@@ -172,6 +174,8 @@ Preferred patterns:
   prompts sent to external runners should carry only the context needed to finish the slice, not raw secrets. Preserve literal argv only for low-risk, common test and build tools when hiding them would make the runner guess the wrong command.
 - Treat provider CLI output as hostile transport:
   some backends print banners, warnings, or even structured `--json` payloads on `stderr`. Adapters must parse the real provider behavior seen in live canaries instead of assuming clean JSON on stdout.
+- Treat compiled-wrapper execution as a separate runtime surface:
+  if `./bin/quest` or an installed `quest` wrapper behaves differently from `bun ./src/cli.ts`, battle-test and document that separately instead of assuming source execution proves the wrapper path.
 
 Avoid:
 

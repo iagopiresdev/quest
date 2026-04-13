@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { runSubprocess } from "../src/core/runs/process";
 
@@ -26,4 +29,27 @@ test("runSubprocess aborts long-running commands when timeoutMs elapses", async 
 
   expect(result.timedOut).toBe(true);
   expect(result.aborted).toBe(true);
+});
+
+test("runSubprocess resolves bare commands against the provided PATH", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-process-"));
+
+  try {
+    const executablePath = join(root, "quest-echo");
+    writeFileSync(executablePath, ["#!/bin/sh", "printf 'resolved-from-path\\n'"].join("\n"), {
+      encoding: "utf8",
+      mode: 0o755,
+    });
+
+    const result = await runSubprocess({
+      cmd: ["quest-echo"],
+      cwd: root,
+      env: { PATH: root },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("resolved-from-path");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });

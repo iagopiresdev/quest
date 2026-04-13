@@ -786,6 +786,124 @@ test("quest cli configures telegram sinks and delivers run events", async () => 
   }
 });
 
+test("quest cli configures slack sinks and delivers run events", async () => {
+  const context = trackContext();
+  const receivedBodies: Array<Record<string, unknown>> = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      receivedBodies.push((await request.json()) as Record<string, unknown>);
+      return new Response("ok");
+    },
+    port: 0,
+  });
+
+  try {
+    const upsertSink = await runCliAsync(context, [
+      "observability",
+      "slack",
+      "upsert",
+      "--id",
+      "slack-local",
+      "--url",
+      `http://127.0.0.1:${server.port}/slack`,
+      "--events",
+      "run_completed",
+      "--text-prefix",
+      "[Quest Runner]",
+    ]);
+    expect(upsertSink.code).toBe(0);
+
+    expectWorkerUpserted(context);
+    const created = await runCliAsync(context, ["run", "--stdin"], {
+      input: JSON.stringify(createSpec({ title: "Slack observed run" })),
+    });
+    expect(created.code).toBe(0);
+    const runId = JSON.parse(created.stdout).run.id as string;
+
+    const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+    expect(executed.code).toBe(0);
+
+    expect(receivedBodies).toHaveLength(1);
+    const body = receivedBodies[0];
+    expect(body).toBeDefined();
+    if (!body) {
+      throw new Error("Slack sink did not receive a request body");
+    }
+    expect(typeof body.text).toBe("string");
+    expect(String(body.text)).toContain("[Quest Runner]");
+    expect(String(body.text)).toContain("run_completed");
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("quest cli configures linear sinks and delivers run events", async () => {
+  const context = trackContext();
+  const receivedBodies: Array<Record<string, unknown>> = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      receivedBodies.push((await request.json()) as Record<string, unknown>);
+      return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+    port: 0,
+  });
+  const previousApiKey = Bun.env.QUEST_LINEAR_API_KEY;
+  Bun.env.QUEST_LINEAR_API_KEY = "example-linear-api-key";
+
+  try {
+    const upsertSink = await runCliAsync(context, [
+      "observability",
+      "linear",
+      "upsert",
+      "--id",
+      "linear-local",
+      "--issue-id",
+      "ISSUE-123",
+      "--api-base-url",
+      `http://127.0.0.1:${server.port}/graphql`,
+      "--api-key-env",
+      "QUEST_LINEAR_API_KEY",
+      "--events",
+      "run_completed",
+      "--title-prefix",
+      "Quest Chronicle",
+    ]);
+    expect(upsertSink.code).toBe(0);
+
+    expectWorkerUpserted(context);
+    const created = await runCliAsync(context, ["run", "--stdin"], {
+      input: JSON.stringify(createSpec({ title: "Linear observed run" })),
+    });
+    expect(created.code).toBe(0);
+    const runId = JSON.parse(created.stdout).run.id as string;
+
+    const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+    expect(executed.code).toBe(0);
+
+    expect(receivedBodies).toHaveLength(1);
+    const body = receivedBodies[0];
+    expect(body).toBeDefined();
+    if (!body) {
+      throw new Error("Linear sink did not receive a request body");
+    }
+    expect(body).toMatchObject({
+      variables: {
+        issueId: "ISSUE-123",
+      },
+    });
+    expect(JSON.stringify(body)).toContain("Quest Chronicle");
+  } finally {
+    if (previousApiKey === undefined) {
+      delete Bun.env.QUEST_LINEAR_API_KEY;
+    } else {
+      Bun.env.QUEST_LINEAR_API_KEY = previousApiKey;
+    }
+    server.stop(true);
+  }
+});
+
 test("quest cli lists and retries failed webhook deliveries", async () => {
   const context = trackContext();
   let shouldFail = true;
@@ -1127,6 +1245,40 @@ test("quest cli can auto-integrate after execution", () => {
   expect(readFileSync(join(executedRun.integrationWorkspacePath, "tracked.txt"), "utf8")).toBe(
     "integrated-change\n",
   );
+});
+
+test("quest cli writes a chronicle after turn-in when feature docs are enabled", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-chronicle.ts");
+  writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'chronicle-change\\n');\n", "utf8");
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(
+      createSpec({
+        featureDoc: { enabled: true, outputPath: "docs/features/chronicle-run.md" },
+        title: "Chronicle quest run",
+      }),
+    ),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId, "--auto-integrate"]);
+  expect(executed.code).toBe(0);
+  const executedRun = JSON.parse(executed.stdout).run;
+  expect(executedRun.featureDocPath).toContain("docs/features/chronicle-run.md");
+  expect(readFileSync(executedRun.featureDocPath, "utf8")).toContain("# Chronicle quest run");
+  expect(readFileSync(executedRun.featureDocPath, "utf8")).toContain("## Boss Fight");
+
+  const chronicle = runCli(context, ["runs", "chronicle", "--id", runId]);
+  expect(chronicle.code).toBe(0);
+  expect(JSON.parse(chronicle.stdout).chronicle).toContain("## Encounters");
 });
 
 test("quest cli rejects dry-run auto-integration", () => {

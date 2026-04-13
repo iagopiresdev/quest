@@ -53,6 +53,7 @@ export const questRunEventTypeValues = [
   "run_integration_checks_completed",
   "run_integration_checks_failed",
   "run_integrated",
+  "run_feature_doc_written",
   "run_workspace_cleaned",
   "slice_started",
   "slice_integrated",
@@ -182,6 +183,8 @@ export const questRunSliceStateSchema = z
 export const questRunDocumentSchema = z
   .object({
     createdAt: isoDateStringSchema,
+    featureDocGeneratedAt: isoDateStringSchema.optional(),
+    featureDocPath: nonEmptyString(400).optional(),
     id: questRunIdSchema,
     integrationBaseRevision: nonEmptyString(80).optional(),
     integrationWorkspacePath: nonEmptyString(400).optional(),

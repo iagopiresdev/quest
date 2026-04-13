@@ -12,6 +12,7 @@ export const observableRunEventTypeSchema = z.enum([
   "run_integration_checks_completed",
   "run_integration_checks_failed",
   "run_integrated",
+  "run_feature_doc_written",
   "run_workspace_cleaned",
   "slice_started",
   "slice_integrated",

@@ -1002,6 +1002,9 @@ test("run executor completes a planned run with the openclaw-cli adapter", async
     expect(executed.status).toBe("completed");
     expect(executed.slices[0]?.lastOutput?.summary).toBe("OpenClaw updated the workspace");
     const capturedArgs = readFileSync(capturedArgsPath, "utf8");
+    expect(capturedArgs).toContain("--session-id");
+    expect(capturedArgs).toContain(`quest-${run.id}-fix-status-build`);
+    expect(capturedArgs).toContain(`--agent quest-${run.id}-fix-status-build`);
     expect(capturedArgs).toContain("--thinking medium");
     expect(capturedArgs).toContain("--timeout 90");
     expect(capturedArgs).toContain("--verbose on");

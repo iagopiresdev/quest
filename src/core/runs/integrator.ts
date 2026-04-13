@@ -1,4 +1,5 @@
 import { readdir, realpath } from "node:fs/promises";
+import { writeRunChronicle } from "../chronicles/generator";
 import { QuestDomainError } from "../errors";
 import type { QuestCommandSpec } from "../planning/spec-schema";
 import { ensureDirectory } from "../storage";
@@ -551,7 +552,13 @@ export class QuestRunIntegrator {
 
     let appliedSliceCount = 0;
     for (const sliceState of orderedSlices(run)) {
-      const applied = await integrateSlice(run, integrationWorkspacePath, sliceState);
+      let applied: boolean;
+      try {
+        applied = await integrateSlice(run, integrationWorkspacePath, sliceState);
+      } catch (error: unknown) {
+        await this.runStore.saveRun(run);
+        throw error;
+      }
       appendEvent(run, "slice_integrated", {
         applied,
         integrationStatus: sliceState.integrationStatus,
@@ -613,6 +620,16 @@ export class QuestRunIntegrator {
       sourceRepositoryPath: repositoryRoot,
       targetRef,
     });
+
+    if (run.spec.featureDoc.enabled) {
+      const featureDocPath = await writeRunChronicle(run);
+      run.featureDocGeneratedAt = new Date().toISOString();
+      run.featureDocPath = featureDocPath;
+      appendEvent(run, "run_feature_doc_written", {
+        featureDocPath,
+        runId: run.id,
+      });
+    }
 
     return await this.runStore.saveRun(run);
   }

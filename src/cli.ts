@@ -5,13 +5,16 @@ import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { ZodError } from "zod";
+import { generateRunChronicle, writeRunChronicle } from "./core/chronicles/generator";
 import { isQuestDomainError } from "./core/errors";
 import { EventDispatcher } from "./core/observability/event-dispatcher";
 import {
   type DeliveryStatus,
   deliveryStatusSchema,
+  linearSinkSchema,
   type ObservableEventType,
   observableEventTypeSchema,
+  slackSinkSchema,
   telegramSinkSchema,
   webhookSinkSchema,
 } from "./core/observability/schema";
@@ -22,12 +25,14 @@ import { parseOpenClawJsonOutput } from "./core/runs/adapters/openclaw-shared";
 import { QuestRunCleanup } from "./core/runs/cleanup";
 import { QuestRunExecutor } from "./core/runs/executor";
 import { QuestRunIntegrator } from "./core/runs/integrator";
+import { appendEvent } from "./core/runs/lifecycle";
 import { QuestRunPipeline } from "./core/runs/pipeline";
 import { runSubprocess } from "./core/runs/process";
 import { buildProcessEnv } from "./core/runs/process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./core/runs/schema";
 import { QuestRunStore } from "./core/runs/store";
 import { SecretStore } from "./core/secret-store";
+import { runSetupWizard } from "./core/setup/wizard";
 import {
   ensureDirectory,
   resolveQuestCalibrationsRoot,
@@ -67,6 +72,8 @@ type QuestCliCommand =
   | "observability:events:list"
   | "observability:sinks:list"
   | "observability:sink:delete"
+  | "observability:linear:upsert"
+  | "observability:slack:upsert"
   | "observability:telegram:upsert"
   | "observability:webhook:upsert"
   | "plan"
@@ -85,6 +92,7 @@ type QuestCliCommand =
   | "runs:slices:skip"
   | "runs:status"
   | "runs:summary"
+  | "runs:chronicle"
   | "secrets:delete"
   | "secrets:set"
   | "secrets:status"
@@ -1207,6 +1215,8 @@ function pushOption(args: string[], flag: string, value: string | undefined): vo
 
 async function runSetup(
   args: string[],
+  calibrator: WorkerCalibrator,
+  observabilityStore: ObservabilityStore,
   registry: WorkerRegistry,
   secretStore: SecretStore,
 ): Promise<Record<string, unknown>> {
@@ -1276,8 +1286,93 @@ async function runSetup(
 
   const interactive = stdinIsTty() && !hasFlag(args, "--yes");
   let createdWorker: RegisteredWorker | null = null;
+  const createdWorkers: RegisteredWorker[] = [];
+  const calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
+  let configuredSink: Record<string, unknown> | null = null;
 
-  if (shouldCreateWorker) {
+  if (interactive) {
+    const wizardResult = await runSetupWizard({
+      defaults: {
+        backend: (backend === "hermes" || backend === "openclaw" ? backend : "codex") as
+          | "codex"
+          | "hermes"
+          | "openclaw",
+      },
+    });
+
+    for (const plan of wizardResult.workerPlans) {
+      const worker = registeredWorkerSchema.parse(buildSetupWorker(plan.backend, plan.args));
+      const savedWorker = await registry.upsertWorker(worker);
+      createdWorkers.push(savedWorker);
+    }
+
+    if (createdWorkers.length > 0) {
+      createdWorker = createdWorkers[0] ?? null;
+    }
+
+    if (wizardResult.sinkPlan) {
+      if (wizardResult.sinkPlan.kind === "webhook") {
+        configuredSink = await observabilityStore.upsertWebhookSink(
+          webhookSinkSchema.parse({
+            enabled: true,
+            eventTypes: [],
+            id: "setup-webhook",
+            type: "webhook",
+            url: requireOptionValue(wizardResult.sinkPlan.args, "--url", "--url <https://...>"),
+          }),
+        );
+      } else if (wizardResult.sinkPlan.kind === "telegram") {
+        configuredSink = await observabilityStore.upsertTelegramSink(
+          telegramSinkSchema.parse({
+            botTokenEnv: findOptionValue(wizardResult.sinkPlan.args, "--bot-token-env"),
+            chatId: requireOptionValue(wizardResult.sinkPlan.args, "--chat-id", "--chat-id <id>"),
+            enabled: true,
+            eventTypes: [],
+            id: "setup-telegram",
+            type: "telegram",
+          }),
+        );
+      } else if (wizardResult.sinkPlan.kind === "slack") {
+        configuredSink = await observabilityStore.upsertSlackSink(
+          slackSinkSchema.parse({
+            enabled: true,
+            eventTypes: [],
+            id: "setup-slack",
+            type: "slack",
+            url: requireOptionValue(wizardResult.sinkPlan.args, "--url", "--url <https://...>"),
+          }),
+        );
+      } else if (wizardResult.sinkPlan.kind === "linear") {
+        configuredSink = await observabilityStore.upsertLinearSink(
+          linearSinkSchema.parse({
+            apiKeyEnv: findOptionValue(wizardResult.sinkPlan.args, "--api-key-env"),
+            enabled: true,
+            eventTypes: [],
+            id: "setup-linear",
+            issueId: requireOptionValue(
+              wizardResult.sinkPlan.args,
+              "--issue-id",
+              "--issue-id <id>",
+            ),
+            type: "linear",
+          }),
+        );
+      }
+    }
+
+    for (const worker of createdWorkers) {
+      if (!wizardResult.calibrateWorkerIds.includes(worker.id)) {
+        continue;
+      }
+
+      const result = await calibrator.calibrateWorker(worker.id);
+      calibrationResults.push({
+        runId: result.run.id,
+        status: result.calibration.status,
+        workerId: result.worker.id,
+      });
+    }
+  } else if (shouldCreateWorker) {
     let workerName = findOptionValue(args, "--worker-name") ?? defaultSetupWorkerName(backend);
     let profile = findOptionValue(args, "--profile") ?? defaultSetupProfile(backend);
     let baseUrl =
@@ -1363,11 +1458,15 @@ async function runSetup(
       createdWorker = await registry.upsertWorker(
         registeredWorkerSchema.parse(buildSetupWorker(backend, workerArgs)),
       );
+      createdWorkers.push(createdWorker);
     }
   }
 
   return {
     createdWorker,
+    createdWorkers,
+    calibrationResults,
+    configuredSink,
     doctor,
     paths: {
       calibrationsRoot,
@@ -1655,6 +1754,12 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "setup": {
       const doctor = candidate.doctor as { checks: DoctorCheck[]; ok: boolean } | undefined;
       const createdWorker = candidate.createdWorker as RegisteredWorker | null | undefined;
+      const createdWorkers = (candidate.createdWorkers as RegisteredWorker[] | undefined) ?? [];
+      const calibrationResults =
+        (candidate.calibrationResults as
+          | Array<{ runId: string; status: string; workerId: string }>
+          | undefined) ?? [];
+      const configuredSink = candidate.configuredSink as { id?: string; type?: string } | undefined;
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
       const paths = (candidate.paths as Record<string, string> | undefined) ?? {};
       return [
@@ -1663,6 +1768,15 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
         createdWorker
           ? `created worker: ${formatWorkerLine(createdWorker)}`
           : "created worker: none",
+        `party members created: ${createdWorkers.length}`,
+        configuredSink
+          ? `sink: ${configuredSink.id ?? "configured"} (${configuredSink.type ?? "unknown"})`
+          : "sink: none",
+        `training grounds: ${
+          calibrationResults.length > 0
+            ? calibrationResults.map((result) => `${result.workerId}:${result.status}`).join(", ")
+            : "skipped"
+        }`,
         `workers: ${workers.length}`,
         "",
         "Paths",
@@ -1753,7 +1867,9 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       );
     }
     case "observability:webhook:upsert":
-    case "observability:telegram:upsert": {
+    case "observability:telegram:upsert":
+    case "observability:slack:upsert":
+    case "observability:linear:upsert": {
       const sink = candidate.sink as
         | { enabled: boolean; eventTypes: string[]; id: string; type: string }
         | undefined;
@@ -1838,6 +1954,10 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "runs:logs": {
       return formatLogsPretty(candidate);
+    }
+    case "runs:chronicle": {
+      const chronicle = candidate.chronicle;
+      return typeof chronicle === "string" ? chronicle : JSON.stringify(value, null, 2);
     }
     case "secrets:status": {
       const secret = candidate.secret as
@@ -1926,7 +2046,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "setup",
     matches: (args) => args.length >= 1 && args[0] === "setup",
-    run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
+    run: async ({ args, calibrator, observabilityStore, registry, secretStore }) =>
+      await runSetup(args, calibrator, observabilityStore, registry, secretStore),
     usage:
       "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
@@ -2092,6 +2213,53 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest observability telegram upsert --chat-id <id> [--id <sink-id>] [--bot-token-env <name> | --bot-token-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--thread-id <id>] [--parse-mode <Markdown|MarkdownV2|HTML>] [--disable-notification] [--disabled] [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:slack:upsert",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "slack" &&
+      args[2] === "upsert",
+    run: async ({ args, observabilityStore }) => {
+      const sink = slackSinkSchema.parse({
+        enabled: !hasFlag(args, "--disabled"),
+        eventTypes: parseObservableEventTypes(findOptionValue(args, "--events")),
+        id: findOptionValue(args, "--id") ?? "default-slack",
+        secretRef: findOptionValue(args, "--secret-ref") ?? undefined,
+        textPrefix: findOptionValue(args, "--text-prefix") ?? undefined,
+        type: "slack",
+        url: findOptionValue(args, "--url") ?? undefined,
+        urlEnv: findOptionValue(args, "--url-env") ?? undefined,
+      });
+      return { sink: await observabilityStore.upsertSlackSink(sink) };
+    },
+    usage:
+      "quest observability slack upsert [--url <https://...>] [--url-env <name>] [--secret-ref <name>] [--id <sink-id>] [--events <event,event>] [--text-prefix <text>] [--disabled] [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:linear:upsert",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "linear" &&
+      args[2] === "upsert",
+    run: async ({ args, observabilityStore }) => {
+      const sink = linearSinkSchema.parse({
+        apiBaseUrl: findOptionValue(args, "--api-base-url") ?? undefined,
+        apiKeyEnv: findOptionValue(args, "--api-key-env") ?? undefined,
+        apiKeySecretRef: findOptionValue(args, "--api-key-secret-ref") ?? undefined,
+        enabled: !hasFlag(args, "--disabled"),
+        eventTypes: parseObservableEventTypes(findOptionValue(args, "--events")),
+        id: findOptionValue(args, "--id") ?? "default-linear",
+        issueId: requireOptionValue(args, "--issue-id", "--issue-id <id>"),
+        titlePrefix: findOptionValue(args, "--title-prefix") ?? undefined,
+        type: "linear",
+      });
+      return { sink: await observabilityStore.upsertLinearSink(sink) };
+    },
+    usage:
+      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--disabled] [--observability-config <path>] [--state-root <path>]",
   },
   {
     id: "observability:sink:delete",
@@ -2437,6 +2605,34 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     }),
     usage:
       "quest runs logs --id <run-id> [--slice <slice-id>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:chronicle",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "chronicle",
+    run: async ({ args, runStore }) => {
+      const run = await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>"));
+      const write = hasFlag(args, "--write");
+      if (!write) {
+        return { chronicle: generateRunChronicle(run), run };
+      }
+
+      const path = await writeRunChronicle(run);
+      const generatedAt = new Date().toISOString();
+      appendEvent(
+        run,
+        "run_feature_doc_written",
+        {
+          featureDocPath: path,
+          runId: run.id,
+        },
+        generatedAt,
+      );
+      run.featureDocGeneratedAt = generatedAt;
+      run.featureDocPath = path;
+      return { chronicle: generateRunChronicle(run), path, run: await runStore.saveRun(run) };
+    },
+    usage:
+      "quest runs chronicle --id <run-id> [--write] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:status",

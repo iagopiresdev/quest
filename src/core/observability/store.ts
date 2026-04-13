@@ -11,6 +11,8 @@ import {
   type DeliveryRecord,
   type DeliveryStatus,
   deliveryRecordSchema,
+  type LinearSink,
+  linearSinkSchema,
   type ObservabilityConfigDocument,
   type ObservabilityDeliveriesDocument,
   type ObservabilitySink,
@@ -21,6 +23,8 @@ import {
   observabilityDeliveriesSchema,
   observabilitySinkSchema,
   observableCalibrationEventSchema,
+  type SlackSink,
+  slackSinkSchema,
   type TelegramSink,
   telegramSinkSchema,
   type WebhookSink,
@@ -106,6 +110,16 @@ export class ObservabilityStore {
   async upsertTelegramSink(candidate: TelegramSink): Promise<TelegramSink> {
     const parsed = telegramSinkSchema.parse(candidate);
     return (await this.upsertSink(parsed)) as TelegramSink;
+  }
+
+  async upsertSlackSink(candidate: SlackSink): Promise<SlackSink> {
+    const parsed = slackSinkSchema.parse(candidate);
+    return (await this.upsertSink(parsed)) as SlackSink;
+  }
+
+  async upsertLinearSink(candidate: LinearSink): Promise<LinearSink> {
+    const parsed = linearSinkSchema.parse(candidate);
+    return (await this.upsertSink(parsed)) as LinearSink;
   }
 
   async deleteSink(sinkId: string): Promise<void> {

@@ -51,3 +51,12 @@ test("buildProcessEnv allows explicit overrides for subprocess contracts", () =>
   expect(env.CUSTOM_FLAG).toBe("enabled");
   expect(env.PATH).toBe("/custom/bin");
 });
+
+test("buildProcessEnv falls back to a homebrew-safe PATH when PATH is missing", () => {
+  delete Bun.env.PATH;
+
+  const env = buildProcessEnv();
+
+  expect(env.PATH).toContain("/opt/homebrew/bin");
+  expect(env.PATH).toContain("/usr/bin");
+});

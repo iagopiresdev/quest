@@ -64,6 +64,17 @@ bun ./scripts/canaries/fresh-install.ts --backend local-command
 bun ./scripts/canaries/fresh-install.ts --backend codex
 ```
 
+Repo-edit canaries:
+
+```sh
+bun ./scripts/canaries/repo-edit.ts --backend local-command
+bun ./scripts/canaries/repo-edit.ts --backend codex
+bun ./scripts/canaries/repo-edit.ts --backend openclaw
+
+# Hermes requires a live compatible endpoint.
+bun ./scripts/canaries/repo-edit.ts --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
+```
+
 ## Open Source Readiness
 
 This repository is intended to be publishable on GitHub as source code, not as a dump of local state.
@@ -294,10 +305,9 @@ Example `openclaw-cli` worker:
   "enabled": true,
   "backend": {
     "runner": "openclaw",
-    "profile": "openclaw/codex",
+    "profile": "openai-codex/gpt-5.4",
     "adapter": "openclaw-cli",
     "agentId": "codex",
-    "local": true,
     "runtime": {
       "reasoningEffort": "medium",
       "providerOptions": {
@@ -347,7 +357,10 @@ Example `openclaw-cli` worker:
 Operational notes:
 - the installed OpenClaw CLI may print plugin banners and even its structured `--json` payload on `stderr`, not just `stdout`
 - Quest Runner parses structured OpenClaw output from either stream instead of assuming clean JSON on stdout
-- real OpenClaw code-edit canaries should always include acceptance checks, because the current adapter plumbing is working but the agent may still return successfully without applying the requested change
+- Quest Runner creates workspace-bound temporary OpenClaw agents for quest execution so repo-edit runs do not inherit a persistent agent workspace
+- OpenClaw `--local` mode is currently not supported for quest execution; gateway-backed runs are the supported path because they preserve workspace isolation reliably
+- those temporary OpenClaw agents are intentionally kept past the slice turn so they do not delete a live quest workspace before trials or turn-in complete
+- real OpenClaw code-edit canaries should always include acceptance checks, because the backend can still report success before a file change is proven on disk
 
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
@@ -383,6 +396,8 @@ Runs emit typed events. Observability is the layer that persists and dispatches 
 Current sink support:
 - `webhook`
 - `telegram`
+- `slack`
+- `linear`
 
 Internally, sinks already live behind a typed sink model instead of a webhook-only config shape. That keeps the current webhook path simple while leaving room for future Telegram, Linear, Slack, or metrics sinks without rewriting delivery storage.
 
@@ -419,7 +434,7 @@ quest setup --yes
 quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
 
 # bootstrap an OpenClaw worker instead
-quest setup --yes --backend openclaw --agent-id codex --local
+quest setup --yes --backend openclaw --agent-id codex --profile openai-codex/gpt-5.4
 
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
@@ -455,8 +470,7 @@ quest workers add hermes \
 quest workers add openclaw \
   --name "Quest OpenClaw" \
   --agent-id codex \
-  --local \
-  --profile openclaw/codex \
+  --profile openai-codex/gpt-5.4 \
   --reasoning-effort medium \
   --provider-option timeout_seconds=120 \
   --provider-option verbose=off
@@ -498,6 +512,19 @@ quest observability telegram upsert \
   --id local-telegram \
   --chat-id 123456 \
   --bot-token-secret-ref telegram.bot \
+  --events run_failed,run_completed
+
+# add or update a Slack sink
+quest observability slack upsert \
+  --id local-slack \
+  --url-env SLACK_WEBHOOK_URL \
+  --events run_failed,run_completed
+
+# add or update a Linear sink
+quest observability linear upsert \
+  --id local-linear \
+  --issue-id ISSUE-123 \
+  --api-key-secret-ref linear.api-key \
   --events run_failed,run_completed
 
 # retry failed webhook deliveries after the sink is healthy again
@@ -560,6 +587,10 @@ quest runs integrate --id quest-abc12345-deadbeef --target-ref main
 # inspect persisted slice logs/output
 quest runs logs --id quest-abc12345-deadbeef
 
+# preview or write the post-turn-in chronicle
+quest runs chronicle --id quest-abc12345-deadbeef
+quest runs chronicle --id quest-abc12345-deadbeef --write
+
 # put a run on hold before the next execute call
 quest runs pause --id quest-abc12345-deadbeef --reason "waiting on review"
 
@@ -604,9 +635,10 @@ quest runs rerun --id quest-abc12345-deadbeef --worker-id quest-codex
 
 # optional: compile a standalone Bun executable
 bun run build
-./dist/quest runs list
+QUEST_RUNNER_USE_DIST=1 ./bin/quest runs list
 
-# development fallback if you do not want to install the wrapper
+# repo-local wrapper defaults to source execution for reliability;
+# set QUEST_RUNNER_USE_DIST=1 if you want to validate the compiled artifact explicitly
 ./bin/quest runs list
 ```
 
@@ -642,8 +674,7 @@ Do not commit runtime state, tokens, or local config.
 ## Current v0 scope
 
 - typed worker registry
-- setup command for bootstrapping state paths and the first Codex worker
-- setup support for Codex or Hermes workers
+- interactive setup wizard for Codex, Hermes, or OpenClaw workers plus optional sink wiring
 - typed quest specs and conservative wave planning
 - explicit worker forcing for plan/run/rerun flows
 - persisted quest runs plus run events
@@ -652,6 +683,7 @@ Do not commit runtime state, tokens, or local config.
 - real local subprocess execution through the `local-command` adapter
 - native Codex execution through the `codex-cli` adapter
 - Hermes/OpenAI-compatible execution through the `hermes-api` adapter
+- OpenClaw execution through gateway-backed temporary workspace agents in the `openclaw-cli` adapter
 - slice-level tester lane through `acceptanceChecks`
 - richer steering commands for pause/resume plus per-slice reassign/retry/skip
 - runtime-managed per-run and per-slice workspace directories
@@ -666,9 +698,12 @@ Do not commit runtime state, tokens, or local config.
 - persisted calibration history, trust updates, and XP awards on workers
 - event-driven observability with a webhook sink
 - Telegram sink delivery through the same eventing model
+- Slack sink delivery through the same eventing model
+- Linear sink delivery through the same eventing model
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
+- post-turn-in chronicle generation when `featureDoc.enabled` is true
 
-Additional runner adapters, more sinks, feature-doc generation, and a fuller setup TUI are still pending.
+Additional runner adapters, a fuller setup TUI, and more sink integrations are still pending.
 
 ## Validation
 

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { z } from "zod";
 
 import { QuestDomainError } from "../../errors";
@@ -25,6 +26,53 @@ const openClawAgentResponseSchema = z
     summary: z.string().optional(),
   })
   .passthrough();
+
+const openClawAgentListSchema = z.array(
+  z
+    .object({
+      id: z.string(),
+      model: z.string().optional(),
+    })
+    .passthrough(),
+);
+
+type PreparedOpenClawTarget = {
+  agentId: string | undefined;
+  env: Record<string, string>;
+  sessionId: string;
+};
+
+function sanitizeSessionPart(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildQuestSessionId(context: RunnerExecutionContext): string {
+  const parts = [context.run.id, context.slice.id, context.phase]
+    .map((part) => sanitizeSessionPart(part))
+    .filter((part) => part.length > 0);
+  const sessionId = `quest-${parts.join("-")}`;
+  return sessionId.slice(0, 160);
+}
+
+function buildQuestAgentId(context: RunnerExecutionContext): string {
+  const parts = [context.run.id, context.slice.id, context.phase]
+    .map((part) => sanitizeSessionPart(part))
+    .filter((part) => part.length > 0);
+  return `quest-${parts.join("-")}`.slice(0, 80);
+}
+
+function resolveConfiguredModel(profile: string): string | null {
+  const trimmed = profile.trim();
+  if (trimmed.length === 0 || trimmed.startsWith("openclaw/")) {
+    return null;
+  }
+
+  return trimmed;
+}
 
 function resolveOpenClawSummary(responseBody: unknown): string | null {
   const parsed = openClawAgentResponseSchema.safeParse(responseBody);
@@ -66,6 +114,130 @@ function readProviderOption(
   return undefined;
 }
 
+async function resolveAgentModelFromRegistry(
+  executable: string,
+  agentId: string,
+  env: Record<string, string>,
+): Promise<string | null> {
+  const result = await runSubprocess({
+    cmd: [executable, "agents", "list", "--json"],
+    cwd: Bun.env.PWD ?? ".",
+    env,
+    timeoutMs: 30_000,
+  });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+
+  try {
+    const payload = parseOpenClawJsonOutput(result.stdout, result.stderr);
+    const parsed = openClawAgentListSchema.safeParse(payload);
+    if (!parsed.success) {
+      return null;
+    }
+
+    return parsed.data.find((agent) => agent.id === agentId)?.model?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function createTemporaryAgent(
+  executable: string,
+  context: RunnerExecutionContext,
+  env: Record<string, string>,
+): Promise<{ agentId: string }> {
+  const configuredModel = resolveConfiguredModel(context.worker.backend.profile);
+  const fallbackModel = context.worker.backend.agentId
+    ? await resolveAgentModelFromRegistry(executable, context.worker.backend.agentId, env)
+    : null;
+  const model = configuredModel ?? fallbackModel;
+  if (!model) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: {
+        agentId: context.worker.backend.agentId ?? null,
+        profile: context.worker.backend.profile,
+        workerId: context.worker.id,
+      },
+      message: `OpenClaw worker ${context.worker.id} needs a concrete model profile for quest execution`,
+      statusCode: 1,
+    });
+  }
+
+  const agentId = buildQuestAgentId(context);
+  const agentDir = join(
+    context.run.workspaceRoot ?? context.cwd,
+    ".quest-runner",
+    "openclaw-agents",
+    agentId,
+    "agent",
+  );
+  const addResult = await runSubprocess({
+    cmd: [
+      executable,
+      "agents",
+      "add",
+      agentId,
+      "--workspace",
+      context.cwd,
+      "--model",
+      model,
+      "--agent-dir",
+      agentDir,
+      "--non-interactive",
+      "--json",
+    ],
+    cwd: Bun.env.PWD ?? ".",
+    env,
+    timeoutMs: 60_000,
+  });
+  if (addResult.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: {
+        agentDir,
+        agentId,
+        model,
+        stderr: addResult.stderr,
+        stdout: addResult.stdout,
+        workerId: context.worker.id,
+      },
+      message: `OpenClaw could not create a temporary quest agent for ${context.worker.id}`,
+      statusCode: 1,
+    });
+  }
+
+  return { agentId };
+}
+
+async function prepareOpenClawTarget(
+  executable: string,
+  context: RunnerExecutionContext,
+  env: Record<string, string>,
+): Promise<PreparedOpenClawTarget> {
+  const sessionId = context.worker.backend.sessionId ?? buildQuestSessionId(context);
+  if (context.worker.backend.local) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: {
+        workerId: context.worker.id,
+      },
+      message:
+        `OpenClaw local mode is not supported for quest execution on ${context.worker.id}; ` +
+        "use the gateway-backed adapter path instead",
+      statusCode: 1,
+    });
+  }
+
+  const temporaryAgent = await createTemporaryAgent(executable, context, env);
+  return {
+    agentId: temporaryAgent.agentId,
+    env,
+    sessionId,
+  };
+}
+
 export class OpenClawCliRunnerAdapter implements RunnerAdapter {
   readonly name = "openclaw-cli";
 
@@ -80,11 +252,28 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
     const prompt = buildRunnerPrompt(context);
     const authEnv = await resolveAuthEnv(context.worker, this.secretStore);
     const providerOptions = context.worker.backend.runtime?.providerOptions;
-    const command = [executable, "agent"];
-    if (context.worker.backend.sessionId) {
-      command.push("--session-id", context.worker.backend.sessionId);
-    } else {
-      command.push("--agent", context.worker.backend.agentId ?? "main");
+    const processEnv = buildProcessEnv({
+      ...context.worker.backend.env,
+      ...authEnv,
+      ...(context.worker.backend.gatewayUrl
+        ? { OPENCLAW_GATEWAY_URL: context.worker.backend.gatewayUrl }
+        : {}),
+      QUEST_RUN_ID: context.run.id,
+      QUEST_SLICE_ID: context.slice.id,
+      QUEST_SLICE_PHASE: context.phase,
+      QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
+      QUEST_WORKER_ID: context.worker.id,
+      QUEST_WORKSPACE: context.run.spec.workspace,
+      QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
+    });
+    const target = await prepareOpenClawTarget(executable, context, processEnv);
+    const command = [executable, "agent", "--session-id", target.sessionId];
+
+    // Grind taught the hard lesson here: shared agent state silently poisons repo-edit turns.
+    // Quest-runner uses temporary workspace-bound OpenClaw agents for quest execution instead of
+    // pointing repo work at a long-lived agent workspace.
+    if (target.agentId) {
+      command.push("--agent", target.agentId);
     }
     command.push("--message", prompt, "--json");
 
@@ -102,28 +291,13 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
       command.push("--timeout", timeoutSeconds);
     }
 
-    if (context.worker.backend.local) {
-      command.push("--local");
-    }
-
+    // OpenClaw agent deletion prunes the agent workspace, so quest-runner leaves these temporary
+    // agents in place until a later cleanup layer can remove them without deleting live slice data.
     const { aborted, exitCode, stderr, stderrTruncated, stdout, stdoutTruncated, timedOut } =
       await runSubprocess({
         cmd: command,
         cwd: context.cwd,
-        env: buildProcessEnv({
-          ...context.worker.backend.env,
-          ...authEnv,
-          ...(context.worker.backend.gatewayUrl
-            ? { OPENCLAW_GATEWAY_URL: context.worker.backend.gatewayUrl }
-            : {}),
-          QUEST_RUN_ID: context.run.id,
-          QUEST_SLICE_ID: context.slice.id,
-          QUEST_SLICE_PHASE: context.phase,
-          QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
-          QUEST_WORKER_ID: context.worker.id,
-          QUEST_WORKSPACE: context.run.spec.workspace,
-          QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
-        }),
+        env: target.env,
         signal: context.signal,
         timeoutMs: 20 * 60 * 1000,
       });

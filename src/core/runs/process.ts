@@ -1,3 +1,6 @@
+import { accessSync, constants } from "node:fs";
+import { delimiter, join } from "node:path";
+
 export type SubprocessResult = {
   aborted: boolean;
   exitCode: number;
@@ -58,6 +61,100 @@ async function readPipe(
   };
 }
 
+function resolveCommandPath(cmd: string[], env: Record<string, string | undefined>): string[] {
+  const executable = cmd[0];
+  if (!executable || executable.includes("/")) {
+    return cmd;
+  }
+
+  if (executable === "git") {
+    for (const candidate of ["/usr/bin/git", "/bin/git", "/opt/homebrew/bin/git"]) {
+      try {
+        accessSync(candidate, constants.X_OK);
+        return [candidate, ...cmd.slice(1)];
+      } catch {
+        // Fall through to PATH scanning when a preferred git binary is unavailable.
+      }
+    }
+  }
+
+  const pathValue = env.PATH ?? Bun.env.PATH ?? "";
+  for (const segment of pathValue.split(delimiter)) {
+    if (segment.length === 0) {
+      continue;
+    }
+
+    const candidate = join(segment, executable);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return [candidate, ...cmd.slice(1)];
+    } catch {
+      // Keep scanning PATH entries until one resolves to an executable.
+    }
+  }
+
+  return cmd;
+}
+
+function quoteShellArg(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) {
+    return value;
+  }
+
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+type SpawnedProcess = {
+  exited: Promise<number>;
+  kill: () => void;
+  stderr: ReadableStream<Uint8Array> | null;
+  stdout: ReadableStream<Uint8Array> | null;
+};
+
+function spawnProcess(options: {
+  cmd: string[];
+  cwd: string;
+  env: Record<string, string | undefined>;
+  stdin: Uint8Array | "ignore";
+}): SpawnedProcess {
+  try {
+    return Bun.spawn({
+      cmd: options.cmd,
+      cwd: options.cwd,
+      env: options.env,
+      stdin: options.stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (error: unknown) {
+    const isEnoent =
+      typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+    if (!isEnoent) {
+      throw error;
+    }
+
+    // The compiled Bun binary on this machine can fail direct posix_spawn for some native
+    // executables even when the path exists. Falling back to a minimal shell preserves the public
+    // wrapper path without widening normal command construction elsewhere in the codebase.
+    try {
+      return Bun.spawn({
+        cmd: ["/bin/sh", "-lc", options.cmd.map((part) => quoteShellArg(part)).join(" ")],
+        cwd: options.cwd,
+        env: options.env,
+        stdin: options.stdin,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    } catch (fallbackError: unknown) {
+      const fallbackMessage =
+        fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      throw new Error(
+        `Subprocess spawn failed for ${options.cmd.join(" ")} after shell fallback: ${fallbackMessage}`,
+      );
+    }
+  }
+}
+
 export async function runSubprocess(options: {
   cmd: string[];
   cwd: string;
@@ -70,13 +167,12 @@ export async function runSubprocess(options: {
   const maxOutputBytes = options.maxOutputBytes ?? 256 * 1024;
   let aborted = options.signal?.aborted === true;
   let timedOut = false;
-  const process = Bun.spawn({
-    cmd: options.cmd,
+  const resolvedCmd = resolveCommandPath(options.cmd, options.env);
+  const process = spawnProcess({
+    cmd: resolvedCmd,
     cwd: options.cwd,
     env: options.env,
     stdin: options.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
-    stdout: "pipe",
-    stderr: "pipe",
   });
 
   const abortProcess = (): void => {

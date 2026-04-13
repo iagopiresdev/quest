@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { DeliveryRecord } from "../delivery-schema";
 import { observableEventTypeSchema } from "../event-types";
 import type { ObservableEvent } from "../observable-events";
@@ -6,33 +7,30 @@ import type { EventSinkDeliveryContext, EventSinkHandler } from "./handler";
 import { formatSinkTextMessage } from "./message-format";
 import { nonEmptyString, secretRefSchema, urlSchema } from "./schema-helpers";
 
-export const telegramSinkSchema = z
+export const slackSinkSchema = z
   .object({
-    apiBaseUrl: urlSchema.optional(),
-    botTokenEnv: nonEmptyString(120).optional(),
-    botTokenSecretRef: secretRefSchema.optional(),
-    chatId: nonEmptyString(120),
-    disableNotification: z.boolean().default(false),
     enabled: z.boolean().default(true),
     eventTypes: z.array(observableEventTypeSchema).max(64).default([]),
     id: nonEmptyString(80),
-    messageThreadId: z.number().int().min(1).optional(),
-    parseMode: z.enum(["Markdown", "MarkdownV2", "HTML"]).optional(),
-    type: z.literal("telegram"),
+    secretRef: secretRefSchema.optional(),
+    textPrefix: nonEmptyString(120).optional(),
+    type: z.literal("slack"),
+    url: urlSchema.optional(),
+    urlEnv: nonEmptyString(120).optional(),
   })
   .strict()
   .check(
     z.superRefine((value, ctx) => {
-      if (!value.botTokenEnv && !value.botTokenSecretRef) {
+      if (!value.url && !value.urlEnv && !value.secretRef) {
         ctx.addIssue({
           code: "custom",
-          message: "telegram sink requires botTokenEnv or botTokenSecretRef",
-          path: ["botTokenEnv"],
+          message: "slack sink requires url, urlEnv, or secretRef",
+          path: ["url"],
         });
       }
     }),
   );
-export type TelegramSink = z.infer<typeof telegramSinkSchema>;
+export type SlackSink = z.infer<typeof slackSinkSchema>;
 
 function createFailureDelivery(
   sinkId: string,
@@ -52,38 +50,46 @@ function createFailureDelivery(
   };
 }
 
-export class TelegramSinkHandler implements EventSinkHandler<TelegramSink> {
-  readonly type = "telegram" as const;
+async function resolveSlackUrl(
+  sink: SlackSink,
+  context: EventSinkDeliveryContext,
+): Promise<string | null> {
+  if (sink.url) {
+    return sink.url;
+  }
 
-  async deliver(sink: TelegramSink, context: EventSinkDeliveryContext): Promise<DeliveryRecord> {
+  if (sink.urlEnv) {
+    return Bun.env[sink.urlEnv] ?? null;
+  }
+
+  if (sink.secretRef) {
+    return await context.secretStore.getSecret(sink.secretRef);
+  }
+
+  return null;
+}
+
+export class SlackSinkHandler implements EventSinkHandler<SlackSink> {
+  readonly type = "slack" as const;
+
+  async deliver(sink: SlackSink, context: EventSinkDeliveryContext): Promise<DeliveryRecord> {
     try {
-      let botToken: string | undefined;
-      if (sink.botTokenSecretRef) {
-        botToken = await context.secretStore.getSecret(sink.botTokenSecretRef);
-      } else if (sink.botTokenEnv) {
-        botToken = Bun.env[sink.botTokenEnv];
-      }
-      if (!botToken) {
+      const url = await resolveSlackUrl(sink, context);
+      if (!url) {
         return createFailureDelivery(
           sink.id,
           context.event,
           context.attempts,
-          "Telegram bot token is not configured",
+          "Slack webhook URL is not configured",
         );
       }
 
-      const baseUrl = sink.apiBaseUrl ?? "https://api.telegram.org";
-      const response = await fetch(`${baseUrl}/bot${botToken}/sendMessage`, {
-        body: JSON.stringify({
-          chat_id: sink.chatId,
-          disable_notification: sink.disableNotification,
-          message_thread_id: sink.messageThreadId,
-          parse_mode: sink.parseMode,
-          text: formatSinkTextMessage(context.event),
-        }),
-        headers: {
-          "content-type": "application/json",
-        },
+      const text = sink.textPrefix
+        ? `${sink.textPrefix}\n${formatSinkTextMessage(context.event)}`
+        : formatSinkTextMessage(context.event);
+      const response = await fetch(url, {
+        body: JSON.stringify({ text }),
+        headers: { "content-type": "application/json" },
         method: "POST",
       });
 

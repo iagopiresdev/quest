@@ -1,4 +1,5 @@
-const DEFAULT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin";
+const DEFAULT_PATH =
+  "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 const ALLOWED_HOST_ENV_KEYS = [
   "CI",

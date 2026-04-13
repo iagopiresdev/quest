@@ -26,13 +26,22 @@ import {
   observableEventSchema,
   observableRunEventSchema,
 } from "./observable-events";
-import { sinkSchemas, telegramSinkSchema, webhookSinkSchema } from "./sinks";
+import {
+  linearSinkSchema,
+  sinkSchemas,
+  slackSinkSchema,
+  telegramSinkSchema,
+  webhookSinkSchema,
+} from "./sinks";
+import type { LinearSink } from "./sinks/linear-sink";
+import type { SlackSink } from "./sinks/slack-sink";
 import type { TelegramSink } from "./sinks/telegram-sink";
 import type { WebhookSink } from "./sinks/webhook-sink";
 
 export type {
   DeliveryRecord,
   DeliveryStatus,
+  LinearSink,
   ObservabilityDeliveriesDocument,
   ObservableCalibrationEvent,
   ObservableCalibrationEventType,
@@ -40,6 +49,7 @@ export type {
   ObservableEventType,
   ObservableRunEvent,
   ObservableRunEventType,
+  SlackSink,
   TelegramSink,
   WebhookSink,
 };
@@ -48,6 +58,7 @@ export {
   createObservableRunEvent,
   deliveryRecordSchema,
   deliveryStatusSchema,
+  linearSinkSchema,
   observabilityDeliveriesSchema,
   observableCalibrationEventSchema,
   observableCalibrationEventTypeSchema,
@@ -55,6 +66,7 @@ export {
   observableEventTypeSchema,
   observableRunEventSchema,
   observableRunEventTypeSchema,
+  slackSinkSchema,
   telegramSinkSchema,
   webhookSinkSchema,
 };
