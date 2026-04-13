@@ -651,7 +651,8 @@ test("quest cli can explain planner worker ranking", () => {
   expect(plan.code).toBe(0);
   const payload = JSON.parse(plan.stdout);
   expect(payload.explanation.slices[0].sliceId).toBe("docs");
-  expect(payload.explanation.slices[0].candidates[0].workerId).toBe("scribe");
+  expect(payload.explanation.slices[0].builderCandidates[0].workerId).toBe("scribe");
+  expect(payload.explanation.slices[0].testerCandidates[0].workerId).toBe("ember");
 });
 
 test("quest cli configures webhook sinks and delivers run events", async () => {

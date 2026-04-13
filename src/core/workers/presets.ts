@@ -122,6 +122,7 @@ export function createCodexWorkerPreset(input: CodexWorkerPresetInput): Register
       voice: input.voice ?? "terse",
     },
     progression: { level: 1, xp: 0 },
+    role: "hybrid",
     resources: { cpuCost: 1, gpuCost: 0, maxParallel: 1, memoryCost: 1 },
     stats: {
       coding: 85,
@@ -166,6 +167,7 @@ export function createHermesWorkerPreset(input: HermesWorkerPresetInput): Regist
       voice: input.voice ?? "precise",
     },
     progression: { level: 1, xp: 0 },
+    role: "hybrid",
     resources: { cpuCost: 1, gpuCost: 1, maxParallel: 1, memoryCost: 2 },
     stats: {
       coding: 78,
@@ -216,6 +218,7 @@ export function createOpenClawWorkerPreset(input: OpenClawWorkerPresetInput): Re
       voice: input.voice ?? "steady",
     },
     progression: { level: 1, xp: 0 },
+    role: "hybrid",
     resources: { cpuCost: 1, gpuCost: 0, maxParallel: 1, memoryCost: 1 },
     stats: {
       coding: 82,

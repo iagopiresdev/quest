@@ -37,6 +37,8 @@ export const questSliceSchema = z
     id: sliceIdSchema,
     owns: z.array(nonEmptyString(240)).min(1).max(24),
     preferredRunner: workerRunnerSchema.optional(),
+    preferredTesterRunner: workerRunnerSchema.optional(),
+    preferredTesterWorkerId: sliceIdSchema.optional(),
     preferredWorkerId: sliceIdSchema.optional(),
     title: nonEmptyString(120),
   })

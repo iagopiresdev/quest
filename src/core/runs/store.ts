@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { QuestDomainError } from "../errors";
-import { isWorkerCompatibleWithSlice, planQuest } from "../planning/planner";
+import { isBuilderCompatibleWithSlice, planQuest } from "../planning/planner";
 import type { QuestSpec } from "../planning/spec-schema";
 import {
   readJsonFileOrDefault,
@@ -97,6 +97,8 @@ function buildInitialSliceStates(
   const scheduledSlices = run.plan.waves.flatMap((wave) =>
     wave.slices.map<QuestRunSliceState>((slice) => ({
       assignedRunner: slice.assignedRunner,
+      assignedTesterRunner: slice.assignedTesterRunner,
+      assignedTesterWorkerId: slice.assignedTesterWorkerId,
       assignedWorkerId: slice.assignedWorkerId,
       integrationStatus: "pending",
       sliceId: slice.id,
@@ -109,6 +111,8 @@ function buildInitialSliceStates(
 
   const blockedSlices = run.plan.unassigned.map<QuestRunSliceState>((slice) => ({
     assignedRunner: null,
+    assignedTesterRunner: null,
+    assignedTesterWorkerId: null,
     assignedWorkerId: null,
     integrationStatus: "pending",
     lastError: slice.message,
@@ -262,12 +266,15 @@ function appendBlockedSliceToWave(
     slices: [
       {
         assignedRunner: worker.backend.runner,
+        assignedTesterRunner: worker.backend.runner,
+        assignedTesterWorkerId: worker.id,
         assignedWorkerId: worker.id,
         conflictPaths: [],
         dependsOn: [...specSlice.dependsOn],
         hot: false,
         id: specSlice.id,
         score: null,
+        testerScore: null,
         title: specSlice.title,
         wave: nextWaveIndex,
       },
@@ -610,13 +617,15 @@ export class QuestRunStore {
 
     const eventAt = nowIsoString();
     specSlice.preferredWorkerId = worker.id;
-    if (!isWorkerCompatibleWithSlice(worker, specSlice)) {
+    if (!isBuilderCompatibleWithSlice(worker, specSlice)) {
       // Explicit operator steering should become the persisted intent for future execution, even
       // when it overrides a stale preferred runner from the original plan snapshot.
       specSlice.preferredRunner = worker.backend.runner;
     }
     sliceState.assignedWorkerId = worker.id;
     sliceState.assignedRunner = worker.backend.runner;
+    sliceState.assignedTesterWorkerId ??= worker.id;
+    sliceState.assignedTesterRunner ??= worker.backend.runner;
     if (sliceState.status === "blocked") {
       const assignedWave = appendBlockedSliceToWave(run, sliceId, worker);
       sliceState.wave = assignedWave;
@@ -631,6 +640,8 @@ export class QuestRunStore {
       if (plannedSlice) {
         plannedSlice.assignedRunner = worker.backend.runner;
         plannedSlice.assignedWorkerId = worker.id;
+        plannedSlice.assignedTesterRunner ||= worker.backend.runner;
+        plannedSlice.assignedTesterWorkerId ||= worker.id;
       }
     }
     setRunStatus(run, reconcileRunStatus(run));

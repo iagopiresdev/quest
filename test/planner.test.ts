@@ -229,3 +229,59 @@ test("planner reports slices with no compatible worker as unassigned", () => {
     },
   ]);
 });
+
+test("planner assigns a dedicated tester when builder and tester roles are split", () => {
+  const roleWorkers: RegisteredWorker[] = [
+    createWorker({
+      id: "builder-only",
+      name: "Builder",
+      role: "builder",
+      stats: {
+        coding: 92,
+        contextEndurance: 60,
+        docs: 45,
+        mergeSafety: 72,
+        research: 40,
+        speed: 70,
+        testing: 35,
+      },
+    }),
+    createWorker(
+      {
+        id: "tester-only",
+        name: "Tester",
+        role: "tester",
+        stats: {
+          coding: 35,
+          contextEndurance: 58,
+          docs: 42,
+          mergeSafety: 90,
+          research: 30,
+          speed: 55,
+          testing: 95,
+        },
+      },
+      { profile: "hermes", runner: "hermes" },
+    ),
+  ];
+
+  const spec: QuestSpec = createSpec({
+    slices: [
+      createSlice({
+        acceptanceChecks: [createCommand(["bun", "test"])],
+        goal: "Implement parser changes",
+        id: "parser",
+        preferredTesterRunner: "hermes",
+        title: "Parser",
+      }),
+    ],
+    title: "Role split planning",
+  });
+
+  const plan = planQuest(spec, roleWorkers);
+  expect(plan.waves).toHaveLength(1);
+  expect(plan.waves[0]?.slices[0]).toMatchObject({
+    assignedTesterWorkerId: "tester-only",
+    assignedWorkerId: "builder-only",
+  });
+});

@@ -303,6 +303,7 @@ export function createWorker(
       level: 7,
       xp: 1840,
     },
+    role: "hybrid",
     resources: {
       cpuCost: 2,
       gpuCost: 0,
@@ -396,6 +397,7 @@ export function createWorkerForRunner(
       id,
       name: id,
       progression: { level: 1, xp: 0 },
+      role: "hybrid",
       resources: {
         cpuCost: 1,
         gpuCost: runner === "hermes" ? 1 : 0,

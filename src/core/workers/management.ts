@@ -1,5 +1,5 @@
 import type { WorkerRuntimeConfig } from "./runtime";
-import { type RegisteredWorker, registeredWorkerSchema } from "./schema";
+import { type RegisteredWorker, registeredWorkerSchema, type WorkerRole } from "./schema";
 
 export type WorkerUpdate = {
   approach?: string;
@@ -16,8 +16,10 @@ export type WorkerUpdate = {
     toolDeny?: string[];
   };
   enabled?: boolean;
+  level?: number;
   name?: string;
   personaPrompt?: string;
+  role?: WorkerRole;
   resources?: Partial<RegisteredWorker["resources"]>;
   stats?: Partial<RegisteredWorker["stats"]>;
   tags?: string[];
@@ -26,7 +28,6 @@ export type WorkerUpdate = {
   voice?: string;
   workerClass?: string;
   xp?: number;
-  level?: number;
 };
 
 export type WorkerStrength = {
@@ -39,6 +40,14 @@ export function topWorkerStrengths(worker: RegisteredWorker, limit = 3): WorkerS
     .sort((left, right) => right[1] - left[1])
     .slice(0, limit)
     .map(([key, score]) => ({ key, score }));
+}
+
+export function workerSupportsBuilderRole(worker: RegisteredWorker): boolean {
+  return worker.role === "builder" || worker.role === "hybrid";
+}
+
+export function workerSupportsTesterRole(worker: RegisteredWorker): boolean {
+  return worker.role === "tester" || worker.role === "hybrid";
 }
 
 export function getLatestCalibration(worker: RegisteredWorker) {
@@ -83,6 +92,7 @@ export function applyWorkerUpdate(
       ...(update.level !== undefined ? { level: update.level } : {}),
       ...(update.xp !== undefined ? { xp: update.xp } : {}),
     },
+    ...(update.role ? { role: update.role } : {}),
     resources: {
       ...worker.resources,
       ...update.resources,

@@ -35,6 +35,9 @@ export const secretRefSchema = constrainedString(
 export const workerRunnerSchema = z.enum(["codex", "claude", "hermes", "openclaw", "custom"]);
 export type WorkerRunner = z.infer<typeof workerRunnerSchema>;
 
+export const workerRoleSchema = z.enum(["builder", "tester", "hybrid"]);
+export type WorkerRole = z.infer<typeof workerRoleSchema>;
+
 export const workerDisciplineSchema = z.enum(["coding", "testing", "docs", "research"]);
 export type WorkerDiscipline = z.infer<typeof workerDisciplineSchema>;
 export const workerCalibrationSuiteSchema = z.enum(["training-grounds-v1"]);
@@ -217,6 +220,7 @@ export const registeredWorkerSchema = z
     name: nonEmptyString(80),
     persona: workerPersonaSchema,
     progression: workerProgressionSchema,
+    role: workerRoleSchema.default("hybrid"),
     resources: workerResourceSchema,
     stats: workerStatsSchema,
     tags: z.array(nonEmptyString(40)).max(16).default([]),

@@ -47,6 +47,7 @@ function createWorker(
       voice: "terse",
     },
     progression: { level: 1, xp: 0 },
+    role: "hybrid",
     resources: { cpuCost: 1, gpuCost: 0, maxParallel: 1, memoryCost: 1 },
     stats: {
       coding: 80,

@@ -16,7 +16,7 @@ import {
   webhookSinkSchema,
 } from "./core/observability/schema";
 import { ObservabilityStore } from "./core/observability/store";
-import { planQuest, rankWorkersForSlice } from "./core/planning/planner";
+import { planQuest, rankTesterWorkersForSlice, rankWorkersForSlice } from "./core/planning/planner";
 import { type QuestSpec, questSpecSchema } from "./core/planning/spec-schema";
 import { parseOpenClawJsonOutput } from "./core/runs/adapters/openclaw-shared";
 import { QuestRunCleanup } from "./core/runs/cleanup";
@@ -56,6 +56,7 @@ import {
   type RegisteredWorker,
   registeredWorkerSchema,
   type WorkerCalibrationSuite,
+  workerRoleSchema,
 } from "./core/workers/schema";
 
 type QuestCliCommand =
@@ -127,10 +128,12 @@ type DoctorCheck = {
 type OutputMode = "json" | "pretty";
 
 type RunSliceSummary = {
+  builderWorkerId: string | null;
   id: string;
   integrationStatus: string;
   lastError: string | null;
   status: string;
+  testerWorkerId: string | null;
   title: string;
   wave: number;
   workerId: string | null;
@@ -162,6 +165,7 @@ type WorkerStatusSummary = {
   id: string;
   latestCalibration: ReturnType<typeof getLatestCalibration>;
   name: string;
+  role: RegisteredWorker["role"];
   runner: RegisteredWorker["backend"]["runner"];
   strengths: ReturnType<typeof topWorkerStrengths>;
   title: string;
@@ -383,6 +387,7 @@ function parseWorkerUpdate(args: string[]): WorkerUpdate {
   const name = findOptionValue(args, "--name");
   const title = findOptionValue(args, "--title");
   const workerClass = findOptionValue(args, "--class");
+  const role = findOptionValue(args, "--role");
   const voice = findOptionValue(args, "--voice");
   const approach = findOptionValue(args, "--approach");
   const personaPrompt = findOptionValue(args, "--prompt");
@@ -391,6 +396,7 @@ function parseWorkerUpdate(args: string[]): WorkerUpdate {
   if (name) update.name = name;
   if (title) update.title = title;
   if (workerClass) update.workerClass = workerClass;
+  if (role) update.role = workerRoleSchema.parse(role);
   if (voice) update.voice = voice;
   if (approach) update.approach = approach;
   if (personaPrompt) update.personaPrompt = personaPrompt;
@@ -434,6 +440,7 @@ function buildWorkerStatusSummary(worker: RegisteredWorker): WorkerStatusSummary
     id: worker.id,
     latestCalibration: getLatestCalibration(worker),
     name: worker.name,
+    role: worker.role,
     runner: worker.backend.runner,
     strengths: topWorkerStrengths(worker),
     title: worker.title,
@@ -444,7 +451,8 @@ function buildWorkerStatusSummary(worker: RegisteredWorker): WorkerStatusSummary
 function buildPlanExplanation(spec: QuestSpec, workers: RegisteredWorker[]) {
   return {
     slices: spec.slices.map((slice) => ({
-      candidates: rankWorkersForSlice(slice, workers).map((assignment) => ({
+      builderCandidates: rankWorkersForSlice(slice, workers).map((assignment) => ({
+        role: assignment.worker.role,
         runner: assignment.worker.backend.runner,
         score: assignment.score,
         strengths: topWorkerStrengths(assignment.worker),
@@ -453,8 +461,18 @@ function buildPlanExplanation(spec: QuestSpec, workers: RegisteredWorker[]) {
       })),
       discipline: slice.discipline,
       preferredRunner: slice.preferredRunner ?? null,
+      preferredTesterRunner: slice.preferredTesterRunner ?? null,
+      preferredTesterWorkerId: slice.preferredTesterWorkerId ?? null,
       preferredWorkerId: slice.preferredWorkerId ?? null,
       sliceId: slice.id,
+      testerCandidates: rankTesterWorkersForSlice(slice, workers).map((assignment) => ({
+        role: assignment.worker.role,
+        runner: assignment.worker.backend.runner,
+        score: assignment.score,
+        strengths: topWorkerStrengths(assignment.worker),
+        trustRating: assignment.worker.trust.rating,
+        workerId: assignment.worker.id,
+      })),
       title: slice.title,
     })),
   };
@@ -748,10 +766,12 @@ function buildSetupWorker(backend: string, workerArgs: string[]): RegisteredWork
 
 function summarizeSliceState(slice: QuestRunSliceState): RunSliceSummary {
   return {
+    builderWorkerId: slice.assignedWorkerId,
     id: slice.sliceId,
     integrationStatus: slice.integrationStatus ?? "pending",
     lastError: slice.lastError ?? null,
     status: slice.status,
+    testerWorkerId: slice.assignedTesterWorkerId ?? null,
     title: slice.title,
     wave: slice.wave,
     workerId: slice.assignedWorkerId,
@@ -1304,6 +1324,7 @@ async function runSetup(
       pushOption(workerArgs, "--target-env-var", findOptionValue(args, "--target-env-var"));
       pushOption(workerArgs, "--title", findOptionValue(args, "--title"));
       pushOption(workerArgs, "--class", findOptionValue(args, "--class"));
+      pushOption(workerArgs, "--role", findOptionValue(args, "--role"));
       pushOption(workerArgs, "--voice", findOptionValue(args, "--voice"));
       pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
       pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
@@ -1375,6 +1396,7 @@ function formatCountMap(counts: Record<string, number>): string {
 function formatWorkerLine(worker: RegisteredWorker): string {
   return [
     `${worker.id} (${worker.name})`,
+    `role ${worker.role}`,
     `${worker.backend.runner}/${worker.backend.adapter}`,
     worker.enabled ? "enabled" : "disabled",
     `trust ${worker.trust.rating.toFixed(2)}`,
@@ -1436,7 +1458,7 @@ function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): 
     `  ${prettyLabels.turnIn.toLowerCase()}: ${turnInStatus}`,
     ...summary.slices.map(
       (slice) =>
-        `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | ${prettyLabels.party}=${slice.workerId ?? "unassigned"} | ${prettyLabels.bossFight.toLowerCase()}=${slice.integrationStatus}`,
+        `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | builder=${slice.builderWorkerId ?? "unassigned"} | tester=${slice.testerWorkerId ?? "unassigned"} | ${prettyLabels.bossFight.toLowerCase()}=${slice.integrationStatus}`,
     ),
   ];
 }
@@ -1448,6 +1470,7 @@ function formatWorkerStatusPretty(worker: RegisteredWorker, status: WorkerStatus
     `  title: ${worker.title}`,
     `  backend: ${worker.backend.runner}/${worker.backend.adapter}`,
     `  profile: ${worker.backend.profile}`,
+    `  role: ${status.role}`,
     `  enabled: ${worker.enabled}`,
     `  trust: ${worker.trust.rating.toFixed(2)}`,
     `  level/xp: ${worker.progression.level}/${worker.progression.xp}`,
@@ -1467,7 +1490,7 @@ function formatWorkersSummaryPretty(
     `${prettyLabels.roster} (${entries.length})`,
     ...entries.map(
       ({ status, worker }) =>
-        `  - ${worker.id} | ${worker.backend.profile} | trust=${status.trustRating.toFixed(2)} | strengths=${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+        `  - ${worker.id} | role=${status.role} | ${worker.backend.profile} | trust=${status.trustRating.toFixed(2)} | strengths=${status.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
     ),
   ].join("\n");
 }
@@ -1490,21 +1513,34 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
         warnings: string[];
         waves: Array<{
           index: number;
-          slices: Array<{ assignedWorkerId?: string | null; id: string }>;
+          slices: Array<{
+            assignedTesterWorkerId?: string | null;
+            assignedWorkerId?: string | null;
+            id: string;
+          }>;
         }>;
       }
     | undefined;
   const explanation = candidate.explanation as
     | {
         slices: Array<{
-          candidates: Array<{
+          builderCandidates: Array<{
             runner: string;
+            role: string;
             score: number;
             strengths: Array<{ key: string; score: number }>;
             trustRating: number;
             workerId: string;
           }>;
           discipline: string;
+          testerCandidates: Array<{
+            runner: string;
+            role: string;
+            score: number;
+            strengths: Array<{ key: string; score: number }>;
+            trustRating: number;
+            workerId: string;
+          }>;
           sliceId: string;
         }>;
       }
@@ -1518,7 +1554,10 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
     ...plan.waves.map(
       (wave) =>
         `  party wave ${wave.index}: ${wave.slices
-          .map((slice) => `${slice.id}@${slice.assignedWorkerId ?? "unassigned"}`)
+          .map(
+            (slice) =>
+              `${slice.id}@builder:${slice.assignedWorkerId ?? "unassigned"}/tester:${slice.assignedTesterWorkerId ?? "unassigned"}`,
+          )
           .join(", ")}`,
     ),
     ...plan.unassigned.map(
@@ -1531,9 +1570,16 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
     lines.push("", prettyLabels.partySelection);
     explanation.slices.forEach((slice) => {
       lines.push(`  ${prettyLabels.encounter} ${slice.sliceId} (${slice.discipline})`);
-      slice.candidates.slice(0, 3).forEach((candidateEntry) => {
+      lines.push("    builders");
+      slice.builderCandidates.slice(0, 3).forEach((candidateEntry) => {
         lines.push(
-          `    - ${candidateEntry.workerId} ${candidateEntry.runner} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+          `      - ${candidateEntry.workerId} ${candidateEntry.runner} role=${candidateEntry.role} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
+        );
+      });
+      lines.push("    testers");
+      slice.testerCandidates.slice(0, 3).forEach((candidateEntry) => {
+        lines.push(
+          `      - ${candidateEntry.workerId} ${candidateEntry.runner} role=${candidateEntry.role} score=${candidateEntry.score} trust=${candidateEntry.trustRating.toFixed(2)} strengths=${candidateEntry.strengths.map((entry) => `${entry.key}=${entry.score}`).join(", ")}`,
         );
       });
     });
@@ -1879,7 +1925,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     matches: (args) => args.length >= 1 && args[0] === "setup",
     run: async ({ args, registry, secretStore }) => await runSetup(args, registry, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",
@@ -2098,7 +2144,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add codex [--id <id>] [--name <name>] [--profile <model>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <native-login|env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:add:hermes",
@@ -2109,7 +2155,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
+      "quest workers add hermes --base-url <http://127.0.0.1:8000/v1> [--id <id>] [--name <name>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--profile <model>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>]",
   },
   {
     id: "workers:add:openclaw",
@@ -2120,7 +2166,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(worker) };
     },
     usage:
-      "quest workers add openclaw [--agent-id <id> | --session-id <id>] [--gateway-url <url>] [--local] [--executable <path>] [--id <id>] [--name <name>] [--profile <name>] [--tags <a,b>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--target-env-var <name>]",
+      "quest workers add openclaw [--agent-id <id> | --session-id <id>] [--gateway-url <url>] [--local] [--executable <path>] [--id <id>] [--name <name>] [--profile <name>] [--tags <a,b>] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--auth-mode <env-var|secret-store>] [--env-var <name>] [--secret-ref <name>] [--target-env-var <name>]",
   },
   {
     id: "workers:calibrate",
@@ -2192,7 +2238,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { worker: await registry.upsertWorker(updated) };
     },
     usage:
-      "quest workers update --id <worker-id> [--enable|--disable] [--name <name>] [--title <title>] [--class <class>] [--voice <voice>] [--approach <text>] [--prompt <text>] [--tags <a,b>] [--profile <model>] [--executable <path>] [--base-url <url>] [--allow-tools <a,b>] [--deny-tools <a,b>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--registry <path>]",
+      "quest workers update --id <worker-id> [--enable|--disable] [--name <name>] [--title <title>] [--class <class>] [--role <builder|tester|hybrid>] [--voice <voice>] [--approach <text>] [--prompt <text>] [--tags <a,b>] [--profile <model>] [--executable <path>] [--base-url <url>] [--allow-tools <a,b>] [--deny-tools <a,b>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--trust-rating <n>] [--level <n>] [--xp <n>] [--registry <path>]",
   },
   {
     id: "workers:upsert",

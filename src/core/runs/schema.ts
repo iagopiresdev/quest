@@ -71,12 +71,15 @@ export type QuestRunEventType = (typeof questRunEventTypeValues)[number];
 const plannedQuestSliceSchema = z
   .object({
     assignedRunner: z.string().trim().min(1).max(80),
+    assignedTesterRunner: z.string().trim().min(1).max(80),
+    assignedTesterWorkerId: nonEmptyString(80),
     assignedWorkerId: nonEmptyString(80),
     conflictPaths: z.array(nonEmptyString(240)),
     dependsOn: z.array(nonEmptyString(80)),
     hot: z.boolean(),
     id: nonEmptyString(80),
     score: z.number().nullable(),
+    testerScore: z.number().nullable(),
     title: nonEmptyString(120),
     wave: z.number().int().min(1),
   })
@@ -94,6 +97,9 @@ const questPlanWarningSchema = z
     code: z.enum([
       "preferred_worker_missing",
       "preferred_worker_incompatible",
+      "preferred_tester_missing",
+      "preferred_tester_incompatible",
+      "no_tester_available",
       "no_worker_available",
     ]),
     message: nonEmptyString(240),
@@ -106,7 +112,7 @@ const unassignedQuestSliceSchema = z
     dependsOn: z.array(nonEmptyString(80)),
     id: nonEmptyString(80),
     message: nonEmptyString(240),
-    reasonCode: z.enum(["dependency_blocked", "no_worker_available"]),
+    reasonCode: z.enum(["dependency_blocked", "no_tester_available", "no_worker_available"]),
     title: nonEmptyString(120),
   })
   .strict();
@@ -151,6 +157,8 @@ export const questRunCheckResultSchema = z
 export const questRunSliceStateSchema = z
   .object({
     assignedRunner: z.string().trim().min(1).max(80).nullable(),
+    assignedTesterRunner: z.string().trim().min(1).max(80).nullable(),
+    assignedTesterWorkerId: nonEmptyString(80).nullable(),
     assignedWorkerId: nonEmptyString(80).nullable(),
     baseRevision: nonEmptyString(80).optional(),
     completedAt: isoDateStringSchema.optional(),

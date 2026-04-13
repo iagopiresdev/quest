@@ -35,6 +35,7 @@ Pretty-mode vocabulary keeps the engine plain and adds light RPG flavor:
 Engineering guidance for future work lives in [docs/engineering-guide.mdx](./docs/engineering-guide.mdx).
 Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.mdx](./docs/design-system.mdx).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
+Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
 
 Testing rule:
 - mocked coverage is not enough for execution-facing work
@@ -57,6 +58,14 @@ Current adapters:
 
 Current built-in worker evaluation:
 - `training-grounds-v1` calibration suite for scoring a worker on throwaway coding, testing, and docs tasks
+
+Worker roles:
+- `builder`
+  preferred for encounters
+- `tester`
+  preferred for trials
+- `hybrid`
+  can do both and acts as the safe fallback
 
 Example `local-command` worker:
 
