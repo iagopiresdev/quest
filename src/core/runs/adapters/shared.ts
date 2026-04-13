@@ -53,7 +53,7 @@ function describeCommandForPrompt(command: QuestSliceSpec["acceptanceChecks"][nu
   return `${command.argv[0]} (${argCount} arg(s) redacted${envSuffix})`;
 }
 
-export function buildQuestPrompt(context: RunnerExecutionContext): string {
+function buildBuilderPrompt(context: RunnerExecutionContext): string {
   const ownedPaths = context.slice.owns.map((path) => `- ${path}`).join("\n");
   const dependencyList =
     context.slice.dependsOn.length === 0
@@ -96,6 +96,57 @@ export function buildQuestPrompt(context: RunnerExecutionContext): string {
     "Global acceptance checks before integration:",
     globalAcceptanceChecks,
   ].join("\n");
+}
+
+function buildTesterPrompt(context: RunnerExecutionContext): string {
+  const ownedPaths = context.slice.owns.map((path) => `- ${path}`).join("\n");
+  const dependencyList =
+    context.slice.dependsOn.length === 0
+      ? "- none"
+      : context.slice.dependsOn.map((dependency) => `- ${dependency}`).join("\n");
+  const sliceAcceptanceChecks =
+    context.slice.acceptanceChecks.length === 0
+      ? "- none"
+      : context.slice.acceptanceChecks
+          .map((check) => `- ${describeCommandForPrompt(check)}`)
+          .join("\n");
+  const builderSummary =
+    context.sliceState.lastOutput?.summary?.trim() ?? "No builder summary recorded.";
+  const builderWorkerId = context.sliceState.assignedWorkerId ?? "unknown";
+
+  return [
+    `Quest: ${context.run.spec.title}`,
+    `Trial: ${context.slice.title} (${context.slice.id})`,
+    "",
+    "Role:",
+    `You are validating the builder output for slice ${context.slice.id}.`,
+    "",
+    "Builder:",
+    `- worker: ${builderWorkerId}`,
+    `- summary: ${builderSummary}`,
+    "",
+    "Goal:",
+    context.slice.goal,
+    "",
+    "Constraints:",
+    "- Work only within the owned paths for this slice.",
+    "- Inspect the current workspace result and make only minimal corrections needed for the trial to pass.",
+    "- Do not expand the scope beyond validating and stabilizing this slice.",
+    "- Keep the final response short and focused on validation and residual risks.",
+    "",
+    "Owned paths:",
+    ownedPaths,
+    "",
+    "Dependencies:",
+    dependencyList,
+    "",
+    "Slice acceptance checks after your validation pass:",
+    sliceAcceptanceChecks,
+  ].join("\n");
+}
+
+export function buildRunnerPrompt(context: RunnerExecutionContext): string {
+  return context.phase === "test" ? buildTesterPrompt(context) : buildBuilderPrompt(context);
 }
 
 export async function resolveAuthEnv(

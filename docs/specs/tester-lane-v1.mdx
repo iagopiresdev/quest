@@ -1,0 +1,98 @@
+---
+title: Tester Lane v1
+description: Add a real dedicated tester runtime phase for slices that have an assigned tester worker.
+---
+
+# Tester Lane v1
+
+## Context
+
+`quest-runner` already persisted tester assignment, but execution still behaved like:
+- builder runs
+- local acceptance checks run
+
+That made tester assignment visible, but not real.
+
+## Problem
+
+Without a real tester phase:
+- builder and tester roles look distinct in planning but collapse during execution
+- trial ownership is not meaningful for dedicated tester workers
+- the RPG-style party model stays cosmetic during the run itself
+
+## Goal
+
+Add a real dedicated tester runtime phase for slices where:
+- a tester is assigned
+- the tester is different from the builder
+
+The tester should validate the built workspace before the raw acceptance commands run.
+
+## Non-Goals
+
+This version does not:
+- require a separate tester when the worker is `hybrid`
+- replace raw acceptance checks with model-only validation
+- move boss fight or integration into a worker lane
+
+## Workflow
+
+For a slice with a distinct tester:
+1. builder executes the encounter
+2. tester executes the trial on the same workspace
+3. structured acceptance checks run
+4. if green, the slice completes
+
+For a slice where builder and tester are the same worker:
+1. builder executes the encounter
+2. raw acceptance checks run
+
+## Domain Impact
+
+The runner context gains an explicit `phase`:
+- `build`
+- `test`
+
+Slice state gains persisted tester output so operators can inspect:
+- builder output
+- tester output
+- raw check output
+
+## Validation Rules
+
+- only a distinct assigned tester triggers a dedicated tester runtime
+- acceptance checks still remain the source of truth for pass/fail
+- tester output must not overwrite builder output
+- logs must preserve both builder and tester output when both exist
+
+## Acceptance Checks
+
+This feature is correct when:
+- a builder worker can leave the workspace in a failing state
+- a dedicated tester worker can repair or validate that state before checks run
+- the slice then passes because of the tester phase
+- builder and tester outputs are both persisted
+
+## Test Plan
+
+- executor test where builder writes a bad artifact, tester fixes it, and the acceptance check then passes
+- verify tester output is persisted separately from builder output
+- verify testing events still fire and include tester identity
+
+## Canary Plan
+
+Run at least one disposable real quest where:
+- builder and tester are distinct workers
+- tester changes the workspace during the trial phase
+- `runs logs` shows separate builder and tester outputs
+
+## Rollout
+
+Roll out as an execution-only change. No migration required beyond optional persisted tester output on new runs.
+
+## Recovery
+
+If the tester phase regresses:
+- keep builder/tester assignment in planning
+- disable dedicated tester execution
+- fall back to builder plus raw acceptance checks only

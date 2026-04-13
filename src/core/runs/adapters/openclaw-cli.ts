@@ -5,7 +5,7 @@ import type { SecretStore } from "../../secret-store";
 import { runSubprocess } from "../process";
 import { buildProcessEnv } from "../process-env";
 import { parseOpenClawJsonOutput } from "./openclaw-shared";
-import { buildQuestPrompt, resolveAuthEnv } from "./shared";
+import { buildRunnerPrompt, resolveAuthEnv } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
 
 const openClawAgentResponseSchema = z
@@ -77,7 +77,7 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
 
   async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
     const executable = context.worker.backend.executable ?? "openclaw";
-    const prompt = buildQuestPrompt(context);
+    const prompt = buildRunnerPrompt(context);
     const authEnv = await resolveAuthEnv(context.worker, this.secretStore);
     const providerOptions = context.worker.backend.runtime?.providerOptions;
     const command = [executable, "agent"];
@@ -118,6 +118,7 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
             : {}),
           QUEST_RUN_ID: context.run.id,
           QUEST_SLICE_ID: context.slice.id,
+          QUEST_SLICE_PHASE: context.phase,
           QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
           QUEST_WORKER_ID: context.worker.id,
           QUEST_WORKSPACE: context.run.spec.workspace,

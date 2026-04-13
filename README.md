@@ -37,6 +37,7 @@ Project structure, spec-driven workflow, and documentation rules live in [docs/d
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
 Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
 Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
+Tester-lane planning notes live in [docs/specs/tester-lane-v1.mdx](./docs/specs/tester-lane-v1.mdx).
 
 Testing rule:
 - mocked coverage is not enough for execution-facing work
@@ -341,6 +342,8 @@ Acceptance checks are structured argv commands, not shell strings. Example:
 ## Tester Lane
 
 Each slice can define `acceptanceChecks`. After the worker command succeeds, Quest Runner executes those argv-defined checks in order and persists their results into slice logs.
+
+If a slice has a distinct assigned tester worker, Quest Runner now runs that tester on the built workspace before the raw checks execute. The tester can validate or minimally correct the slice result, but the structured acceptance checks still decide pass/fail.
 
 If any check exits non-zero:
 - the slice becomes `failed`

@@ -1620,6 +1620,7 @@ function formatLogsPretty(candidate: Record<string, unknown>): string {
         slices: Array<{
           lastChecks?: Array<{ command: { argv: string[] }; exitCode: number }> | undefined;
           lastOutput?: { exitCode: number } | undefined;
+          lastTesterOutput?: { exitCode: number } | undefined;
           sliceId: string;
           status: string;
         }>;
@@ -1627,7 +1628,7 @@ function formatLogsPretty(candidate: Record<string, unknown>): string {
     | undefined;
   const logLines =
     logView?.slices.flatMap((slice) => [
-      `  - ${prettyLabels.encounter}=${slice.sliceId} ${prettyLabels.party} status=${slice.status}${slice.lastOutput ? ` exit=${slice.lastOutput.exitCode}` : ""}`,
+      `  - ${prettyLabels.encounter}=${slice.sliceId} ${prettyLabels.party} status=${slice.status}${slice.lastOutput ? ` builder-exit=${slice.lastOutput.exitCode}` : ""}${slice.lastTesterOutput ? ` tester-exit=${slice.lastTesterOutput.exitCode}` : ""}`,
       ...(slice.lastChecks ?? []).map(
         (check) =>
           `    ${prettyLabels.trial}=${check.command.argv.join(" ")} status=${check.exitCode === 0 ? "passed" : "failed"} exit=${check.exitCode}`,

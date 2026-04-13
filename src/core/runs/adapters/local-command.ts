@@ -22,6 +22,7 @@ function buildLocalCommandPayload(context: RunnerExecutionContext): string {
         wave: context.sliceState.wave,
         workspacePath: context.sliceState.workspacePath ?? null,
       },
+      phase: context.phase,
       worker: {
         backend: context.worker.backend,
         id: context.worker.id,
@@ -64,6 +65,7 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
           ...context.worker.backend.env,
           QUEST_RUN_ID: context.run.id,
           QUEST_SLICE_ID: context.slice.id,
+          QUEST_SLICE_PHASE: context.phase,
           QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
           QUEST_WORKER_ID: context.worker.id,
           QUEST_WORKSPACE: context.run.spec.workspace,

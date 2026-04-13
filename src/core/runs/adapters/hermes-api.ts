@@ -5,7 +5,7 @@ import { z } from "zod";
 import { QuestDomainError } from "../../errors";
 import type { SecretStore } from "../../secret-store";
 import type { WorkerRuntimeConfig } from "../../workers/runtime";
-import { buildQuestPrompt, resolveAuthEnv } from "./shared";
+import { buildRunnerPrompt, resolveAuthEnv } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
 
 const hermesResponseSchema = z
@@ -85,7 +85,7 @@ function buildHermesPrompt(
           .join("\n\n");
 
   return [
-    buildQuestPrompt(context),
+    buildRunnerPrompt(context),
     "",
     "Return JSON only with this shape:",
     '{"summary":"short summary","files":[{"path":"relative/path","content":"full file contents"}]}',

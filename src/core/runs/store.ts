@@ -43,6 +43,7 @@ export type QuestRunLogView = {
     lastChecks?: QuestRunSliceState["lastChecks"] | undefined;
     lastError?: string | undefined;
     lastOutput?: QuestRunSliceState["lastOutput"] | undefined;
+    lastTesterOutput?: QuestRunSliceState["lastTesterOutput"] | undefined;
     sliceId: string;
     status: QuestRunSliceState["status"];
     title: string;
@@ -635,6 +636,7 @@ export class QuestRunStore {
       delete sliceState.lastChecks;
       delete sliceState.lastError;
       delete sliceState.lastOutput;
+      delete sliceState.lastTesterOutput;
     } else {
       const plannedSlice = findPlannedSlice(run, sliceId);
       if (plannedSlice) {
@@ -680,6 +682,7 @@ export class QuestRunStore {
     delete sliceState.lastChecks;
     delete sliceState.lastError;
     delete sliceState.lastOutput;
+    delete sliceState.lastTesterOutput;
     sliceState.integrationStatus = "pending";
     delete sliceState.integratedCommit;
     delete sliceState.resultRevision;
@@ -710,6 +713,7 @@ export class QuestRunStore {
       delete sliceState.lastError;
     }
     delete sliceState.lastOutput;
+    delete sliceState.lastTesterOutput;
     sliceState.integrationStatus = "noop";
     delete sliceState.integratedCommit;
     if (previousStatus === "blocked") {
@@ -741,6 +745,7 @@ export class QuestRunStore {
         lastError: slice.lastError,
         lastChecks: slice.lastChecks,
         lastOutput: slice.lastOutput,
+        lastTesterOutput: slice.lastTesterOutput,
       })),
     };
   }

@@ -168,6 +168,7 @@ export const questRunSliceStateSchema = z
     lastError: nonEmptyString(QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH).optional(),
     lastChecks: z.array(questRunCheckResultSchema).optional(),
     lastOutput: questRunSliceOutputSchema.optional(),
+    lastTesterOutput: questRunSliceOutputSchema.optional(),
     resultRevision: nonEmptyString(80).optional(),
     sliceId: nonEmptyString(80),
     startedAt: isoDateStringSchema.optional(),

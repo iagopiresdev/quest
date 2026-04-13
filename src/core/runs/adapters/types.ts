@@ -11,6 +11,7 @@ export type RunnerExecutionResult = {
 
 export type RunnerExecutionContext = {
   cwd: string;
+  phase: "build" | "test";
   run: QuestRunDocument;
   signal?: AbortSignal | undefined;
   slice: QuestSliceSpec;

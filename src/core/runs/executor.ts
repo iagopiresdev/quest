@@ -20,6 +20,7 @@ import {
   QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH,
   type QuestRunCheckResult,
   type QuestRunDocument,
+  type QuestRunSliceOutput,
   type QuestRunSliceState,
 } from "./schema";
 import type { QuestRunStore } from "./store";
@@ -143,10 +144,53 @@ type WaveExecutionSuccess = {
   sliceState: QuestRunSliceState;
 };
 
+type TesterPhaseResult = {
+  output: QuestRunSliceOutput;
+  worker: RegisteredWorker;
+} | null;
+
 type WaveExecutionFailure = {
   error: unknown;
   sliceState: QuestRunSliceState;
 };
+
+function resolveAssignedWorker(
+  run: QuestRunDocument,
+  sliceState: QuestRunSliceState,
+  workerId: string | null,
+  workerMap: Map<string, RegisteredWorker>,
+  workerType: "builder" | "tester",
+): RegisteredWorker {
+  if (!workerId) {
+    throw new QuestDomainError({
+      code: "invalid_quest_run",
+      details: { runId: run.id, sliceId: sliceState.sliceId, workerType },
+      message: `Slice ${sliceState.sliceId} has no assigned ${workerType}`,
+      statusCode: 1,
+    });
+  }
+
+  const worker = workerMap.get(workerId);
+  if (!worker) {
+    throw new QuestDomainError({
+      code: "quest_worker_not_found",
+      details: { runId: run.id, sliceId: sliceState.sliceId, workerId, workerType },
+      message: `Assigned ${workerType} ${workerId} is not registered`,
+      statusCode: 1,
+    });
+  }
+
+  return worker;
+}
+
+function toSliceOutput(result: WaveExecutionSuccess["result"]): QuestRunSliceOutput {
+  return {
+    exitCode: result.exitCode,
+    stderr: result.stderr,
+    stdout: result.stdout,
+    summary: truncatePersistedMessage(result.summary),
+  };
+}
 
 export class QuestRunExecutor {
   private readonly runnerRegistry: RunnerRegistry;
@@ -163,6 +207,46 @@ export class QuestRunExecutor {
       new HermesApiRunnerAdapter(secretStore),
       new OpenClawCliRunnerAdapter(secretStore),
     ]);
+  }
+
+  private async executeTesterPhase(
+    run: QuestRunDocument,
+    sliceSpec: QuestRunDocument["spec"]["slices"][number],
+    sliceState: QuestRunSliceState,
+    workerMap: Map<string, RegisteredWorker>,
+    options: { dryRun?: boolean | undefined },
+  ): Promise<TesterPhaseResult> {
+    const builderWorkerId = sliceState.assignedWorkerId;
+    const testerWorker = resolveAssignedWorker(
+      run,
+      sliceState,
+      sliceState.assignedTesterWorkerId,
+      workerMap,
+      "tester",
+    );
+
+    if (sliceState.assignedTesterWorkerId === builderWorkerId) {
+      return null;
+    }
+
+    const cwd = resolveExecutionCwd(run, sliceState, testerWorker);
+    const adapter = this.runnerRegistry.resolve(testerWorker, {
+      forceDryRun: options.dryRun === true,
+    });
+    const testerResult = await adapter.execute({
+      cwd,
+      phase: "test",
+      run,
+      signal: undefined,
+      slice: sliceSpec,
+      sliceState,
+      worker: testerWorker,
+    });
+
+    return {
+      output: toSliceOutput(testerResult),
+      worker: testerWorker,
+    };
   }
 
   async executeRun(
@@ -258,6 +342,7 @@ export class QuestRunExecutor {
             return {
               result: await adapter.execute({
                 cwd,
+                phase: "build",
                 run,
                 signal: undefined,
                 slice,
@@ -290,26 +375,13 @@ export class QuestRunExecutor {
         });
 
         for (const { result, sliceState } of waveSuccesses) {
-          const workerId = sliceState.assignedWorkerId;
-          if (!workerId) {
-            throw new QuestDomainError({
-              code: "invalid_quest_run",
-              details: { runId: run.id, sliceId: sliceState.sliceId },
-              message: `Slice ${sliceState.sliceId} has no assigned worker`,
-              statusCode: 1,
-            });
-          }
-
-          const worker = workerMap.get(workerId);
-          if (!worker) {
-            throw new QuestDomainError({
-              code: "quest_worker_not_found",
-              details: { runId: run.id, sliceId: sliceState.sliceId, workerId },
-              message: `Assigned worker ${workerId} is not registered`,
-              statusCode: 1,
-            });
-          }
-
+          const worker = resolveAssignedWorker(
+            run,
+            sliceState,
+            sliceState.assignedWorkerId,
+            workerMap,
+            "builder",
+          );
           const workerCwd = resolveExecutionCwd(run, sliceState, worker);
           const sliceSpec = specSliceMap.get(sliceState.sliceId);
           if (!sliceSpec) {
@@ -321,7 +393,12 @@ export class QuestRunExecutor {
             });
           }
 
-          if (sliceSpec.acceptanceChecks.length > 0) {
+          const hasDedicatedTester =
+            sliceState.assignedTesterWorkerId !== null &&
+            sliceState.assignedTesterWorkerId !== sliceState.assignedWorkerId;
+          const hasTrialPhase = hasDedicatedTester || sliceSpec.acceptanceChecks.length > 0;
+
+          if (hasTrialPhase) {
             const eventAt = nowIsoString();
             setSliceStatus(sliceState, "testing");
             appendEvent(
@@ -330,9 +407,24 @@ export class QuestRunExecutor {
               {
                 checkCount: sliceSpec.acceptanceChecks.length,
                 sliceId: sliceState.sliceId,
+                testerWorkerId: sliceState.assignedTesterWorkerId,
               },
               eventAt,
             );
+          }
+
+          let testerPhaseResult: TesterPhaseResult = null;
+          try {
+            testerPhaseResult = await this.executeTesterPhase(
+              run,
+              sliceSpec,
+              sliceState,
+              workerMap,
+              options,
+            );
+          } catch (error: unknown) {
+            waveFailures.push({ error, sliceState });
+            continue;
           }
 
           const checkResults = await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd);
@@ -344,18 +436,19 @@ export class QuestRunExecutor {
               `Acceptance check failed: ${failedCheck.command.argv.join(" ")}`,
             );
             const combinedSummary = truncatePersistedMessage(
-              [result.summary, failureSummary].filter((entry) => entry.length > 0).join("\n\n"),
+              [result.summary, testerPhaseResult?.output.summary, failureSummary]
+                .filter((entry) => entry !== undefined && entry.length > 0)
+                .join("\n\n"),
             );
             const eventAt = nowIsoString();
             setSliceStatus(sliceState, "failed", {
               completedAt: eventAt,
               lastError: failureSummary,
               lastOutput: {
-                exitCode: result.exitCode,
-                stderr: result.stderr,
-                stdout: result.stdout,
+                ...toSliceOutput(result),
                 summary: combinedSummary,
               },
+              lastTesterOutput: testerPhaseResult?.output,
             });
             appendEvent(
               run,
@@ -364,6 +457,7 @@ export class QuestRunExecutor {
                 command: failedCheck.command.argv,
                 exitCode: failedCheck.exitCode,
                 sliceId: sliceState.sliceId,
+                testerWorkerId: sliceState.assignedTesterWorkerId,
               },
               eventAt,
             );
@@ -385,10 +479,11 @@ export class QuestRunExecutor {
             continue;
           }
 
-          if (sliceSpec.acceptanceChecks.length > 0) {
+          if (hasTrialPhase) {
             appendEvent(run, "slice_testing_completed", {
               checkCount: sliceSpec.acceptanceChecks.length,
               sliceId: sliceState.sliceId,
+              testerWorkerId: sliceState.assignedTesterWorkerId,
             });
           }
 
@@ -396,17 +491,14 @@ export class QuestRunExecutor {
           setSliceStatus(sliceState, "completed", {
             completedAt: eventAt,
             lastError: undefined,
-            lastOutput: {
-              exitCode: result.exitCode,
-              stderr: result.stderr,
-              stdout: result.stdout,
-              summary: truncatePersistedMessage(result.summary),
-            },
+            lastOutput: toSliceOutput(result),
+            lastTesterOutput: testerPhaseResult?.output,
           });
           appendEvent(
             run,
             "slice_completed",
             {
+              testerSummary: testerPhaseResult?.output.summary,
               sliceId: sliceState.sliceId,
               summary: result.summary,
               workerId: sliceState.assignedWorkerId,
@@ -463,6 +555,7 @@ export class QuestRunExecutor {
             error instanceof Error ? error.message : String(error),
           ),
           lastOutput: undefined,
+          lastTesterOutput: undefined,
         });
         appendEvent(
           run,

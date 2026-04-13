@@ -36,6 +36,7 @@ export function setSliceStatus(
     lastChecks?: QuestRunCheckResult[] | undefined;
     lastError?: string | undefined;
     lastOutput?: QuestRunSliceOutput | undefined;
+    lastTesterOutput?: QuestRunSliceOutput | undefined;
     startedAt?: string;
   } = {},
 ): void {
@@ -55,6 +56,10 @@ export function setSliceStatus(
 
   if (options.lastOutput !== undefined || "lastOutput" in options) {
     sliceState.lastOutput = options.lastOutput;
+  }
+
+  if (options.lastTesterOutput !== undefined || "lastTesterOutput" in options) {
+    sliceState.lastTesterOutput = options.lastTesterOutput;
   }
 
   if (options.lastChecks !== undefined || "lastChecks" in options) {

@@ -3,7 +3,7 @@ import type { SecretStore } from "../../secret-store";
 import type { WorkerRuntimeConfig } from "../../workers/runtime";
 import { runSubprocess } from "../process";
 import { buildProcessEnv } from "../process-env";
-import { buildQuestPrompt, resolveAuthEnv, verifyCodexNativeLogin } from "./shared";
+import { buildRunnerPrompt, resolveAuthEnv, verifyCodexNativeLogin } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
 
 function tomlLiteral(value: string): string {
@@ -61,7 +61,7 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
   async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
     const executable = context.worker.backend.executable ?? "codex";
     const outputPath = `${context.cwd}/.quest-runner/codex-last-message.txt`;
-    const prompt = buildQuestPrompt(context);
+    const prompt = buildRunnerPrompt(context);
     if (!context.worker.backend.auth || context.worker.backend.auth.mode === "native-login") {
       await verifyCodexNativeLogin(executable, context.worker);
     }
@@ -96,6 +96,7 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
           ...authEnv,
           QUEST_RUN_ID: context.run.id,
           QUEST_SLICE_ID: context.slice.id,
+          QUEST_SLICE_PHASE: context.phase,
           QUEST_SLICE_WORKSPACE: context.sliceState.workspacePath ?? context.cwd,
           QUEST_WORKER_ID: context.worker.id,
           QUEST_WORKSPACE: context.run.spec.workspace,

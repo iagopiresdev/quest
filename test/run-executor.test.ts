@@ -184,6 +184,95 @@ test("run executor completes a planned run with the local-command adapter", asyn
   }
 });
 
+test("run executor uses a dedicated tester worker during the trial phase", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const builderScriptPath = join(root, "builder-worker.ts");
+    writeFileSync(
+      builderScriptPath,
+      [
+        "await Bun.write('artifact.txt', 'builder-output\\n');",
+        "await Bun.write(Bun.stdout, 'builder:' + Bun.env.QUEST_SLICE_PHASE);",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const testerScriptPath = join(root, "tester-worker.ts");
+    writeFileSync(
+      testerScriptPath,
+      [
+        "await Bun.write('artifact.txt', 'tester-fixed\\n');",
+        "await Bun.write(Bun.stdout, 'tester:' + Bun.env.QUEST_SLICE_PHASE);",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const builderWorker = createWorker("builder-only", "local-command", ["bun", builderScriptPath]);
+    builderWorker.role = "builder";
+    builderWorker.stats.testing = 10;
+    builderWorker.stats.coding = 90;
+
+    const testerWorker = createWorker("tester-only", "local-command", ["bun", testerScriptPath]);
+    testerWorker.role = "tester";
+    testerWorker.stats.testing = 95;
+    testerWorker.stats.coding = 20;
+
+    await workerRegistry.upsertWorker(builderWorker);
+    await workerRegistry.upsertWorker(testerWorker);
+
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [
+            createCommand([
+              "bun",
+              "-e",
+              "process.exit((await Bun.file('artifact.txt').text()) === 'tester-fixed\\n' ? 0 : 7)",
+            ]),
+          ],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Create the artifact",
+          id: "parser",
+          owns: ["artifact.txt"],
+          title: "Parser",
+        },
+      ],
+      title: "Dedicated tester trial",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+    const executed = await executor.executeRun(run.id);
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.assignedWorkerId).toBe("builder-only");
+    expect(executed.slices[0]?.assignedTesterWorkerId).toBe("tester-only");
+    expect(executed.slices[0]?.lastOutput?.stdout).toBe("builder:build");
+    expect(executed.slices[0]?.lastTesterOutput?.stdout).toBe("tester:test");
+    expect(executed.slices[0]?.lastChecks?.[0]?.exitCode).toBe(0);
+    expect(executed.events.some((event) => event.type === "slice_testing_started")).toBe(true);
+    expect(executed.events.some((event) => event.type === "slice_testing_completed")).toBe(true);
+    expect(
+      readFileSync(join(executed.slices[0]?.workspacePath ?? "", "artifact.txt"), "utf8"),
+    ).toBe("tester-fixed\n");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor executes the worker inside the slice workspace", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");

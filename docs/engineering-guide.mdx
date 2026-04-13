@@ -59,6 +59,9 @@ Current architectural layers:
 - `src/core/runs/*`
   Execution lifecycle, adapter registry, workspaces, cleanup, and integration.
 
+- dedicated tester execution still belongs in `src/core/runs/*`
+  The trial phase is part of run lifecycle orchestration until it becomes large enough to justify its own bounded context.
+
 - `src/core/runs/adapters/*`
   Provider-specific translation logic. Codex, Hermes, Claude, OpenClaw, and local-command implementations belong here so the executor coordinates lifecycle instead of learning provider syntax.
 
@@ -100,6 +103,7 @@ The following invariants should stay true:
 - Calibration slices must be independently solvable from a clean base unless the executor grows explicit cross-slice replay semantics.
 - Lifecycle transitions must go through shared helpers when possible.
 - Steering must change persisted run state, not just CLI presentation. If an operator reassigns, retries, or skips a slice, the run document must reflect the new executable truth.
+- Builder and tester output must be persisted separately when both phases run, or operators lose the ability to diagnose whether the encounter or the trial caused a failure.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
