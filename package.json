@@ -2,7 +2,7 @@
   "name": "quest-runner",
   "version": "0.0.1",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "packageManager": "bun@1.3.9",
   "type": "module",
   "description": "CLI-first worker registry and quest planner for parallel agent execution",

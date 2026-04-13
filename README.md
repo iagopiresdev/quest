@@ -39,6 +39,9 @@ Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./
 Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
 Tester-lane planning notes live in [docs/specs/tester-lane-v1.mdx](./docs/specs/tester-lane-v1.mdx).
 Fresh-install canary notes live in [docs/specs/fresh-install-canary-v1.mdx](./docs/specs/fresh-install-canary-v1.mdx).
+Contribution guidance lives in [CONTRIBUTING.md](./CONTRIBUTING.md).
+Security guidance lives in [SECURITY.md](./SECURITY.md).
+Community expectations live in [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 
 Testing rule:
 - mocked coverage is not enough for execution-facing work
@@ -60,6 +63,16 @@ bun ./scripts/canaries/fresh-install.ts --backend local-command
 # real package-install canary through Codex
 bun ./scripts/canaries/fresh-install.ts --backend codex
 ```
+
+## Open Source Readiness
+
+This repository is intended to be publishable on GitHub as source code, not as a dump of local state.
+
+Rules:
+- do not commit runtime state, tokens, or local config
+- examples should use clearly fake placeholder values
+- execution-facing changes should ship with both automated coverage and real canaries
+- install/setup changes should be validated through the fresh-install `tmux` canary
 
 ## Worker Backends
 
@@ -563,7 +576,7 @@ quest runs slices retry --id quest-abc12345-deadbeef --slice parser
 quest runs slices skip --id quest-abc12345-deadbeef --slice parser --reason "handled elsewhere"
 
 # store a backend secret in the local keychain backend
-printf 'sk-example' | quest secrets set --name codex.api --stdin
+printf 'example-openai-api-key' | quest secrets set --name codex.api --stdin
 
 # inspect whether a keychain secret exists
 quest secrets status --name codex.api

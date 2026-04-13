@@ -741,7 +741,7 @@ test("quest cli configures telegram sinks and delivers run events", async () => 
     port: 0,
   });
   const previousToken = Bun.env.QUEST_TELEGRAM_TOKEN;
-  Bun.env.QUEST_TELEGRAM_TOKEN = "telegram-test-token";
+  Bun.env.QUEST_TELEGRAM_TOKEN = "example-telegram-bot-value";
 
   try {
     const upsertSink = await runCliAsync(context, [
@@ -1382,7 +1382,7 @@ test("quest cli reruns a prior run by cloning its spec", () => {
 test("quest cli stores, checks, and deletes secrets through the keychain backend", () => {
   const context = trackContext();
   const secretName = "codex.api";
-  const secretValue = "top-secret-token  ";
+  const secretValue = "example-secret-value  ";
 
   const stored = runCli(context, ["secrets", "set", "--name", secretName, "--stdin"], {
     input: secretValue,

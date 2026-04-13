@@ -1024,7 +1024,7 @@ test("run executor resolves secret-store auth for codex-cli workers", async () =
       exitCode: 0,
       stderr: "",
       stderrTruncated: false,
-      stdout: cmd.includes("-w") ? "secret-token\n" : "",
+      stdout: cmd.includes("-w") ? "example-secret-value\n" : "",
       stdoutTruncated: false,
       timedOut: false,
     }),
@@ -1067,7 +1067,7 @@ test("run executor resolves secret-store auth for codex-cli workers", async () =
     const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
     const executed = await executor.executeRun(run.id);
 
-    expect(executed.slices[0]?.lastOutput?.stdout).toBe("secret-token");
+    expect(executed.slices[0]?.lastOutput?.stdout).toBe("example-secret-value");
     expect(executed.slices[0]?.lastOutput?.summary).toBe("codex secret summary");
   } finally {
     rmSync(root, { force: true, recursive: true });
