@@ -5,6 +5,7 @@ import { z } from "zod";
 import { QuestDomainError } from "../../errors";
 import type { SecretStore } from "../../secret-store";
 import type { WorkerRuntimeConfig } from "../../workers/runtime";
+import { matchesQuestPathPattern } from "../path-patterns";
 import { buildRunnerPrompt, resolveAuthEnv } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
 
@@ -46,18 +47,8 @@ function buildHermesSignal(
   return typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeoutSignal]) : signal;
 }
 
-function patternToRegExp(pattern: string): RegExp {
-  const normalized = pattern.replaceAll("\\", "/");
-  const escaped = normalized.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
-  const withStars = escaped.replaceAll("\\*\\*", "__DOUBLE_STAR__").replaceAll("\\*", "__STAR__");
-  return new RegExp(
-    `^${withStars.replaceAll("__DOUBLE_STAR__", ".*").replaceAll("__STAR__", "[^/]*")}$`,
-  );
-}
-
 function matchesOwnedPath(relativePath: string, ownedPatterns: string[]): boolean {
-  const normalized = relativePath.replaceAll("\\", "/");
-  return ownedPatterns.some((pattern) => patternToRegExp(pattern).test(normalized));
+  return matchesQuestPathPattern(relativePath, ownedPatterns);
 }
 
 async function listWorkspaceFiles(root: string): Promise<string[]> {

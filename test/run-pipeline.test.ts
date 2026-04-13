@@ -9,7 +9,7 @@ import { QuestRunIntegrator } from "../src/core/runs/integrator";
 import { QuestRunPipeline } from "../src/core/runs/pipeline";
 import { QuestRunStore } from "../src/core/runs/store";
 import { WorkerRegistry } from "../src/core/workers/registry";
-import { createCommittedRepo, createSpec, createWorker } from "./helpers";
+import { createCommittedRepo, createSlice, createSpec, createWorker } from "./helpers";
 
 test("run pipeline can auto-integrate a completed run", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-pipeline-"));
@@ -30,9 +30,19 @@ test("run pipeline can auto-integrate a completed run", async () => {
       createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
     );
 
-    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
-      sourceRepositoryPath: repositoryRoot,
-    });
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
     const completedRun = await pipeline.executeRun(run.id, {
       autoIntegrate: true,
       targetRef: "HEAD",

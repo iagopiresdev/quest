@@ -1228,7 +1228,16 @@ test("quest cli can auto-integrate after execution", () => {
   );
 
   const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
-    input: JSON.stringify(createSpec({ title: "Auto-integrate quest run" })),
+    input: JSON.stringify(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+        title: "Auto-integrate quest run",
+      }),
+    ),
   });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
@@ -1262,6 +1271,11 @@ test("quest cli writes a chronicle after turn-in when feature docs are enabled",
     input: JSON.stringify(
       createSpec({
         featureDoc: { enabled: true, outputPath: "docs/features/chronicle-run.md" },
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
         title: "Chronicle quest run",
       }),
     ),
@@ -1307,6 +1321,38 @@ test("quest cli reports token usage from persisted slice outputs", () => {
   const payload = JSON.parse(usage.stdout);
   expect(payload.usage.totals.totalTokens).toBe(22650);
   expect(payload.usage.phases[0].tokens.totalTokens).toBe(22650);
+});
+
+test("quest cli reports aggregate usage while skipping invalid legacy runs", () => {
+  const context = trackContext();
+  const scriptPath = join(context.stateRoot, "worker-usage-all.ts");
+  writeFileSync(
+    scriptPath,
+    ["console.error('tokens used\\n12,345');", "console.log('usage recorded');"].join("\n"),
+    "utf8",
+  );
+
+  const worker = createLocalCommandWorkerJson("usage-worker-all", ["bun", scriptPath]);
+  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: worker }).code).toBe(0);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Aggregate usage quest" })),
+  });
+  expect(created.code).toBe(0);
+
+  const runId = JSON.parse(created.stdout).run.id as string;
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(0);
+
+  const runsRoot = join(context.stateRoot, "runs");
+  writeFileSync(join(runsRoot, "quest-00000000-deadbeef.json"), "{\n", "utf8");
+
+  const usage = runCli(context, ["runs", "usage", "--all"]);
+  expect(usage.code).toBe(0);
+  const payload = JSON.parse(usage.stdout);
+  expect(payload.runs).toHaveLength(1);
+  expect(payload.runs[0].runId).toBe(runId);
+  expect(payload.runs[0].totals.totalTokens).toBe(12345);
 });
 
 test("quest cli rejects dry-run auto-integration", () => {
@@ -1452,7 +1498,16 @@ test("quest cli integrates a completed run into a dedicated integration worktree
   );
 
   const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
-    input: JSON.stringify(createSpec({ title: "Integrate source repo run" })),
+    input: JSON.stringify(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+        title: "Integrate source repo run",
+      }),
+    ),
   });
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
@@ -1485,6 +1540,11 @@ test("quest cli fails integration when top-level acceptance checks fail", () => 
     input: JSON.stringify(
       createSpec({
         acceptanceChecks: [createCommand(["bun", "-e", "process.exit(9)"])],
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
         title: "Integration checks fail",
       }),
     ),

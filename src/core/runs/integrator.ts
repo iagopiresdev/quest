@@ -4,6 +4,7 @@ import { QuestDomainError } from "../errors";
 import type { QuestCommandSpec } from "../planning/spec-schema";
 import { ensureDirectory } from "../storage";
 import { appendEvent } from "./lifecycle";
+import { matchesQuestPathPattern } from "./path-patterns";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
 import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./schema";
@@ -14,8 +15,10 @@ import {
 } from "./workspace-layout";
 import {
   ensureGitRepositoryIsClean,
+  isAllowedPreparationArtifactPath,
   linkSourceDependenciesIntoWorkspace,
   resolveGitRepositoryRoot,
+  runWorkspacePreparationCommands,
 } from "./workspace-materializer";
 
 function requireIntegratableRun(run: QuestRunDocument): void {
@@ -131,6 +134,36 @@ async function readGitStatus(cwd: string): Promise<string> {
   }
 
   return result.stdout;
+}
+
+async function listChangedWorkspacePaths(cwd: string): Promise<string[]> {
+  const result = await runSubprocess({
+    cmd: ["git", "ls-files", "-m", "-d", "-o", "--exclude-standard"],
+    cwd,
+    env: buildProcessEnv(),
+  });
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_integration_failed",
+      details: {
+        cwd,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Failed to inspect changed paths for ${cwd}`,
+      statusCode: 1,
+    });
+  }
+
+  return result.stdout
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function isQuestManagedArtifactPath(path: string): boolean {
+  return path === ".quest-runner" || path.startsWith(".quest-runner/");
 }
 
 async function directoryHasEntries(path: string): Promise<boolean> {
@@ -321,8 +354,51 @@ async function freezeSliceResult(
   }
 
   if (hasWorkingTreeChanges) {
+    const specSlice = run.spec.slices.find((slice) => slice.id === sliceState.sliceId);
+    if (!specSlice) {
+      throw new QuestDomainError({
+        code: "quest_integration_failed",
+        details: { runId: run.id, sliceId: sliceState.sliceId },
+        message: `Quest run ${run.id} is missing spec for slice ${sliceState.sliceId}`,
+        statusCode: 1,
+      });
+    }
+
+    const changedPaths = await listChangedWorkspacePaths(sliceState.workspacePath);
+    const illegalPaths = changedPaths.filter(
+      (path) =>
+        !isQuestManagedArtifactPath(path) &&
+        !matchesQuestPathPattern(path, specSlice.owns) &&
+        !isAllowedPreparationArtifactPath(path),
+    );
+    if (illegalPaths.length > 0) {
+      throw new QuestDomainError({
+        code: "quest_integration_failed",
+        details: {
+          illegalPaths,
+          runId: run.id,
+          sliceId: sliceState.sliceId,
+        },
+        message: `Slice ${sliceState.sliceId} modified files outside its owned paths`,
+        statusCode: 1,
+      });
+    }
+
+    const stageablePaths = changedPaths.filter((path) =>
+      matchesQuestPathPattern(path, specSlice.owns),
+    );
+    if (stageablePaths.length === 0) {
+      const resultRevision = await readHeadRevision(sliceState.workspacePath);
+      sliceState.resultRevision = resultRevision;
+      return {
+        baseRevision,
+        noop: true,
+        resultRevision,
+      };
+    }
+
     const addResult = await runSubprocess({
-      cmd: ["git", "add", "-A"],
+      cmd: ["git", "add", "-A", "--", ...stageablePaths],
       cwd: sliceState.workspacePath,
       env: buildProcessEnv(),
     });
@@ -588,6 +664,14 @@ export class QuestRunIntegrator {
     }
 
     if (run.spec.acceptanceChecks.length > 0) {
+      await runWorkspacePreparationCommands(
+        run.spec.execution.prepareCommands,
+        integrationWorkspacePath,
+        {
+          idleTimeoutMs,
+          timeoutMs,
+        },
+      );
       appendEvent(run, "run_integration_checks_started", {
         checkCount: run.spec.acceptanceChecks.length,
         integrationWorkspacePath,

@@ -1,7 +1,9 @@
 import { lstat, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { QuestDomainError } from "../errors";
+import type { QuestCommandSpec } from "../planning/spec-schema";
 import { ensureDirectory } from "../storage";
+import { matchesQuestPathPattern } from "./path-patterns";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./schema";
@@ -43,6 +45,19 @@ async function pathExists(path: string): Promise<boolean> {
     throw error;
   }
 }
+
+const allowedPreparationArtifactPatterns = [
+  "node_modules",
+  "node_modules/**",
+  ".yarn",
+  ".yarn/**",
+  ".pnpm-store",
+  ".pnpm-store/**",
+  ".pnp.cjs",
+  ".pnp.loader.mjs",
+  "vendor/bundle",
+  "vendor/bundle/**",
+] as const;
 
 export async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Promise<string> {
   const resolvedSourcePath = resolve(sourceRepositoryPath);
@@ -247,6 +262,103 @@ async function writeQuestContext(
   );
 }
 
+export async function refreshWorkspaceManifest(cwd: string): Promise<void> {
+  const questStateDir = `${cwd}/.quest-runner`;
+  await ensureDirectory(questStateDir);
+  await writeFile(
+    `${questStateDir}/workspace-manifest.md`,
+    await buildWorkspaceManifest(cwd),
+    "utf8",
+  );
+}
+
+export async function runWorkspacePreparationCommands(
+  commands: QuestCommandSpec[] | undefined,
+  cwd: string,
+  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
+): Promise<void> {
+  for (const command of commands ?? []) {
+    const result = await runSubprocess({
+      cmd: command.argv,
+      cwd,
+      env: buildProcessEnv(command.env),
+      idleTimeoutMs: options.idleTimeoutMs,
+      timeoutMs: options.timeoutMs,
+    });
+
+    if (result.exitCode === 0) {
+      continue;
+    }
+
+    throw new QuestDomainError({
+      code: "quest_workspace_prepare_failed",
+      details: {
+        command,
+        cwd,
+        exitCode: result.exitCode,
+        stderr: result.stderr,
+        stdout: result.stdout,
+        timedOut: result.timedOut,
+      },
+      message: `Workspace preparation command failed in ${cwd}: ${command.argv.join(" ")}`,
+      statusCode: 1,
+    });
+  }
+
+  const gitProbe = await runSubprocess({
+    cmd: ["git", "rev-parse", "--is-inside-work-tree"],
+    cwd,
+    env: buildProcessEnv(),
+    idleTimeoutMs: options.idleTimeoutMs,
+    timeoutMs: options.timeoutMs,
+  });
+  if (gitProbe.exitCode !== 0) {
+    return;
+  }
+
+  const trackedChanges = await runSubprocess({
+    cmd: ["git", "ls-files", "-m", "-d"],
+    cwd,
+    env: buildProcessEnv(),
+    idleTimeoutMs: options.idleTimeoutMs,
+    timeoutMs: options.timeoutMs,
+  });
+  if (trackedChanges.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_workspace_prepare_failed",
+      details: {
+        cwd,
+        stderr: trackedChanges.stderr,
+        stdout: trackedChanges.stdout,
+      },
+      message: `Failed to inspect tracked changes after workspace preparation in ${cwd}`,
+      statusCode: 1,
+    });
+  }
+
+  const unsafeTrackedPaths = trackedChanges.stdout
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .filter((entry) => !matchesQuestPathPattern(entry, [...allowedPreparationArtifactPatterns]));
+
+  if (unsafeTrackedPaths.length > 0) {
+    throw new QuestDomainError({
+      code: "quest_workspace_prepare_failed",
+      details: {
+        cwd,
+        unsafeTrackedPaths,
+      },
+      message: `Workspace preparation modified tracked files outside dependency artifact paths in ${cwd}`,
+      statusCode: 1,
+    });
+  }
+}
+
+export function isAllowedPreparationArtifactPath(relativePath: string): boolean {
+  return matchesQuestPathPattern(relativePath, [...allowedPreparationArtifactPatterns]);
+}
+
 async function readHeadRevision(cwd: string): Promise<string> {
   const result = await runSubprocess({
     cmd: ["git", "rev-parse", "HEAD"],
@@ -274,6 +386,7 @@ export async function prepareExecutionWorkspace(
   run: QuestRunDocument,
   sliceState: QuestRunSliceState,
   cwd: string,
+  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
 ): Promise<{ baseRevision?: string | undefined }> {
   const workspaceRoot = run.workspaceRoot;
   if (!workspaceRoot) {
@@ -300,6 +413,8 @@ export async function prepareExecutionWorkspace(
   }
 
   await writeQuestContext(run, sliceState, cwd);
+  await runWorkspacePreparationCommands(run.spec.execution.prepareCommands, cwd, options);
+  await refreshWorkspaceManifest(cwd);
   return { baseRevision };
 }
 

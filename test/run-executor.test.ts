@@ -65,7 +65,7 @@ function createWorker(
   };
 }
 
-function createSpec(): QuestSpec {
+function createSpec(overrides: Partial<QuestSpec> = {}): QuestSpec {
   return {
     acceptanceChecks: [],
     execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
@@ -97,6 +97,7 @@ function createSpec(): QuestSpec {
     title: "Execute quest run",
     version: 1,
     workspace: "command-center",
+    ...overrides,
   };
 }
 
@@ -425,6 +426,95 @@ test("run executor links source dependencies into slice and integration workspac
     expect(readFileSync(join(executed.slices[0]?.workspacePath ?? "", "tracked.txt"), "utf8")).toBe(
       "dependency-ok\n",
     );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor runs workspace preparation commands before builder and slice checks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const scriptPath = join(root, "worker-prep.ts");
+    writeFileSync(
+      scriptPath,
+      [
+        "const prepared = await Bun.file('prep-marker.txt').text();",
+        "await Bun.write(Bun.stdout, prepared.trim());",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const baseSpec = createSpec();
+    const parserSlice = baseSpec.slices[0];
+    if (!parserSlice) {
+      throw new Error("expected default parser slice");
+    }
+    const run = await runStore.createRun(
+      {
+        ...baseSpec,
+        execution: {
+          prepareCommands: [createCommand(["sh", "-lc", "printf 'prepared\\n' > prep-marker.txt"])],
+          shareSourceDependencies: true,
+          timeoutMinutes: 20,
+        },
+        slices: [
+          {
+            ...parserSlice,
+            acceptanceChecks: [
+              createCommand([
+                "bun",
+                "-e",
+                "process.exit((await Bun.file('prep-marker.txt').text()) === 'prepared\\n' ? 0 : 13)",
+              ]),
+            ],
+          },
+        ],
+      },
+      await workerRegistry.listWorkers(),
+    );
+
+    const executed = await executor.executeRun(run.id);
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.stdout.trim()).toBe("prepared");
+    expect(executed.slices[0]?.lastChecks?.[0]?.exitCode).toBe(0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor rejects workspace preparation commands that mutate tracked source files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    await workerRegistry.upsertWorker(createWorker("ember"));
+    const run = await runStore.createRun(
+      createSpec({
+        execution: {
+          prepareCommands: [createCommand(["sh", "-lc", "printf 'dirty\\n' > tracked.txt"])],
+          shareSourceDependencies: true,
+          timeoutMinutes: 20,
+        },
+      }),
+      await workerRegistry.listWorkers(),
+      { sourceRepositoryPath: repositoryRoot },
+    );
+
+    await expect(executor.executeRun(run.id, { dryRun: true })).rejects.toMatchObject({
+      code: "quest_workspace_prepare_failed",
+    });
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

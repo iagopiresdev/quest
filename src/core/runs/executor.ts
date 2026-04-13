@@ -348,7 +348,10 @@ export class QuestRunExecutor {
               forceDryRun: options.dryRun === true,
             });
             const cwd = resolveExecutionCwd(run, sliceState, worker);
-            const preparedWorkspace = await prepareExecutionWorkspace(run, sliceState, cwd);
+            const preparedWorkspace = await prepareExecutionWorkspace(run, sliceState, cwd, {
+              idleTimeoutMs,
+              timeoutMs,
+            });
             if (preparedWorkspace.baseRevision) {
               sliceState.baseRevision = preparedWorkspace.baseRevision;
             }

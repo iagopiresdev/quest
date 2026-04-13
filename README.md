@@ -172,6 +172,12 @@ Quest specs can now persist execution policy explicitly under `execution`, for e
   "execution": {
     "timeoutMinutes": 20,
     "idleTimeoutMinutes": 5,
+    "prepareCommands": [
+      {
+        "argv": ["bun", "install", "--frozen-lockfile"],
+        "env": {}
+      }
+    ],
     "shareSourceDependencies": true
   },
   "slices": [
@@ -191,7 +197,7 @@ Quest specs can now persist execution policy explicitly under `execution`, for e
 }
 ```
 
-When a run materializes from `--source-repo`, Quest Runner also writes `.quest-runner/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally.
+When a run materializes from `--source-repo`, Quest Runner also writes `.quest-runner/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally. If a repo needs a real prep step before honest checks can run, add `execution.prepareCommands` and Quest Runner will execute those commands inside each slice workspace before the builder starts, and again in the integration workspace before top-level acceptance checks.
 
 Example `codex-cli` worker:
 

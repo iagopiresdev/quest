@@ -11,6 +11,7 @@ import { WorkerRegistry } from "../src/core/workers/registry";
 import {
   createCommand,
   createCommittedRepo,
+  createSlice,
   createSpec,
   createWorker,
   runCommandOrThrow,
@@ -34,9 +35,19 @@ test("run integrator cherry-picks completed slice changes into a dedicated integ
       createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
     );
 
-    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
-      sourceRepositoryPath: repositoryRoot,
-    });
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
     await executor.executeRun(run.id);
     const integratedRun = await integrator.integrateRun(run.id);
     const integrationWorkspacePath = integratedRun.integrationWorkspacePath ?? "";
@@ -104,9 +115,19 @@ test("run integrator fails when drift causes a cherry-pick conflict", async () =
       createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
     );
 
-    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
-      sourceRepositoryPath: repositoryRoot,
-    });
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
     await executor.executeRun(run.id);
 
     writeFileSync(join(repositoryRoot, "tracked.txt"), "conflicting-change\n", "utf8");
@@ -148,6 +169,11 @@ test("run integrator runs top-level acceptance checks in the integration workspa
         acceptanceChecks: [
           createCommand(["bun", "-e", "process.exit(Bun.file('tracked.txt').size > 0 ? 0 : 1)"]),
         ],
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
       }),
       await workerRegistry.listWorkers(),
       {
@@ -161,6 +187,112 @@ test("run integrator runs top-level acceptance checks in the integration workspa
     expect(
       integratedRun.events.some((event) => event.type === "run_integration_checks_completed"),
     ).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator runs workspace preparation commands before top-level checks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        acceptanceChecks: [
+          createCommand([
+            "bun",
+            "-e",
+            "process.exit((await Bun.file('node_modules/.keep').text()) === 'prepared\\n' ? 0 : 1)",
+          ]),
+        ],
+        execution: {
+          prepareCommands: [
+            createCommand([
+              "sh",
+              "-lc",
+              "mkdir -p node_modules && printf 'prepared\\n' > node_modules/.keep",
+            ]),
+          ],
+          shareSourceDependencies: true,
+          timeoutMinutes: 20,
+        },
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+    const integratedRun = await integrator.integrateRun(run.id);
+
+    expect(integratedRun.lastIntegrationChecks?.[0]?.exitCode).toBe(0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator rejects slice changes outside owned paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(
+      scriptPath,
+      [
+        "await Bun.write('tracked.txt', 'integrated-change\\n');",
+        "await Bun.write('outside.txt', 'should-not-land\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+
+    await expect(integrator.integrateRun(run.id)).rejects.toMatchObject({
+      code: "quest_integration_failed",
+    });
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -184,9 +316,19 @@ test("run integrator rejects resuming against a different target ref", async () 
       createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
     );
 
-    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
-      sourceRepositoryPath: repositoryRoot,
-    });
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
     await executor.executeRun(run.id);
     await integrator.integrateRun(run.id, { targetRef: "HEAD" });
 
@@ -224,9 +366,19 @@ test("run integrator rejects resuming when the target ref name is unchanged but 
       createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
     );
 
-    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
-      sourceRepositoryPath: repositoryRoot,
-    });
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
     await executor.executeRun(run.id);
     await integrator.integrateRun(run.id, { targetRef: "HEAD" });
 
@@ -268,9 +420,19 @@ test("run integrator resumes from an existing clean integration workspace", asyn
       createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
     );
 
-    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers(), {
-      sourceRepositoryPath: repositoryRoot,
-    });
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
     await executor.executeRun(run.id);
     const firstIntegratedRun = await integrator.integrateRun(run.id);
     const reloadedRun = await runStore.getRun(run.id);

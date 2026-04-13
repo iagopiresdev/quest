@@ -92,6 +92,46 @@ test("run store reports missing and invalid run documents as typed errors", asyn
   }
 });
 
+test("run store skips invalid legacy runs when listing summaries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    writeFileSync(join(root, "quest-00000000-deadbeef.json"), "{\n", "utf8");
+
+    const runs = await store.listRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.id).toBe(run.id);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run store still surfaces tampered workspace paths when listing summaries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    const runPath = join(root, `${run.id}.json`);
+    const tampered = JSON.parse(readFileSync(runPath, "utf8")) as {
+      integrationWorkspacePath?: string;
+      workspaceRoot?: string;
+    };
+    tampered.workspaceRoot = "/tmp/not-quest-runner";
+    writeFileSync(runPath, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
+
+    await expect(store.listRuns()).rejects.toBeInstanceOf(QuestDomainError);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store returns slice logs and supports aborting pending runs", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);

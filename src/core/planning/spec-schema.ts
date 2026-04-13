@@ -30,6 +30,7 @@ export const questFeatureDocSchema = z
 export const questExecutionSchema = z
   .object({
     idleTimeoutMinutes: z.number().int().min(1).max(240).optional(),
+    prepareCommands: z.array(questCommandSchema).max(8).optional(),
     shareSourceDependencies: z.boolean().default(true),
     timeoutMinutes: z.number().int().min(1).max(240).default(20),
   })

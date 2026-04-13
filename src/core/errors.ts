@@ -24,6 +24,7 @@ export const QUEST_ERROR_CODES = [
   "quest_subprocess_timed_out",
   "quest_unknown_dependency",
   "quest_workspace_materialization_failed",
+  "quest_workspace_prepare_failed",
   "quest_worker_not_found",
   "quest_slice_not_steerable",
   "quest_observability_sink_not_found",

@@ -196,6 +196,11 @@ test("run cleanup allows source-repo runs after boss-fight failure", async () =>
     const run = await runStore.createRun(
       createSpec({
         acceptanceChecks: [createCommand(["bun", "-e", "process.exit(1)"])],
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
       }),
       await workerRegistry.listWorkers(),
       {

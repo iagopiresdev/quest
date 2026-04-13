@@ -74,6 +74,50 @@ function summarizeRun(run: QuestRunDocument): QuestRunSummary {
   };
 }
 
+async function readRunSummaryForListing(
+  path: string,
+  runId: string,
+  workspacesRoot: string,
+): Promise<QuestRunSummary | null> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    return null;
+  }
+
+  let rawDocument: unknown;
+  try {
+    rawDocument = JSON.parse(await file.text()) as unknown;
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) {
+      return null;
+    }
+
+    throw new QuestDomainError({
+      code: "quest_storage_failure",
+      details: { path, reason: error instanceof Error ? error.message : String(error) },
+      message: `Failed to read quest state from ${path}`,
+      statusCode: 1,
+    });
+  }
+
+  const parsed = questRunDocumentSchema.safeParse(rawDocument);
+  if (!parsed.success) {
+    throw new QuestDomainError({
+      code: "invalid_quest_run",
+      details: parsed.error.flatten(),
+      message: `Quest run ${runId} is invalid`,
+      statusCode: 1,
+    });
+  }
+
+  return summarizeRun(
+    await validateWorkspacePaths(
+      hydrateWorkspacePaths(parsed.data, workspacesRoot),
+      workspacesRoot,
+    ),
+  );
+}
+
 function resolveRunWorkspaceRootForStore(runId: string, workspacesRoot: string): string {
   return resolveRunWorkspaceRootPath(workspacesRoot, runId);
 }
@@ -485,10 +529,29 @@ export class QuestRunStore {
       .filter((entry) => entry.endsWith(".json"))
       .map((entry) => entry.slice(0, -".json".length));
 
-    const runs = await Promise.all(runIds.map((runId) => this.getRun(runId)));
-    return runs
-      .map(summarizeRun)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const runs = await Promise.allSettled(
+      runIds.map(async (runId) =>
+        readRunSummaryForListing(
+          resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot }),
+          runId,
+          this.workspacesRoot,
+        ),
+      ),
+    );
+
+    const summaries: QuestRunSummary[] = [];
+    for (const result of runs) {
+      if (result.status === "fulfilled") {
+        if (result.value) {
+          summaries.push(result.value);
+        }
+        continue;
+      }
+
+      throw result.reason;
+    }
+
+    return summaries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   async saveRun(run: QuestRunDocument): Promise<QuestRunDocument> {
