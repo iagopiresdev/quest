@@ -177,6 +177,7 @@ Avoid:
 - Letting CLI parsing become the only place a backend feature exists. If a runtime flag matters after worker creation, it belongs in the worker schema.
 - Letting operators tune worker strengths only through raw registry JSON. If the strengths drive orchestration, the CLI must expose them cleanly too.
 - Comments that restate the code without adding the operational reason behind it.
+- Defaulted selector parameters such as `phase = "builder"` or `role = "tester"` in core orchestration code. If builder/tester behavior differs, split the function into explicit builder/tester helpers instead of hiding policy behind one branchy entry point.
 
 ## Typing Rules
 
@@ -193,6 +194,7 @@ Use TypeScript as a modeling tool, not just linting.
 - Do not widen persisted status types just to describe transient CLI or dispatcher outcomes; model those separately.
 - Normalize unbounded runner text before persisting it into bounded schema fields so a verbose model cannot make stored run state invalid.
 - When a backend needs provider-specific advanced flags, keep them in a bounded typed map instead of scattering one-off properties across worker presets and adapter constructors.
+- Do not use an enum or union selector plus a default parameter to collapse distinct domain policies into one helper. Model the policy as separate named functions and keep the type narrow at each boundary.
 
 Good:
 
@@ -356,6 +358,7 @@ Rules:
 - process and workspace boundary code should have direct unit coverage for edge cases like timeouts, truncation, env filtering, path canonicalization, and tampered persisted state
 - runner, steering, integration, and sink changes should add or update a real canary procedure in the implementation notes, not just a mocked test
 - battle testing should prefer disposable repos plus real backends over synthetic fixtures when validating orchestration behavior
+- architecture checks should guard known design regressions when a simple static rule is available, especially for planner and orchestration anti-patterns that are easy to reintroduce during refactors
 
 Add tests for:
 

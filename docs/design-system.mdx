@@ -72,6 +72,30 @@ Rules:
 - Validation for orchestration, runner, integration, or steering changes must include both automated coverage and at least one real canary path when the backend exists locally.
 - If the plan changes materially, the spec or proposal must change too.
 
+## Architecture Anti-Patterns
+
+Some design mistakes are bad enough that they should be called out explicitly instead of being rediscovered in review.
+
+Current anti-patterns:
+- Do not hide lifecycle or routing policy behind a defaulted selector parameter.
+  Bad:
+  a helper like `scoreWorker(..., phase = "builder")`
+- Builder and tester policy are different domain rules and must have different entry points.
+- If a function name stops telling the reader which rule is being applied, split it.
+
+Why this rule exists:
+- defaulted selector parameters make distinct policies look interchangeable
+- they encourage “just add another branch” growth
+- they make planner and orchestration code harder to review because the active rule is not obvious at the call site
+
+Preferred shape:
+- `isBuilderCompatibleWithSlice(...)`
+- `isTesterCompatibleWithSlice(...)`
+- `scoreBuilderWorkerForSlice(...)`
+- `scoreTesterWorkerForSlice(...)`
+
+This anti-pattern is not just guidance. The repo should keep a lightweight architecture check for it where practical.
+
 ## Spec-Driven Development
 
 Specs are first-class project artifacts.
@@ -123,6 +147,7 @@ Rules:
   `quest`, `slice`, `worker`, `run`, `integration`, `sink`, `delivery`
 - Avoid generic names like `utils`, `manager`, or `service` when a domain concept exists.
 - Shared code must stay small and boring. If it starts collecting domain rules, move it back into the owning context.
+- Keep builder and tester as separate domain policies even when they share some inputs. Similar inputs do not justify one polymorphic helper when the scoring or compatibility rules differ.
 
 ## Feature Folders And Vertical Slices
 
