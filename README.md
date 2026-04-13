@@ -36,6 +36,7 @@ Engineering guidance for future work lives in [docs/engineering-guide.mdx](./doc
 Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.mdx](./docs/design-system.mdx).
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
 Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
+Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
 
 Testing rule:
 - mocked coverage is not enough for execution-facing work
@@ -325,7 +326,9 @@ Operational notes:
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
+If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into the boss fight automatically after all slice trials pass.
 Top-level spec `acceptanceChecks` run in that integration worktree after slices are replayed. If they fail, integration exits non-zero and the recorded integration checks stay on the run for inspection.
+`--dry-run --auto-integrate` is intentionally invalid because the dry-run adapter does not produce real slice results to land.
 Acceptance checks are structured argv commands, not shell strings. Example:
 
 ```json
@@ -519,6 +522,9 @@ quest runs execute --id quest-abc12345-deadbeef --dry-run
 
 # execute a persisted run and backfill a source repo for worktree materialization
 quest runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
+
+# execute and auto-integrate in one step
+quest runs execute --id quest-abc12345-deadbeef --auto-integrate --target-ref main
 
 # integrate a completed run into a dedicated integration worktree
 quest runs integrate --id quest-abc12345-deadbeef --target-ref main

@@ -22,6 +22,7 @@ import { parseOpenClawJsonOutput } from "./core/runs/adapters/openclaw-shared";
 import { QuestRunCleanup } from "./core/runs/cleanup";
 import { QuestRunExecutor } from "./core/runs/executor";
 import { QuestRunIntegrator } from "./core/runs/integrator";
+import { QuestRunPipeline } from "./core/runs/pipeline";
 import { runSubprocess } from "./core/runs/process";
 import { buildProcessEnv } from "./core/runs/process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./core/runs/schema";
@@ -108,6 +109,7 @@ type QuestCliContext = {
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
   runIntegrator: QuestRunIntegrator;
+  runPipeline: QuestRunPipeline;
   runStore: QuestRunStore;
   secretStore: SecretStore;
 };
@@ -2367,14 +2369,16 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "runs:execute",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "execute",
-    run: async ({ args, runExecutor }) => ({
-      run: await runExecutor.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
+    run: async ({ args, runPipeline }) => ({
+      run: await runPipeline.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
+        autoIntegrate: hasFlag(args, "--auto-integrate"),
         dryRun: hasFlag(args, "--dry-run"),
         sourceRepositoryPath: findOptionValue(args, "--source-repo") || undefined,
+        targetRef: findOptionValue(args, "--target-ref") || undefined,
       }),
     }),
     usage:
-      "quest runs execute --id <run-id> [--dry-run] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest runs execute --id <run-id> [--dry-run] [--auto-integrate] [--target-ref <ref>] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:slices:reassign",
@@ -2520,6 +2524,7 @@ async function main(): Promise<number> {
   const runCleanup = new QuestRunCleanup(runStore);
   const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
+  const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator);
   const calibrator = new WorkerCalibrator(registry, runStore, runExecutor, calibrationsRoot);
   const dispatcher = new EventDispatcher(observabilityStore, secretStore);
 
@@ -2533,6 +2538,7 @@ async function main(): Promise<number> {
       runCleanup,
       runExecutor,
       runIntegrator,
+      runPipeline,
       runStore,
       secretStore,
     });

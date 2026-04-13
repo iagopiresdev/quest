@@ -1098,6 +1098,59 @@ test("quest cli executes a planned run in dry-run mode", () => {
   expect(runSummary.slices[0].workerId).toBe("ember");
 });
 
+test("quest cli can auto-integrate after execution", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-auto-integrate.ts");
+  writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(createSpec({ title: "Auto-integrate quest run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId, "--auto-integrate"]);
+  expect(executed.code).toBe(0);
+  const executedRun = JSON.parse(executed.stdout).run;
+  expect(executedRun.status).toBe("completed");
+  expect(
+    executedRun.events.some((event: { type: string }) => event.type === "run_integrated"),
+  ).toBe(true);
+  expect(executedRun.slices[0].integrationStatus).toBe("integrated");
+  expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("from-source-repo\n");
+  expect(readFileSync(join(executedRun.integrationWorkspacePath, "tracked.txt"), "utf8")).toBe(
+    "integrated-change\n",
+  );
+});
+
+test("quest cli rejects dry-run auto-integration", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Dry-run auto-integrate is invalid" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, [
+    "runs",
+    "execute",
+    "--id",
+    runId,
+    "--dry-run",
+    "--auto-integrate",
+  ]);
+  expect(executed.code).toBe(1);
+  expect(JSON.parse(executed.stderr).error).toBe("quest_run_invalid_execute_options");
+});
+
 test("quest cli returns logs and aborts a planned run", () => {
   const context = trackContext();
   expectWorkerUpserted(context);

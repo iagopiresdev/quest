@@ -1,0 +1,85 @@
+---
+title: Auto-Integrate v1
+description: Add an explicit execute-to-integration pipeline option without removing manual integration control.
+---
+
+# Auto-Integrate v1
+
+## Context
+
+`quest-runner` already supports execution, trials, and integration, but operators currently have to invoke execution and integration as separate commands.
+
+That is safe, but too manual for the default quest flow we want:
+- execute the encounter
+- clear the trial
+- proceed to the boss fight
+- turn in the quest if everything is green
+
+## Problem
+
+Manual integration creates unnecessary operator work for the happy path:
+- real completed runs still require a second command
+- battle tests that are meant to prove the full pipeline can stop too early
+- the product feels less like an orchestrator and more like a bag of subcommands
+
+## Goal
+
+Add an explicit `--auto-integrate` execution mode that:
+- runs execution as normal
+- preserves all existing trials and acceptance checks
+- only starts integration after execution finishes `completed`
+- keeps the manual `runs integrate` command intact
+
+## Non-Goals
+
+This version does not:
+- auto-clean up workspaces
+- remove the manual integration command
+- bypass integration checks
+- auto-integrate dry runs
+
+## Domain Impact
+
+Add a small run-pipeline service above executor and integrator.
+
+The pipeline owns one policy decision:
+- whether execution should stop at `completed`
+- or continue to integration when explicitly requested
+
+## Workflow
+
+1. `quest runs execute --id <run-id>`
+   execute only
+2. `quest runs execute --id <run-id> --auto-integrate`
+   execute, then integrate if green
+
+## Validation Rules
+
+- `--dry-run --auto-integrate` is invalid
+- auto-integration only advances a run that finished `completed`
+- integration still uses the same source-repo cleanliness and target-ref checks as the manual path
+
+## Acceptance Checks
+
+This feature is correct when:
+- execution-only behavior stays unchanged without `--auto-integrate`
+- `--auto-integrate` returns an integrated run for a green source-backed quest
+- dry-run auto-integration fails with a typed error
+
+## Test Plan
+
+- direct pipeline test for successful auto-integration
+- direct pipeline test for invalid dry-run auto-integration
+- CLI test covering `runs execute --auto-integrate`
+- CLI test covering `runs execute --dry-run --auto-integrate`
+
+## Rollout
+
+Roll out as an additive CLI flag. No state migration required.
+
+## Recovery
+
+If the pipeline path regresses:
+- keep manual `runs integrate`
+- disable `--auto-integrate`
+- leave executor and integrator unchanged
