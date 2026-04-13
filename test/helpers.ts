@@ -147,6 +147,7 @@ export function createOpenClawMockExecutable(
   options: {
     agentId?: string;
     captureArgsPath?: string | undefined;
+    captureDeleteArgsPath?: string | undefined;
     gatewayReachable?: boolean;
     jsonToStderr?: boolean;
     noisyAgent?: boolean;
@@ -159,6 +160,7 @@ export function createOpenClawMockExecutable(
   const version = options.version ?? "OpenClaw 0.0.0-test";
   const agentId = options.agentId ?? "main";
   const captureArgsPath = options.captureArgsPath;
+  const captureDeleteArgsPath = options.captureDeleteArgsPath;
   const gatewayReachable = options.gatewayReachable ?? true;
   const jsonToStderr = options.jsonToStderr ?? false;
   const noisyAgent = options.noisyAgent ?? false;
@@ -217,6 +219,7 @@ export function createOpenClawMockExecutable(
       "  exit 0",
       "fi",
       'if [ "$1" = "agents" ] && [ "$2" = "delete" ]; then',
+      ...(captureDeleteArgsPath ? [`  printf '%s\\n' "$*" > '${captureDeleteArgsPath}'`] : []),
       "  cat <<'EOF'",
       JSON.stringify({ ok: true }),
       "EOF",

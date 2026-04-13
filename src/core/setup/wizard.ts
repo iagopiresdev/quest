@@ -1,11 +1,20 @@
 import { createInterface } from "node:readline/promises";
+import type { WorkerUpdate } from "../workers/management";
+import {
+  defaultSetupArchetype,
+  listSetupArchetypesForRole,
+  type SetupWizardPartyMode,
+} from "./presets";
+import { writeSetupBanner, writeSetupSection, writeSetupSummary } from "./ui";
 
 export type SetupWizardBackend = "codex" | "hermes" | "openclaw";
 export type SetupWizardSinkKind = "linear" | "none" | "slack" | "telegram" | "webhook";
 
 export type SetupWizardWorkerPlan = {
   args: string[];
+  archetypeLabel: string;
   backend: SetupWizardBackend;
+  update: WorkerUpdate;
 };
 
 export type SetupWizardSinkPlan = {
@@ -69,7 +78,7 @@ function defaultProfile(backend: SetupWizardBackend): string {
   }
 
   if (backend === "openclaw") {
-    return "openclaw/main";
+    return "openai-codex/gpt-5.4";
   }
 
   return "gpt-5.4";
@@ -92,6 +101,14 @@ function defaultWorkerName(
     return `${title} Tester`;
   }
   return `${title} Adventurer`;
+}
+
+function renderRoleStationTitle(role: "builder" | "tester" | "hybrid"): string {
+  if (role === "hybrid") {
+    return "Party Selection";
+  }
+
+  return `${role.slice(0, 1).toUpperCase()}${role.slice(1)} Station`;
 }
 
 async function promptRuntimeArgs(cli: ReturnType<typeof createInterface>): Promise<string[]> {
@@ -139,9 +156,27 @@ async function promptWorkerPlan(
   backend: SetupWizardBackend,
   role: "builder" | "tester" | "hybrid",
 ): Promise<SetupWizardWorkerPlan> {
+  let sectionDetail = "Pick a solo operator that can clear encounters and trials.";
+  if (role === "builder") {
+    sectionDetail = "Pick the party member that owns encounters.";
+  } else if (role === "tester") {
+    sectionDetail = "Pick the party member that owns trials.";
+  }
+
+  await writeSetupSection(renderRoleStationTitle(role), sectionDetail);
   const name = await promptWithDefault(cli, `${role} name`, defaultWorkerName(backend, role));
   const profile = await promptWithDefault(cli, `${role} profile`, defaultProfile(backend));
   const args = ["--name", name, "--profile", profile, "--role", role];
+  const archetypes = listSetupArchetypesForRole(role);
+  const defaultArchetype = defaultSetupArchetype(role);
+  const archetypeId = await chooseOne(
+    cli,
+    `${role} archetype`,
+    archetypes.map((archetype) => archetype.id),
+    defaultArchetype.id,
+  );
+  const archetype =
+    archetypes.find((candidate) => candidate.id === archetypeId) ?? defaultArchetype;
 
   if (backend === "hermes") {
     const baseUrl = await promptWithDefault(cli, "Hermes base URL", "http://127.0.0.1:8000/v1");
@@ -151,9 +186,6 @@ async function promptWorkerPlan(
   if (backend === "openclaw") {
     const agentId = await promptWithDefault(cli, "OpenClaw agent id", "main");
     args.push("--agent-id", agentId);
-    if (await confirmWithDefault(cli, "Use local gateway mode?", false)) {
-      args.push("--local");
-    }
     const gatewayUrl = await promptWithDefault(cli, "Gateway URL", "");
     if (gatewayUrl.length > 0) {
       args.push("--gateway-url", gatewayUrl);
@@ -161,7 +193,12 @@ async function promptWorkerPlan(
   }
 
   args.push(...(await promptRuntimeArgs(cli)));
-  return { args, backend };
+  return {
+    archetypeLabel: archetype.label,
+    args,
+    backend,
+    update: archetype.update,
+  };
 }
 
 async function promptSinkPlan(
@@ -246,6 +283,18 @@ async function promptSinkPlan(
   return { args: ["--issue-id", issueId, "--api-key-env", apiKeyEnv], kind: "linear" };
 }
 
+function deriveCalibrationIds(workerPlans: SetupWizardWorkerPlan[]): string[] {
+  return workerPlans.map((plan) => {
+    const nameIndex = plan.args.indexOf("--name");
+    const name = nameIndex >= 0 ? (plan.args[nameIndex + 1] ?? plan.backend) : plan.backend;
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  });
+}
+
 export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
@@ -255,24 +304,19 @@ export async function runSetupWizard(
   });
 
   try {
-    void Bun.write(
-      Bun.stdout,
-      [
-        "Quest Runner Setup Wizard",
-        "",
-        "Briefing",
-        "  Build your first party, wire one sink, and optionally send the party to the Training Grounds.",
-        "",
-      ].join("\n"),
-    );
-
+    await writeSetupBanner(context.defaults.backend);
     const backend = await chooseOne(
       cli,
       "Backend",
       ["codex", "hermes", "openclaw"] as const,
       context.defaults.backend,
     );
-    const partyMode = await chooseOne(cli, "Party mode", ["hybrid", "split"] as const, "hybrid");
+    const partyMode = (await chooseOne(
+      cli,
+      "Party mode",
+      ["hybrid", "split"] as const,
+      "hybrid",
+    )) as SetupWizardPartyMode;
 
     const workerPlans: SetupWizardWorkerPlan[] = [];
     if (partyMode === "hybrid") {
@@ -282,28 +326,22 @@ export async function runSetupWizard(
       workerPlans.push(await promptWorkerPlan(cli, backend, "tester"));
     }
 
+    await writeSetupSection("Observability", "Choose where quest events should be delivered.");
     const sinkPlan = await promptSinkPlan(cli);
+
+    await writeSetupSection("Training Grounds", "Decide whether to calibrate the new party now.");
     const runCalibration = await confirmWithDefault(
       cli,
       "Send new party members to the Training Grounds now?",
       true,
     );
-
-    return {
-      calibrateWorkerIds: runCalibration
-        ? workerPlans.map((plan) => {
-            const nameIndex = plan.args.indexOf("--name");
-            const name = nameIndex >= 0 ? (plan.args[nameIndex + 1] ?? plan.backend) : plan.backend;
-            return name
-              .trim()
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, "-")
-              .replace(/^-+|-+$/g, "");
-          })
-        : [],
+    const result = {
+      calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
       sinkPlan,
       workerPlans,
     };
+    await writeSetupSummary(partyMode, result);
+    return result;
   } finally {
     cli.close();
   }

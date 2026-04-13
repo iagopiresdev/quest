@@ -5,6 +5,7 @@ import { QuestDomainError } from "../../errors";
 import type { SecretStore } from "../../secret-store";
 import { runSubprocess } from "../process";
 import { buildProcessEnv } from "../process-env";
+import { buildQuestAgentId, buildQuestSessionId } from "./openclaw-maintenance";
 import { parseOpenClawJsonOutput } from "./openclaw-shared";
 import { buildRunnerPrompt, resolveAuthEnv } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
@@ -41,29 +42,6 @@ type PreparedOpenClawTarget = {
   env: Record<string, string>;
   sessionId: string;
 };
-
-function sanitizeSessionPart(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function buildQuestSessionId(context: RunnerExecutionContext): string {
-  const parts = [context.run.id, context.slice.id, context.phase]
-    .map((part) => sanitizeSessionPart(part))
-    .filter((part) => part.length > 0);
-  const sessionId = `quest-${parts.join("-")}`;
-  return sessionId.slice(0, 160);
-}
-
-function buildQuestAgentId(context: RunnerExecutionContext): string {
-  const parts = [context.run.id, context.slice.id, context.phase]
-    .map((part) => sanitizeSessionPart(part))
-    .filter((part) => part.length > 0);
-  return `quest-${parts.join("-")}`.slice(0, 80);
-}
 
 function resolveConfiguredModel(profile: string): string | null {
   const trimmed = profile.trim();
@@ -165,7 +143,7 @@ async function createTemporaryAgent(
     });
   }
 
-  const agentId = buildQuestAgentId(context);
+  const agentId = buildQuestAgentId(context.run.id, context.slice.id, context.phase);
   const agentDir = join(
     context.run.workspaceRoot ?? context.cwd,
     ".quest-runner",
@@ -216,7 +194,9 @@ async function prepareOpenClawTarget(
   context: RunnerExecutionContext,
   env: Record<string, string>,
 ): Promise<PreparedOpenClawTarget> {
-  const sessionId = context.worker.backend.sessionId ?? buildQuestSessionId(context);
+  const sessionId =
+    context.worker.backend.sessionId ??
+    buildQuestSessionId(context.run.id, context.slice.id, context.phase);
   if (context.worker.backend.local) {
     throw new QuestDomainError({
       code: "quest_runner_unavailable",

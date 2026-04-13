@@ -360,6 +360,7 @@ Operational notes:
 - Quest Runner creates workspace-bound temporary OpenClaw agents for quest execution so repo-edit runs do not inherit a persistent agent workspace
 - OpenClaw `--local` mode is currently not supported for quest execution; gateway-backed runs are the supported path because they preserve workspace isolation reliably
 - those temporary OpenClaw agents are intentionally kept past the slice turn so they do not delete a live quest workspace before trials or turn-in complete
+- `runs cleanup` now reaps those temporary OpenClaw agents after the quest workspace is no longer needed
 - real OpenClaw code-edit canaries should always include acceptance checks, because the backend can still report success before a file change is proven on disk
 
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
@@ -429,6 +430,9 @@ bun run install:local
 
 # bootstrap state paths and optionally create the first Codex worker
 quest setup --yes
+
+# launch the interactive setup TUI
+quest setup
 
 # bootstrap a Hermes worker instead
 quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
@@ -619,9 +623,17 @@ quest secrets delete --name codex.api
 quest doctor
 quest doctor --check-openclaw --agent-id codex
 
+# the interactive setup flow lets you choose:
+# - backend
+# - hybrid vs split party mode
+# - builder/tester archetypes and strengths
+# - one observability sink
+# - optional Training Grounds calibration
+
 # remove quest-managed workspaces for a run
 # completed source-repo runs must be integrated before cleanup
 # aborted source-repo runs can be cleaned directly
+# boss-fight failures can also be cleaned directly because the turn-in path is already broken
 quest runs cleanup --id quest-abc12345-deadbeef
 
 # abort a pending or running run
@@ -674,7 +686,7 @@ Do not commit runtime state, tokens, or local config.
 ## Current v0 scope
 
 - typed worker registry
-- interactive setup wizard for Codex, Hermes, or OpenClaw workers plus optional sink wiring
+- interactive setup TUI for Codex, Hermes, or OpenClaw workers with party mode, archetype-based strengths, optional sink wiring, and optional Training Grounds calibration
 - typed quest specs and conservative wave planning
 - explicit worker forcing for plan/run/rerun flows
 - persisted quest runs plus run events
@@ -693,6 +705,7 @@ Do not commit runtime state, tokens, or local config.
 - resume-safe `runs integrate` when the existing integration worktree is clean
 - explicit workspace cleanup via `runs cleanup`
 - cleanup confinement under the configured workspaces root
+- cleanup-time reaping of temporary OpenClaw quest agents
 - local keychain-backed secret storage for runner auth
 - built-in worker calibration through the throwaway `training-grounds-v1` suite
 - persisted calibration history, trust updates, and XP awards on workers
@@ -703,7 +716,7 @@ Do not commit runtime state, tokens, or local config.
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 - post-turn-in chronicle generation when `featureDoc.enabled` is true
 
-Additional runner adapters, a fuller setup TUI, and more sink integrations are still pending.
+Additional sink integrations and broader backend tuning are still pending.
 
 ## Validation
 

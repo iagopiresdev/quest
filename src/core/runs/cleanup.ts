@@ -1,4 +1,7 @@
 import { QuestDomainError } from "../errors";
+import { SecretStore } from "../secret-store";
+import type { WorkerRegistry } from "../workers/registry";
+import { cleanupRunOpenClawAgents } from "./adapters/openclaw-maintenance";
 import { appendEvent } from "./lifecycle";
 import type { QuestRunDocument } from "./schema";
 import type { QuestRunStore } from "./store";
@@ -17,10 +20,12 @@ function requireCleanupableRun(run: QuestRunDocument): void {
   if (
     run.sourceRepositoryPath &&
     run.status !== "aborted" &&
+    !run.events.some((event) => event.type === "run_integration_checks_failed") &&
     !run.events.some((event) => event.type === "run_integrated")
   ) {
-    // Aborted source-backed runs already gave up their replay path, so keeping their worktrees only
-    // leaves stale editor/indexer roots behind. Completed runs still need integration first.
+    // Aborted runs and failed boss fights already gave up their replay path, so keeping their
+    // worktrees only leaves stale editor/indexer roots behind. Completed runs still need a real
+    // turn-in before cleanup removes the integration path.
     throw new QuestDomainError({
       code: "quest_run_not_cleanupable",
       details: { runId: run.id, status: run.status },
@@ -31,13 +36,28 @@ function requireCleanupableRun(run: QuestRunDocument): void {
 }
 
 export class QuestRunCleanup {
-  constructor(private readonly runStore: QuestRunStore) {}
+  constructor(
+    private readonly runStore: QuestRunStore,
+    private readonly workerRegistry?: WorkerRegistry,
+    private readonly secretStore: SecretStore = new SecretStore(),
+  ) {}
 
   async cleanupRun(runId: string): Promise<QuestRunDocument> {
     const run = await this.runStore.getRun(runId);
     requireCleanupableRun(run);
     await cleanupExecutionWorkspaces(run);
-    appendEvent(run, "run_workspace_cleaned", { runId });
+    const openClawCleanupWarnings =
+      this.workerRegistry === undefined
+        ? []
+        : await cleanupRunOpenClawAgents(
+            run,
+            await this.workerRegistry.listWorkers(),
+            this.secretStore,
+          );
+    appendEvent(run, "run_workspace_cleaned", {
+      openClawCleanupWarnings,
+      runId,
+    });
     return await this.runStore.saveRun(run);
   }
 }

@@ -104,12 +104,14 @@ The following invariants should stay true:
 - Lifecycle transitions must go through shared helpers when possible.
 - Steering must change persisted run state, not just CLI presentation. If an operator reassigns, retries, or skips a slice, the run document must reflect the new executable truth.
 - Builder and tester output must be persisted separately when both phases run, or operators lose the ability to diagnose whether the encounter or the trial caused a failure.
+- Setup-time worker shaping must compile down to the normal worker model. Archetypes, party mode, and onboarding defaults are presentation helpers, not parallel registry formats.
 - Feature-doc / chronicle writes must append the same lifecycle event whether they happen during turn-in or through a later operator command, or observability stops being replayable from events alone.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
 - JSON is the stable CLI contract for automation. Human-readable output may exist as a presentation layer, but it must be derived from the same result object instead of inventing a second command surface.
 - New state should be appended, not inferred from logs after the fact.
+- Failed boss fights must not strand cleanup. If turn-in already failed, cleanup should be allowed to reap workspaces and temporary runner identities.
 
 If a future change makes these rules harder to see, the design is getting worse.
 
@@ -133,6 +135,7 @@ Rules:
 - Do not treat a mocked subprocess test as proof that a runner adapter behaves correctly in practice.
 - Do not ship adapter, steering, or integration changes after only testing the happy path.
 - When a backend needs a workspace-bound temporary identity, do not delete that identity until the quest workspace is safely past the phases that still depend on it.
+- When a backend uses workspace-bound temporary identities, add a live cleanup canary as well as a mocked regression test. Safe creation without safe reaping is not a complete lifecycle.
 
 Minimum edge cases to consider for execution-facing work:
 

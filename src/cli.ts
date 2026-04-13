@@ -1301,7 +1301,9 @@ async function runSetup(
     });
 
     for (const plan of wizardResult.workerPlans) {
-      const worker = registeredWorkerSchema.parse(buildSetupWorker(plan.backend, plan.args));
+      const worker = registeredWorkerSchema.parse(
+        applyWorkerUpdate(buildSetupWorker(plan.backend, plan.args), plan.update),
+      );
       const savedWorker = await registry.upsertWorker(worker);
       createdWorkers.push(savedWorker);
     }
@@ -1324,6 +1326,10 @@ async function runSetup(
       } else if (wizardResult.sinkPlan.kind === "telegram") {
         configuredSink = await observabilityStore.upsertTelegramSink(
           telegramSinkSchema.parse({
+            botTokenSecretRef: findOptionValue(
+              wizardResult.sinkPlan.args,
+              "--bot-token-secret-ref",
+            ),
             botTokenEnv: findOptionValue(wizardResult.sinkPlan.args, "--bot-token-env"),
             chatId: requireOptionValue(wizardResult.sinkPlan.args, "--chat-id", "--chat-id <id>"),
             enabled: true,
@@ -1338,14 +1344,17 @@ async function runSetup(
             enabled: true,
             eventTypes: [],
             id: "setup-slack",
+            secretRef: findOptionValue(wizardResult.sinkPlan.args, "--secret-ref"),
             type: "slack",
-            url: requireOptionValue(wizardResult.sinkPlan.args, "--url", "--url <https://...>"),
+            url: findOptionValue(wizardResult.sinkPlan.args, "--url"),
+            urlEnv: findOptionValue(wizardResult.sinkPlan.args, "--url-env"),
           }),
         );
       } else if (wizardResult.sinkPlan.kind === "linear") {
         configuredSink = await observabilityStore.upsertLinearSink(
           linearSinkSchema.parse({
             apiKeyEnv: findOptionValue(wizardResult.sinkPlan.args, "--api-key-env"),
+            apiKeySecretRef: findOptionValue(wizardResult.sinkPlan.args, "--api-key-secret-ref"),
             enabled: true,
             eventTypes: [],
             id: "setup-linear",
@@ -2718,7 +2727,7 @@ async function main(): Promise<number> {
     observabilityConfigPath,
     observabilityDeliveriesPath,
   );
-  const runCleanup = new QuestRunCleanup(runStore);
+  const runCleanup = new QuestRunCleanup(runStore, registry, secretStore);
   const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
   const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator);

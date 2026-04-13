@@ -1,15 +1,23 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
+import { buildQuestAgentId } from "../src/core/runs/adapters/openclaw-maintenance";
 import { QuestRunCleanup } from "../src/core/runs/cleanup";
 import { QuestRunExecutor } from "../src/core/runs/executor";
 import { QuestRunIntegrator } from "../src/core/runs/integrator";
 import { QuestRunStore } from "../src/core/runs/store";
 import { WorkerRegistry } from "../src/core/workers/registry";
-import { createCommittedRepo, createSpec, createWorker } from "./helpers";
+import {
+  createCommand,
+  createCommittedRepo,
+  createOpenClawMockExecutable,
+  createSlice,
+  createSpec,
+  createWorker,
+} from "./helpers";
 
 test("run cleanup removes a completed plain workspace root", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
@@ -153,6 +161,63 @@ test("run cleanup removes aborted source-repo workspaces without integration", a
   }
 });
 
+test("run cleanup allows source-repo runs after boss-fight failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const workerScriptPath = join(root, "worker-ok.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const cleanup = new QuestRunCleanup(runStore, workerRegistry);
+
+  try {
+    await Bun.write(
+      workerScriptPath,
+      [
+        "await Bun.write(Bun.stdout, 'builder-ok');",
+        "await Bun.write('tracked.txt', 'builder-updated\\n');",
+      ].join("\n"),
+    );
+    await workerRegistry.upsertWorker(
+      createWorker(
+        {},
+        {
+          adapter: "local-command",
+          command: ["bun", workerScriptPath],
+          profile: "local-command",
+          runner: "custom",
+        },
+      ),
+    );
+    const run = await runStore.createRun(
+      createSpec({
+        acceptanceChecks: [createCommand(["bun", "-e", "process.exit(1)"])],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+
+    await executor.executeRun(run.id);
+    await expect(integrator.integrateRun(run.id)).rejects.toBeInstanceOf(QuestDomainError);
+
+    const cleaned = await cleanup.cleanupRun(run.id);
+
+    expect(existsSync(cleaned.workspaceRoot ?? "")).toBe(false);
+    expect(cleaned.events.some((event) => event.type === "run_integration_checks_failed")).toBe(
+      true,
+    );
+    expect(cleaned.events.some((event) => event.type === "run_workspace_cleaned")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run cleanup refuses runs that are still marked running", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
   const runsRoot = join(root, "runs");
@@ -172,6 +237,70 @@ test("run cleanup refuses runs that are still marked running", async () => {
       expect(error).toBeInstanceOf(QuestDomainError);
       expect((error as QuestDomainError).code).toBe("quest_run_not_cleanupable");
     }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run cleanup removes temporary OpenClaw quest agents after workspace cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const deleteArgsPath = join(root, "openclaw-delete-args.txt");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const cleanup = new QuestRunCleanup(runStore, workerRegistry);
+
+  try {
+    const executable = createOpenClawMockExecutable(root, {
+      captureDeleteArgsPath: deleteArgsPath,
+      writeFile: {
+        content: "export const status = 'cleaned';\n",
+        path: "status.ts",
+      },
+    });
+    await workerRegistry.upsertWorker(
+      createWorker(
+        {},
+        {
+          adapter: "openclaw-cli",
+          agentId: "codex",
+          executable,
+          profile: "openai-codex/gpt-5.4",
+          runner: "openclaw",
+        },
+      ),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        acceptanceChecks: [],
+        slices: [
+          createSlice({
+            discipline: "coding",
+            goal: "Update the status file",
+            id: "parser",
+            owns: ["status.ts"],
+            title: "Update status",
+          }),
+        ],
+        workspace: "workspace",
+      }),
+      await workerRegistry.listWorkers(),
+    );
+    const executed = await executor.executeRun(run.id);
+
+    expect(existsSync(executed.workspaceRoot ?? "")).toBe(true);
+
+    const cleaned = await cleanup.cleanupRun(run.id);
+
+    expect(existsSync(cleaned.workspaceRoot ?? "")).toBe(false);
+    expect(readFileSync(deleteArgsPath, "utf8")).toContain(
+      `agents delete ${buildQuestAgentId(run.id, "parser", "build")} --force --json`,
+    );
+    expect(cleaned.events.some((event) => event.type === "run_workspace_cleaned")).toBe(true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
