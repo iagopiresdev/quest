@@ -31,6 +31,19 @@ test("runSubprocess aborts long-running commands when timeoutMs elapses", async 
   expect(result.aborted).toBe(true);
 });
 
+test("runSubprocess aborts commands that stop producing output past idleTimeoutMs", async () => {
+  const result = await runSubprocess({
+    cmd: ["bun", "-e", "console.log('start'); await Bun.sleep(100); console.log('late');"],
+    cwd: process.cwd(),
+    env: { PATH: Bun.env.PATH ?? "/usr/bin:/bin" },
+    idleTimeoutMs: 10,
+  });
+
+  expect(result.timedOut).toBe(true);
+  expect(result.aborted).toBe(true);
+  expect(result.stdout).toContain("start");
+});
+
 test("runSubprocess resolves bare commands against the provided PATH", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-process-"));
 

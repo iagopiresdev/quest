@@ -14,6 +14,7 @@ export type SubprocessResult = {
 async function readPipe(
   stream: ReadableStream<Uint8Array> | null,
   maxBytes: number,
+  onChunk?: (() => void) | undefined,
 ): Promise<{ truncated: boolean; value: string }> {
   if (!stream) {
     return { truncated: false, value: "" };
@@ -33,6 +34,8 @@ async function readPipe(
     if (!value) {
       continue;
     }
+
+    onChunk?.();
 
     // Capping captured output keeps one noisy worker or git command from bloating run state
     // enough to destabilize the orchestrator itself.
@@ -159,6 +162,7 @@ export async function runSubprocess(options: {
   cmd: string[];
   cwd: string;
   env: Record<string, string | undefined>;
+  idleTimeoutMs?: number | undefined;
   maxOutputBytes?: number | undefined;
   signal?: AbortSignal | undefined;
   stdin?: string | undefined;
@@ -188,6 +192,25 @@ export async function runSubprocess(options: {
     abortProcess();
   };
 
+  let idleTimeout: ReturnType<typeof setTimeout> | null = null;
+  const clearIdleTimeout = (): void => {
+    if (idleTimeout) {
+      clearTimeout(idleTimeout);
+      idleTimeout = null;
+    }
+  };
+  const resetIdleTimeout = (): void => {
+    if (options.idleTimeoutMs === undefined) {
+      return;
+    }
+
+    clearIdleTimeout();
+    idleTimeout = setTimeout(() => {
+      timedOut = true;
+      abortProcess();
+    }, options.idleTimeoutMs);
+  };
+
   options.signal?.addEventListener("abort", abortListener, { once: true });
   // Timeouts are enforced in the helper so every caller gets the same failure mode instead of
   // sprinkling ad hoc watchdog logic across adapters and git flows.
@@ -198,16 +221,18 @@ export async function runSubprocess(options: {
           timedOut = true;
           abortProcess();
         }, options.timeoutMs);
+  resetIdleTimeout();
 
   const [exitCode, stdout, stderr] = await Promise.all([
     process.exited,
-    readPipe(process.stdout, maxOutputBytes),
-    readPipe(process.stderr, maxOutputBytes),
+    readPipe(process.stdout, maxOutputBytes, resetIdleTimeout),
+    readPipe(process.stderr, maxOutputBytes, resetIdleTimeout),
   ]);
 
   if (timeout) {
     clearTimeout(timeout);
   }
+  clearIdleTimeout();
   options.signal?.removeEventListener("abort", abortListener);
 
   return {

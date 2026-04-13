@@ -104,6 +104,7 @@ function resolveExecutionCwd(
 async function runAcceptanceChecks(
   commands: QuestCommandSpec[],
   cwd: string,
+  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
 ): Promise<QuestRunCheckResult[]> {
   const results: QuestRunCheckResult[] = [];
 
@@ -112,6 +113,8 @@ async function runAcceptanceChecks(
       cmd: command.argv,
       cwd,
       env: buildProcessEnv(command.env),
+      idleTimeoutMs: options.idleTimeoutMs,
+      timeoutMs: options.timeoutMs,
     });
     results.push({
       command,
@@ -230,16 +233,22 @@ export class QuestRunExecutor {
     }
 
     const cwd = resolveExecutionCwd(run, sliceState, testerWorker);
+    const timeoutMs = run.spec.execution.timeoutMinutes * 60 * 1000;
+    const idleTimeoutMs = run.spec.execution.idleTimeoutMinutes
+      ? run.spec.execution.idleTimeoutMinutes * 60 * 1000
+      : undefined;
     const adapter = this.runnerRegistry.resolve(testerWorker, {
       forceDryRun: options.dryRun === true,
     });
     const testerResult = await adapter.execute({
       cwd,
+      idleTimeoutMs,
       phase: "test",
       run,
       signal: undefined,
       slice: sliceSpec,
       sliceState,
+      timeoutMs,
       worker: testerWorker,
     });
 
@@ -265,6 +274,10 @@ export class QuestRunExecutor {
     const specSliceMap = new Map(run.spec.slices.map((slice) => [slice.id, slice]));
     const startedAt = nowIsoString();
     const runWorkspaceRoot = run.workspaceRoot ?? Bun.env.PWD ?? ".";
+    const timeoutMs = run.spec.execution.timeoutMinutes * 60 * 1000;
+    const idleTimeoutMs = run.spec.execution.idleTimeoutMinutes
+      ? run.spec.execution.idleTimeoutMinutes * 60 * 1000
+      : undefined;
 
     await ensureDirectory(runWorkspaceRoot);
     setRunStatus(run, "running");
@@ -342,11 +355,13 @@ export class QuestRunExecutor {
             return {
               result: await adapter.execute({
                 cwd,
+                idleTimeoutMs,
                 phase: "build",
                 run,
                 signal: undefined,
                 slice,
                 sliceState,
+                timeoutMs,
                 worker,
               }),
               sliceState,
@@ -427,7 +442,10 @@ export class QuestRunExecutor {
             continue;
           }
 
-          const checkResults = await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd);
+          const checkResults = await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd, {
+            idleTimeoutMs,
+            timeoutMs,
+          });
           sliceState.lastChecks = checkResults;
 
           const failedCheck = checkResults.find((check) => check.exitCode !== 0);

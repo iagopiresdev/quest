@@ -1281,6 +1281,34 @@ test("quest cli writes a chronicle after turn-in when feature docs are enabled",
   expect(JSON.parse(chronicle.stdout).chronicle).toContain("## Encounters");
 });
 
+test("quest cli reports token usage from persisted slice outputs", () => {
+  const context = trackContext();
+  const scriptPath = join(context.stateRoot, "worker-usage.ts");
+  writeFileSync(
+    scriptPath,
+    ["console.error('tokens used\\n22,650');", "console.log('usage recorded');"].join("\n"),
+    "utf8",
+  );
+
+  const worker = createLocalCommandWorkerJson("usage-worker", ["bun", scriptPath]);
+  expect(runCli(context, ["workers", "upsert", "--stdin"], { input: worker }).code).toBe(0);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Usage quest" })),
+  });
+  expect(created.code).toBe(0);
+
+  const runId = JSON.parse(created.stdout).run.id as string;
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(0);
+
+  const usage = runCli(context, ["runs", "usage", "--id", runId]);
+  expect(usage.code).toBe(0);
+  const payload = JSON.parse(usage.stdout);
+  expect(payload.usage.totals.totalTokens).toBe(22650);
+  expect(payload.usage.phases[0].tokens.totalTokens).toBe(22650);
+});
+
 test("quest cli rejects dry-run auto-integration", () => {
   const context = trackContext();
   expectWorkerUpserted(context);

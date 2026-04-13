@@ -162,6 +162,37 @@ Execution happens from the slice workspace path for that run, and the process al
 - `QUEST_WORKSPACE_ROOT`
 - `QUEST_SLICE_WORKSPACE`
 
+Quest specs can now persist execution policy explicitly under `execution`, for example:
+
+```json
+{
+  "version": 1,
+  "title": "Feedback canary",
+  "workspace": "feedback-canary",
+  "execution": {
+    "timeoutMinutes": 20,
+    "idleTimeoutMinutes": 5,
+    "shareSourceDependencies": true
+  },
+  "slices": [
+    {
+      "id": "fix-status",
+      "title": "Fix status",
+      "discipline": "coding",
+      "goal": "Update status.ts so the exported status is fixed instead of stale.",
+      "description": "Keep the change minimal and rely on the workspace manifest for context.",
+      "owns": ["status.ts"],
+      "dependsOn": [],
+      "contextHints": ["Do not create extra files."],
+      "acceptanceChecks": []
+    }
+  ],
+  "acceptanceChecks": []
+}
+```
+
+When a run materializes from `--source-repo`, Quest Runner also writes `.quest-runner/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally.
+
 Example `codex-cli` worker:
 
 ```json
@@ -591,6 +622,9 @@ quest runs integrate --id quest-abc12345-deadbeef --target-ref main
 # inspect persisted slice logs/output
 quest runs logs --id quest-abc12345-deadbeef
 
+# inspect best-effort token usage from persisted runner output
+quest runs usage --id quest-abc12345-deadbeef
+
 # preview or write the post-turn-in chronicle
 quest runs chronicle --id quest-abc12345-deadbeef
 quest runs chronicle --id quest-abc12345-deadbeef --write
@@ -700,6 +734,9 @@ Do not commit runtime state, tokens, or local config.
 - richer steering commands for pause/resume plus per-slice reassign/retry/skip
 - runtime-managed per-run and per-slice workspace directories
 - optional Git worktree materialization via `--source-repo`
+- workspace manifest injection for slice prompts
+- optional source dependency linking into isolated worktrees for more honest acceptance checks
+- explicit execution policy in specs (`timeoutMinutes`, optional `idleTimeoutMinutes`, `shareSourceDependencies`)
 - serial integration into a dedicated worktree via `runs integrate`
 - integration-time execution of top-level `acceptanceChecks`
 - resume-safe `runs integrate` when the existing integration worktree is clean
@@ -714,6 +751,7 @@ Do not commit runtime state, tokens, or local config.
 - Slack sink delivery through the same eventing model
 - Linear sink delivery through the same eventing model
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
+- best-effort run usage summaries via `runs usage`
 - post-turn-in chronicle generation when `featureDoc.enabled` is true
 
 Additional sink integrations and broader backend tuning are still pending.

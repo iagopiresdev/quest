@@ -27,13 +27,23 @@ export const questFeatureDocSchema = z
   })
   .strict();
 
+export const questExecutionSchema = z
+  .object({
+    idleTimeoutMinutes: z.number().int().min(1).max(240).optional(),
+    shareSourceDependencies: z.boolean().default(true),
+    timeoutMinutes: z.number().int().min(1).max(240).default(20),
+  })
+  .strict();
+export type QuestExecutionSpec = z.infer<typeof questExecutionSchema>;
+
 export const questSliceSchema = z
   .object({
     acceptanceChecks: z.array(questCommandSchema).max(16).default([]),
     contextHints: z.array(nonEmptyString(200)).max(16).default([]),
+    description: nonEmptyString(2000).optional(),
     dependsOn: z.array(sliceIdSchema).max(16).default([]),
     discipline: workerDisciplineSchema,
-    goal: nonEmptyString(240),
+    goal: nonEmptyString(500),
     id: sliceIdSchema,
     owns: z.array(nonEmptyString(240)).min(1).max(24),
     preferredRunner: workerRunnerSchema.optional(),
@@ -49,6 +59,10 @@ export type QuestSliceSpec = z.infer<typeof questSliceSchema>;
 export const questSpecSchema = z
   .object({
     acceptanceChecks: z.array(questCommandSchema).max(24).default([]),
+    execution: questExecutionSchema.default({
+      shareSourceDependencies: true,
+      timeoutMinutes: 20,
+    }),
     featureDoc: questFeatureDocSchema.default({ enabled: false }),
     hotspots: z.array(nonEmptyString(240)).max(24).default([]),
     maxParallel: z.number().int().min(1).max(8).default(1),

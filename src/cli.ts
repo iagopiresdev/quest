@@ -31,6 +31,7 @@ import { runSubprocess } from "./core/runs/process";
 import { buildProcessEnv } from "./core/runs/process-env";
 import type { QuestRunDocument, QuestRunSliceState } from "./core/runs/schema";
 import { QuestRunStore } from "./core/runs/store";
+import { type RunUsageSummary, summarizeRunUsage } from "./core/runs/usage";
 import { SecretStore } from "./core/secret-store";
 import { runSetupWizard } from "./core/setup/wizard";
 import {
@@ -92,6 +93,7 @@ type QuestCliCommand =
   | "runs:slices:skip"
   | "runs:status"
   | "runs:summary"
+  | "runs:usage"
   | "runs:chronicle"
   | "secrets:delete"
   | "secrets:set"
@@ -1721,6 +1723,22 @@ function formatRunsSummaryPretty(candidate: Record<string, unknown>): string {
   ].join("\n");
 }
 
+function formatUsagePretty(summary: RunUsageSummary): string {
+  const totalTokens = summary.totals.totalTokens ?? "unknown";
+  return [
+    `Usage for ${summary.runId}`,
+    `  total tokens: ${totalTokens}`,
+    `  input tokens: ${summary.totals.inputTokens ?? "unknown"}`,
+    `  output tokens: ${summary.totals.outputTokens ?? "unknown"}`,
+    `  reasoning tokens: ${summary.totals.reasoningTokens ?? "unknown"}`,
+    `  accounted phases: ${summary.totals.knownPhaseCount}/${summary.phases.length}`,
+    ...summary.phases.map(
+      (phase) =>
+        `  - ${phase.sliceId} ${phase.phase} worker=${phase.workerId ?? "unassigned"} tokens=${phase.tokens.totalTokens ?? "unknown"}${phase.summary ? ` | ${phase.summary}` : ""}`,
+    ),
+  ].join("\n");
+}
+
 function formatLogsPretty(candidate: Record<string, unknown>): string {
   const logView = candidate.logs as
     | {
@@ -1953,6 +1971,17 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "runs:summary": {
       return formatRunsSummaryPretty(candidate);
+    }
+    case "runs:usage": {
+      const summary = candidate.usage as RunUsageSummary | undefined;
+      if (summary) {
+        return formatUsagePretty(summary);
+      }
+
+      const runs = (candidate.runs as RunUsageSummary[] | undefined) ?? [];
+      return runs.length === 0
+        ? "Usage\n  no runs"
+        : runs.map((run) => formatUsagePretty(run)).join("\n\n");
     }
     case "runs:list": {
       const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
@@ -2665,6 +2694,24 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest runs summary [--id <run-id>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:usage",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "usage",
+    run: async ({ args, runStore }) => {
+      const runId = findOptionValue(args, "--id");
+      if (runId) {
+        return { usage: summarizeRunUsage(await runStore.getRun(runId)) };
+      }
+
+      const runs = await runStore.listRuns();
+      const usage = await Promise.all(
+        runs.map(async (run) => summarizeRunUsage(await runStore.getRun(run.id))),
+      );
+      return { runs: usage };
+    },
+    usage:
+      "quest runs usage [--id <run-id> | --all] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
 ];
 

@@ -278,8 +278,9 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
         cmd: command,
         cwd: context.cwd,
         env: target.env,
+        idleTimeoutMs: context.idleTimeoutMs,
         signal: context.signal,
-        timeoutMs: 20 * 60 * 1000,
+        timeoutMs: context.timeoutMs ?? 20 * 60 * 1000,
       });
 
     if (timedOut) {

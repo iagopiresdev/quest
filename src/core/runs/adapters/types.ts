@@ -11,11 +11,13 @@ export type RunnerExecutionResult = {
 
 export type RunnerExecutionContext = {
   cwd: string;
+  idleTimeoutMs?: number | undefined;
   phase: "build" | "test";
   run: QuestRunDocument;
   signal?: AbortSignal | undefined;
   slice: QuestSliceSpec;
   sliceState: QuestRunSliceState;
+  timeoutMs?: number | undefined;
   worker: RegisteredWorker;
 };
 

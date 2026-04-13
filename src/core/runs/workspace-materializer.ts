@@ -1,4 +1,4 @@
-import { readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { QuestDomainError } from "../errors";
 import { ensureDirectory } from "../storage";
@@ -28,6 +28,19 @@ async function directoryHasEntries(path: string): Promise<boolean> {
       message: `Failed to inspect workspace directory ${path}`,
       statusCode: 1,
     });
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
   }
 }
 
@@ -128,6 +141,81 @@ async function materializeGitWorktree(
   }
 }
 
+export async function linkSourceDependenciesIntoWorkspace(
+  repositoryRoot: string,
+  workspacePath: string,
+): Promise<void> {
+  const sourceNodeModules = `${repositoryRoot}/node_modules`;
+  const workspaceNodeModules = `${workspacePath}/node_modules`;
+  if (!(await pathExists(sourceNodeModules)) || (await pathExists(workspaceNodeModules))) {
+    return;
+  }
+
+  // Slice workspaces are isolated git worktrees, so dependency access must be linked explicitly
+  // when we want trials to validate real package imports instead of only file existence.
+  await symlink(sourceNodeModules, workspaceNodeModules, "junction");
+}
+
+async function buildWorkspaceManifest(cwd: string): Promise<string> {
+  const rootFiles = [
+    "package.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "biome.json",
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "bun.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "README.md",
+    "AGENTS.md",
+  ];
+  const presentRootFiles = (
+    await Promise.all(
+      rootFiles.map(async (file) => ({
+        exists: await pathExists(`${cwd}/${file}`),
+        file,
+      })),
+    )
+  )
+    .filter((entry) => entry.exists)
+    .map((entry) => entry.file);
+
+  let packageSummary = "package.json not present";
+  if (await pathExists(`${cwd}/package.json`)) {
+    try {
+      const packageJson = JSON.parse(await readFile(`${cwd}/package.json`, "utf8")) as {
+        name?: string;
+        packageManager?: string;
+        scripts?: Record<string, string>;
+      };
+      const scriptNames = Object.keys(packageJson.scripts ?? {}).slice(0, 12);
+      packageSummary = [
+        `name: ${packageJson.name ?? "unknown"}`,
+        `packageManager: ${packageJson.packageManager ?? "unspecified"}`,
+        `scripts: ${scriptNames.length > 0 ? scriptNames.join(", ") : "none"}`,
+      ].join(" | ");
+    } catch {
+      packageSummary = "package.json present but could not be summarized";
+    }
+  }
+
+  return [
+    "# Workspace Manifest",
+    "",
+    "Use this manifest as the fast path for repo conventions before exploring ad hoc files.",
+    "",
+    `Root files present: ${presentRootFiles.length > 0 ? presentRootFiles.join(", ") : "none"}`,
+    `Package summary: ${packageSummary}`,
+    `Dependencies linked: ${(await pathExists(`${cwd}/node_modules`)) ? "yes" : "no"}`,
+    "",
+    "Only trust files that are present in this workspace. Do not assume RTK.md, AGENTS.md, or",
+    "other convention files exist unless the manifest or filesystem shows them.",
+    "",
+  ].join("\n");
+}
+
 async function writeQuestContext(
   run: QuestRunDocument,
   sliceState: QuestRunSliceState,
@@ -150,6 +238,11 @@ async function writeQuestContext(
       null,
       2,
     )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    `${questStateDir}/workspace-manifest.md`,
+    await buildWorkspaceManifest(cwd),
     "utf8",
   );
 }
@@ -196,7 +289,11 @@ export async function prepareExecutionWorkspace(
 
   let baseRevision: string | undefined;
   if (run.sourceRepositoryPath) {
-    await materializeGitWorktree(run.sourceRepositoryPath, cwd);
+    const repositoryRoot = await resolveGitRepositoryRoot(run.sourceRepositoryPath);
+    await materializeGitWorktree(repositoryRoot, cwd);
+    if (run.spec.execution.shareSourceDependencies) {
+      await linkSourceDependenciesIntoWorkspace(repositoryRoot, cwd);
+    }
     baseRevision = await readHeadRevision(cwd);
   } else {
     await ensureDirectory(cwd);

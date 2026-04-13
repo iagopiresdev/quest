@@ -12,7 +12,11 @@ import {
   assertWorkspacePathWithinRoot,
   resolveIntegrationWorkspacePathForRunRoot,
 } from "./workspace-layout";
-import { ensureGitRepositoryIsClean, resolveGitRepositoryRoot } from "./workspace-materializer";
+import {
+  ensureGitRepositoryIsClean,
+  linkSourceDependenciesIntoWorkspace,
+  resolveGitRepositoryRoot,
+} from "./workspace-materializer";
 
 function requireIntegratableRun(run: QuestRunDocument): void {
   if (run.status !== "completed") {
@@ -225,6 +229,9 @@ async function prepareIntegrationWorkspace(
       });
     }
 
+    if (run.spec.execution.shareSourceDependencies) {
+      await linkSourceDependenciesIntoWorkspace(repositoryRoot, workspacePath);
+    }
     return workspacePath;
   }
 
@@ -251,6 +258,9 @@ async function prepareIntegrationWorkspace(
 
   run.targetRef = targetRef;
   run.integrationBaseRevision = targetBaseRevision;
+  if (run.spec.execution.shareSourceDependencies) {
+    await linkSourceDependenciesIntoWorkspace(repositoryRoot, workspacePath);
+  }
   return workspacePath;
 }
 
@@ -477,6 +487,7 @@ async function integrateSlice(
 async function runIntegrationChecks(
   commands: QuestCommandSpec[],
   cwd: string,
+  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
 ): Promise<QuestRunCheckResult[]> {
   const results: QuestRunCheckResult[] = [];
 
@@ -485,6 +496,8 @@ async function runIntegrationChecks(
       cmd: command.argv,
       cwd,
       env: buildProcessEnv(command.env),
+      idleTimeoutMs: options.idleTimeoutMs,
+      timeoutMs: options.timeoutMs,
     });
     results.push({
       command,
@@ -535,6 +548,10 @@ export class QuestRunIntegrator {
 
     const repositoryRoot = await resolveGitRepositoryRoot(sourceRepositoryPath);
     const targetRef = options.targetRef ?? run.targetRef ?? "HEAD";
+    const timeoutMs = run.spec.execution.timeoutMinutes * 60 * 1000;
+    const idleTimeoutMs = run.spec.execution.idleTimeoutMinutes
+      ? run.spec.execution.idleTimeoutMinutes * 60 * 1000
+      : undefined;
     await ensureGitRepositoryIsClean(repositoryRoot);
 
     const integrationWorkspacePath = await prepareIntegrationWorkspace(
@@ -580,6 +597,7 @@ export class QuestRunIntegrator {
       const checkResults = await runIntegrationChecks(
         run.spec.acceptanceChecks,
         integrationWorkspacePath,
+        { idleTimeoutMs, timeoutMs },
       );
       run.lastIntegrationChecks = checkResults;
       const failedCheck = checkResults.find((check) => check.exitCode !== 0);

@@ -71,6 +71,11 @@ function buildBuilderPrompt(context: RunnerExecutionContext): string {
       : context.run.spec.acceptanceChecks
           .map((check) => `- ${describeCommandForPrompt(check)}`)
           .join("\n");
+  const contextHints =
+    context.slice.contextHints.length === 0
+      ? "- none"
+      : context.slice.contextHints.map((hint) => `- ${hint}`).join("\n");
+  const descriptionSection = context.slice.description?.trim();
 
   return [
     `Quest: ${context.run.spec.title}`,
@@ -78,11 +83,15 @@ function buildBuilderPrompt(context: RunnerExecutionContext): string {
     "",
     "Goal:",
     context.slice.goal,
+    ...(descriptionSection ? ["", "Details:", descriptionSection] : []),
     "",
     "Constraints:",
     "- Work only within the owned paths for this slice unless a generated file is strictly required.",
     "- Leave code changes in the current workspace; do not describe hypothetical diffs only.",
     "- Keep the final response short and focused on completed work and residual risks.",
+    "- This slice runs in an isolated workspace. Check .quest-runner/workspace-manifest.md before searching for conventions.",
+    "- Do not assume files like RTK.md or AGENTS.md exist unless the manifest or filesystem shows them.",
+    "- Prefer `node --import tsx/loader --test` over `tsx --test` in Node test runs. If Bun-native tests exist, prefer `bun test`.",
     "",
     "Owned paths:",
     ownedPaths,
@@ -90,11 +99,17 @@ function buildBuilderPrompt(context: RunnerExecutionContext): string {
     "Dependencies:",
     dependencyList,
     "",
+    "Context hints:",
+    contextHints,
+    "",
     "Later slice acceptance checks:",
     sliceAcceptanceChecks,
     "",
     "Global acceptance checks before integration:",
     globalAcceptanceChecks,
+    "",
+    "Workspace manifest:",
+    "- .quest-runner/workspace-manifest.md",
   ].join("\n");
 }
 
@@ -113,6 +128,11 @@ function buildTesterPrompt(context: RunnerExecutionContext): string {
   const builderSummary =
     context.sliceState.lastOutput?.summary?.trim() ?? "No builder summary recorded.";
   const builderWorkerId = context.sliceState.assignedWorkerId ?? "unknown";
+  const contextHints =
+    context.slice.contextHints.length === 0
+      ? "- none"
+      : context.slice.contextHints.map((hint) => `- ${hint}`).join("\n");
+  const descriptionSection = context.slice.description?.trim();
 
   return [
     `Quest: ${context.run.spec.title}`,
@@ -127,12 +147,15 @@ function buildTesterPrompt(context: RunnerExecutionContext): string {
     "",
     "Goal:",
     context.slice.goal,
+    ...(descriptionSection ? ["", "Details:", descriptionSection] : []),
     "",
     "Constraints:",
     "- Work only within the owned paths for this slice.",
     "- Inspect the current workspace result and make only minimal corrections needed for the trial to pass.",
     "- Do not expand the scope beyond validating and stabilizing this slice.",
     "- Keep the final response short and focused on validation and residual risks.",
+    "- This slice runs in an isolated workspace. Check .quest-runner/workspace-manifest.md before searching for conventions.",
+    "- Prefer `node --import tsx/loader --test` over `tsx --test` in Node test runs. If Bun-native tests exist, prefer `bun test`.",
     "",
     "Owned paths:",
     ownedPaths,
@@ -140,8 +163,14 @@ function buildTesterPrompt(context: RunnerExecutionContext): string {
     "Dependencies:",
     dependencyList,
     "",
+    "Context hints:",
+    contextHints,
+    "",
     "Slice acceptance checks after your validation pass:",
     sliceAcceptanceChecks,
+    "",
+    "Workspace manifest:",
+    "- .quest-runner/workspace-manifest.md",
   ].join("\n");
 }
 

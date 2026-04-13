@@ -143,7 +143,9 @@ Minimum edge cases to consider for execution-facing work:
 - explicit operator steering after a stale plan choice
 - oversized runner output
 - timeout and abort paths
+- idle stalls on subprocess-backed runners
 - env filtering and secret redaction
+- source dependency linking in isolated worktrees
 - source-repo dirtiness and cleanup safety
 - integration drift or stale target ref
 - sink delivery failure and replay
@@ -151,9 +153,11 @@ Minimum edge cases to consider for execution-facing work:
 For runner adapters specifically:
 
 - verify the exact prompt or request payload sent to the backend
+- verify workspace context artifacts like `.quest-runner/workspace-manifest.md` when prompt shape depends on them
 - verify the persisted run state after a real run
 - verify that a disposable repo or workspace reflects the expected post-run result
 - verify that sensitive data still stays out of prompts, logs, and argv when a safer path exists
+- verify that usage or token accounting commands still work against persisted runner output after prompt or adapter changes
 
 ## Coding Patterns
 

@@ -126,7 +126,10 @@ export function generateRunChronicle(run: QuestRunDocument): string {
     "",
     "## Objectives",
     "",
-    ...run.spec.slices.map((slice) => `- ${slice.title}: ${slice.goal}`),
+    ...run.spec.slices.flatMap((slice) => [
+      `- ${slice.title}: ${slice.goal}`,
+      ...(slice.description ? [`  details: ${slice.description}`] : []),
+    ]),
     "",
     "## Party",
     "",

@@ -71,9 +71,10 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
           QUEST_WORKSPACE: context.run.spec.workspace,
           QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
         }),
+        idleTimeoutMs: context.idleTimeoutMs,
         signal: context.signal,
         stdin: payload,
-        timeoutMs: 5 * 60 * 1000,
+        timeoutMs: context.timeoutMs ?? 5 * 60 * 1000,
       });
 
     if (timedOut) {

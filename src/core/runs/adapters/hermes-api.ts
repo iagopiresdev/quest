@@ -30,6 +30,22 @@ type HermesFileSnapshot = {
   path: string;
 };
 
+function buildHermesSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): AbortSignal | undefined {
+  if (timeoutMs === undefined) {
+    return signal;
+  }
+
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (!signal) {
+    return timeoutSignal;
+  }
+
+  return typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeoutSignal]) : signal;
+}
+
 function patternToRegExp(pattern: string): RegExp {
   const normalized = pattern.replaceAll("\\", "/");
   const escaped = normalized.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
@@ -302,8 +318,9 @@ export class HermesApiRunnerAdapter implements RunnerAdapter {
       },
       method: "POST",
     };
-    if (context.signal) {
-      requestInit.signal = context.signal;
+    const requestSignal = buildHermesSignal(context.signal, context.timeoutMs);
+    if (requestSignal) {
+      requestInit.signal = requestSignal;
     }
 
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, requestInit);

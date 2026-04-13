@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -67,6 +68,7 @@ function createWorker(
 function createSpec(): QuestSpec {
   return {
     acceptanceChecks: [],
+    execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
     featureDoc: { enabled: false },
     hotspots: [],
     maxParallel: 2,
@@ -153,6 +155,7 @@ test("run executor completes a planned run with the local-command adapter", asyn
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -228,6 +231,7 @@ test("run executor uses a dedicated tester worker during the trial phase", async
 
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -294,6 +298,7 @@ test("run executor executes the worker inside the slice workspace", async () => 
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -370,6 +375,61 @@ test("run executor materializes a committed git repository into the slice worksp
   }
 });
 
+test("run executor links source dependencies into slice and integration workspaces", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    writeFileSync(join(repositoryRoot, ".gitignore"), "node_modules/\n", "utf8");
+    Bun.spawnSync({ cmd: ["git", "add", ".gitignore"], cwd: repositoryRoot });
+    Bun.spawnSync({ cmd: ["git", "commit", "-m", "Ignore node_modules"], cwd: repositoryRoot });
+    mkdirSync(join(repositoryRoot, "node_modules"), { recursive: true });
+    writeFileSync(join(repositoryRoot, "node_modules", ".keep"), "dependency-ok\n", "utf8");
+    const scriptPath = join(root, "worker-dependency.ts");
+    writeFileSync(
+      scriptPath,
+      [
+        "const manifest = await Bun.file('.quest-runner/workspace-manifest.md').text();",
+        "const linked = await Bun.file('node_modules/.keep').text();",
+        "await Bun.write('tracked.txt', linked);",
+        "await Bun.write(Bun.stdout, manifest.includes('Dependencies linked: yes') ? 'linked' : 'missing-manifest');",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
+    const run = await runStore.createRun(
+      {
+        ...createSpec(),
+        acceptanceChecks: [
+          createCommand([
+            "bun",
+            "-e",
+            "process.exit((await Bun.file('node_modules/.keep').text()) === 'dependency-ok\\n' ? 0 : 9)",
+          ]),
+        ],
+      },
+      await workerRegistry.listWorkers(),
+      { sourceRepositoryPath: repositoryRoot },
+    );
+
+    const executed = await executor.executeRun(run.id);
+
+    expect(executed.status).toBe("completed");
+    expect(executed.slices[0]?.lastOutput?.stdout).toContain("linked");
+    expect(readFileSync(join(executed.slices[0]?.workspacePath ?? "", "tracked.txt"), "utf8")).toBe(
+      "dependency-ok\n",
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor fails when the source repository is dirty", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const repositoryRoot = createCommittedRepo(root);
@@ -413,6 +473,7 @@ test("run executor records failure for a failing local-command adapter", async (
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -473,6 +534,7 @@ test("run executor persists passing acceptance checks", async () => {
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -524,6 +586,7 @@ test("run executor fails when acceptance checks fail", async () => {
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -628,6 +691,7 @@ test("run executor passes explicit env into acceptance checks without leaking am
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -895,6 +959,7 @@ test("run executor completes a planned run with the hermes-api adapter", async (
 
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -972,6 +1037,7 @@ test("run executor completes a planned run with the openclaw-cli adapter", async
 
     const spec: QuestSpec = {
       acceptanceChecks: [],
+      execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
