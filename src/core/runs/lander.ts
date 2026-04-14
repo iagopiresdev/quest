@@ -149,7 +149,9 @@ export class QuestRunLander {
             runId: run.id,
             targetRef,
           },
-          message: `Quest run ${run.id} cannot land because the source target drifted`,
+          message:
+            `Quest run ${run.id} cannot land because the source target drifted; ` +
+            `refresh the boss fight with 'quest runs refresh-base --id ${run.id}'`,
           statusCode: 1,
         });
       }

@@ -156,10 +156,14 @@ Minimum edge cases to consider for execution-facing work:
 - idle stalls on subprocess-backed runners
 - env filtering and secret redaction
 - source dependency linking in isolated worktrees
+- inferred dependency bootstrap via `execution.preInstall`
 - source-repo dirtiness and cleanup safety
 - integration drift or stale target ref
+- refresh-base recovery after landing drift
 - landing drift or wrong checked-out branch
 - sink delivery failure and replay
+- sink probe/test-send flows
+- live cancel of in-flight execution or boss-fight work
 
 For runner adapters specifically:
 
@@ -298,6 +302,7 @@ Future observability work should prefer:
 - delivery records that keep the exact payload snapshot needed for audit and safe replay
 - typed sink definitions so new integrations extend the sink union instead of rewriting config storage
 - sink-specific delivery handlers registered into the dispatcher instead of a growing sink-type switch
+- an explicit sink probe path so setup, doctor, and operator checks can validate delivery wiring without waiting for a real run event
 
 When adding model-backed runners that are not local CLIs:
 - keep the external API call separate from the local file-application step

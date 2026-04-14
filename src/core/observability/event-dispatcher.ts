@@ -59,6 +59,13 @@ export class EventDispatcher {
     return await this.dispatchEvents([createObservableCalibrationEvent(input)]);
   }
 
+  async dispatchProbe(
+    event: ObservableEvent,
+    options: { sinkId?: string | undefined } = {},
+  ): Promise<DeliveryAttempt[]> {
+    return await this.dispatchEvents([event], options);
+  }
+
   async retryDeliveries(filters: {
     eventType?: ObservableEventType | undefined;
     runId?: string | undefined;
@@ -111,7 +118,10 @@ export class EventDispatcher {
     return attempts;
   }
 
-  private async dispatchEvents(events: ObservableEvent[]): Promise<DeliveryAttempt[]> {
+  private async dispatchEvents(
+    events: ObservableEvent[],
+    filters: { sinkId?: string | undefined } = {},
+  ): Promise<DeliveryAttempt[]> {
     const [config, deliveries] = await Promise.all([
       this.observabilityStore.readConfig(),
       this.observabilityStore.readDeliveries(),
@@ -119,6 +129,10 @@ export class EventDispatcher {
     const attempts: DeliveryAttempt[] = [];
 
     for (const sink of config.sinks) {
+      if (filters.sinkId && sink.id !== filters.sinkId) {
+        continue;
+      }
+
       for (const event of events) {
         if (!shouldDeliverEvent(sink, event.eventType)) {
           continue;

@@ -173,6 +173,7 @@ Quest specs can now persist execution policy explicitly under `execution`, for e
   "execution": {
     "timeoutMinutes": 20,
     "idleTimeoutMinutes": 5,
+    "preInstall": true,
     "prepareCommands": [
       {
         "argv": ["bun", "install", "--frozen-lockfile"],
@@ -198,7 +199,7 @@ Quest specs can now persist execution policy explicitly under `execution`, for e
 }
 ```
 
-When a run materializes from `--source-repo`, Quest Runner also writes `.quest-runner/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally. If a repo needs a real prep step before honest checks can run, add `execution.prepareCommands` and Quest Runner will execute those commands inside each slice workspace before the builder starts, and again in the integration workspace before top-level acceptance checks.
+When a run materializes from `--source-repo`, Quest Runner also writes `.quest-runner/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally. If a repo needs a real prep step before honest checks can run, add `execution.prepareCommands` and Quest Runner will execute those commands inside each slice workspace before the builder starts, and again in the integration workspace before top-level acceptance checks. If a repo needs a conventional dependency bootstrap first, set `execution.preInstall: true`; Quest Runner will infer safe install commands from the workspace contents, run them before custom preparation, and avoid shared dependency linking for that workspace.
 
 Example `codex-cli` worker:
 
@@ -407,6 +408,7 @@ Completed runs can then be integrated serially with `runs integrate`, which repl
 If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into the boss fight automatically after all slice trials pass.
 If you want full turn-in in the same command, `runs execute --auto-integrate --land` advances from execution through boss fight into a fast-forward landing step on the current clean source checkout.
 `runs land` is the explicit turn-in command when you want to inspect an integrated run before landing it.
+If turn-in fails because the source branch drifted after boss fight, `runs refresh-base` rebuilds the integration workspace against the latest target revision so landing can be retried without replaying the full encounter phase.
 Top-level spec `acceptanceChecks` run in that integration worktree after slices are replayed. If they fail, integration exits non-zero and the recorded integration checks stay on the run for inspection.
 `--dry-run --auto-integrate` is intentionally invalid because the dry-run adapter does not produce real slice results to land.
 `--land` without `--auto-integrate` is intentionally invalid on `runs execute`; use `runs land` for already integrated runs.
@@ -443,6 +445,7 @@ Current sink support:
 - `telegram`
 - `slack`
 - `linear`
+- `openclaw`
 
 Internally, sinks already live behind a typed sink model instead of a webhook-only config shape. That keeps the current webhook path simple while leaving room for future Telegram, Linear, Slack, or metrics sinks without rewriting delivery storage.
 
@@ -453,7 +456,7 @@ The core model is:
 
 This matters because webhook delivery is only the first consumer. The same event stream should support future sinks such as Telegram, Linear, Slack, or metrics without changing the run model itself.
 
-Delivery records keep the observable payload snapshot that was sent to the sink. That gives operators a stable audit trail and lets Quest Runner retry failed deliveries without needing to reconstruct the original event from a possibly-mutated local state tree.
+Delivery records keep the observable payload snapshot that was sent to the sink. That gives operators a stable audit trail and lets Quest Runner retry failed deliveries without needing to reconstruct the original event from a possibly-mutated local state tree. Every sink should also be probeable from the operator surface; `quest observability sinks test` and `quest doctor --test-sinks` send a synthetic event through the configured sink path so wiring can be checked without waiting for a real quest.
 
 ## Worker Calibration
 
@@ -585,6 +588,17 @@ quest observability linear upsert \
   --api-key-secret-ref linear.api-key \
   --events run_failed,run_completed
 
+# add or update an OpenClaw sink that injects events into an agent/session
+quest observability openclaw upsert \
+  --id local-openclaw \
+  --agent-id codex \
+  --session-id main \
+  --events run_failed,run_completed
+
+# send a synthetic probe event through one sink or all configured sinks
+quest observability sinks test --id local-openclaw
+quest observability sinks test --label "manual smoke"
+
 # retry failed webhook deliveries after the sink is healthy again
 quest observability deliveries retry --sink-id local-webhook --status failed
 
@@ -652,6 +666,9 @@ quest runs integrate --id quest-abc12345-deadbeef --target-ref main
 # land an already integrated run into the current clean source checkout
 quest runs land --id quest-abc12345-deadbeef --target-ref main
 
+# rebuild the boss-fight workspace against the latest target after landing drift
+quest runs refresh-base --id quest-abc12345-deadbeef --target-ref main
+
 # inspect persisted slice logs/output
 quest runs logs --id quest-abc12345-deadbeef
 
@@ -690,6 +707,8 @@ quest secrets delete --name codex.api
 # verify the local operator/runtime prerequisites
 quest doctor
 quest doctor --check-openclaw --agent-id codex
+quest doctor --test-sinks
+quest doctor --test-sinks --sink-id local-openclaw
 
 # the interactive setup flow lets you choose:
 # - backend
@@ -787,10 +806,11 @@ Do not commit runtime state, tokens, or local config.
 - optional Git worktree materialization via `--source-repo`
 - workspace manifest injection for slice prompts
 - optional source dependency linking into isolated worktrees for more honest acceptance checks
-- explicit execution policy in specs (`timeoutMinutes`, optional `idleTimeoutMinutes`, `shareSourceDependencies`)
+- explicit execution policy in specs (`timeoutMinutes`, optional `idleTimeoutMinutes`, `preInstall`, `shareSourceDependencies`)
 - serial integration into a dedicated worktree via `runs integrate`
 - integration-time execution of top-level `acceptanceChecks`
 - resume-safe `runs integrate` when the existing integration worktree is clean
+- explicit `runs refresh-base` recovery for drifted turn-in paths
 - explicit workspace cleanup via `runs cleanup`
 - cleanup confinement under the configured workspaces root
 - cleanup-time reaping of temporary OpenClaw quest agents
@@ -801,6 +821,8 @@ Do not commit runtime state, tokens, or local config.
 - Telegram sink delivery through the same eventing model
 - Slack sink delivery through the same eventing model
 - Linear sink delivery through the same eventing model
+- OpenClaw session-delivery sink through the same eventing model
+- sink probe/test-send support from `quest observability sinks test` and `quest doctor --test-sinks`
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 - best-effort run usage summaries via `runs usage`
 - post-turn-in chronicle generation when `featureDoc.enabled` is true

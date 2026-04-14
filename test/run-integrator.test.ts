@@ -220,6 +220,7 @@ test("run integrator runs workspace preparation commands before top-level checks
           ]),
         ],
         execution: {
+          preInstall: false,
           prepareCommands: [
             createCommand([
               "sh",

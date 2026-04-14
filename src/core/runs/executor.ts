@@ -330,6 +330,14 @@ export class QuestRunExecutor {
     await this.runStore.clearRunExecutionState(run.id);
   }
 
+  private async finalizeCancelledRun(runId: string): Promise<QuestRunDocument> {
+    const run = await this.runStore.getRun(runId);
+    clearExecutionStateOnRun(run);
+    await this.runStore.saveRun(run);
+    await this.runStore.clearRunExecutionState(runId);
+    return run;
+  }
+
   private async executeTesterPhase(
     run: QuestRunDocument,
     sliceSpec: QuestRunDocument["spec"]["slices"][number],
@@ -699,6 +707,12 @@ export class QuestRunExecutor {
 
       return await this.finalizeCompletedRun(run);
     } catch (error: unknown) {
+      const latestRun = await this.runStore.getRun(run.id);
+      if (latestRun.status === "aborted") {
+        await this.finalizeCancelledRun(run.id);
+        throw error;
+      }
+
       await this.finalizeFailedRun(run, error);
       throw error;
     }

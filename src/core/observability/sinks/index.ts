@@ -1,4 +1,5 @@
 import { LinearSinkHandler, linearSinkSchema } from "./linear-sink";
+import { OpenClawSinkHandler, openClawSinkSchema } from "./openclaw-sink";
 import { SlackSinkHandler, slackSinkSchema } from "./slack-sink";
 import { TelegramSinkHandler, telegramSinkSchema } from "./telegram-sink";
 import { WebhookSinkHandler, webhookSinkSchema } from "./webhook-sink";
@@ -8,6 +9,7 @@ export const sinkSchemas = [
   telegramSinkSchema,
   slackSinkSchema,
   linearSinkSchema,
+  openClawSinkSchema,
 ] as const;
 
 export const defaultEventSinkHandlers = [
@@ -15,6 +17,13 @@ export const defaultEventSinkHandlers = [
   new TelegramSinkHandler(),
   new SlackSinkHandler(),
   new LinearSinkHandler(),
+  new OpenClawSinkHandler(),
 ] as const;
 
-export { linearSinkSchema, slackSinkSchema, telegramSinkSchema, webhookSinkSchema };
+export {
+  linearSinkSchema,
+  openClawSinkSchema,
+  slackSinkSchema,
+  telegramSinkSchema,
+  webhookSinkSchema,
+};

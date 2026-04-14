@@ -19,10 +19,12 @@ import {
   type ObservableCalibrationEvent,
   type ObservableEvent,
   type ObservableEventType,
+  type OpenClawSink,
   observabilityConfigSchema,
   observabilityDeliveriesSchema,
   observabilitySinkSchema,
   observableCalibrationEventSchema,
+  openClawSinkSchema,
   type SlackSink,
   slackSinkSchema,
   type TelegramSink,
@@ -120,6 +122,11 @@ export class ObservabilityStore {
   async upsertLinearSink(candidate: LinearSink): Promise<LinearSink> {
     const parsed = linearSinkSchema.parse(candidate);
     return (await this.upsertSink(parsed)) as LinearSink;
+  }
+
+  async upsertOpenClawSink(candidate: OpenClawSink): Promise<OpenClawSink> {
+    const parsed = openClawSinkSchema.parse(candidate);
+    return (await this.upsertSink(parsed)) as OpenClawSink;
   }
 
   async deleteSink(sinkId: string): Promise<void> {

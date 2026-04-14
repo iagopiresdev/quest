@@ -28,12 +28,14 @@ import {
 } from "./observable-events";
 import {
   linearSinkSchema,
+  openClawSinkSchema,
   sinkSchemas,
   slackSinkSchema,
   telegramSinkSchema,
   webhookSinkSchema,
 } from "./sinks";
 import type { LinearSink } from "./sinks/linear-sink";
+import type { OpenClawSink } from "./sinks/openclaw-sink";
 import type { SlackSink } from "./sinks/slack-sink";
 import type { TelegramSink } from "./sinks/telegram-sink";
 import type { WebhookSink } from "./sinks/webhook-sink";
@@ -49,6 +51,7 @@ export type {
   ObservableEventType,
   ObservableRunEvent,
   ObservableRunEventType,
+  OpenClawSink,
   SlackSink,
   TelegramSink,
   WebhookSink,
@@ -66,6 +69,7 @@ export {
   observableEventTypeSchema,
   observableRunEventSchema,
   observableRunEventTypeSchema,
+  openClawSinkSchema,
   slackSinkSchema,
   telegramSinkSchema,
   webhookSinkSchema,

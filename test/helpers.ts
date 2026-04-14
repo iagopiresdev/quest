@@ -523,7 +523,7 @@ export function createSpec(
 ): QuestSpec {
   return {
     acceptanceChecks: [],
-    execution: { shareSourceDependencies: true, timeoutMinutes: 20 },
+    execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
     featureDoc: { enabled: false },
     hotspots: [],
     maxParallel: 1,

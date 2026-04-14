@@ -1082,6 +1082,49 @@ test("quest cli configures linear sinks and delivers run events", async () => {
   }
 });
 
+test("quest cli configures openclaw sinks and sends probe events", async () => {
+  const context = trackContext();
+  const captureArgsPath = join(context.stateRoot, "openclaw-sink-args.txt");
+  const executable = createOpenClawMockExecutable(context.stateRoot, { captureArgsPath });
+
+  const upsertSink = await runCliAsync(context, [
+    "observability",
+    "openclaw",
+    "upsert",
+    "--id",
+    "openclaw-local",
+    "--agent-id",
+    "codex",
+    "--session-id",
+    "quest-observability-test",
+    "--openclaw-executable",
+    executable,
+    "--events",
+    "run_completed",
+  ]);
+  expect(upsertSink.code).toBe(0);
+
+  const tested = await runCliAsync(context, [
+    "observability",
+    "sinks",
+    "test",
+    "--id",
+    "openclaw-local",
+    "--label",
+    "manual-probe",
+  ]);
+  expect(tested.code).toBe(0);
+  const attempts = JSON.parse(tested.stdout).attempts as Array<{ ok: boolean; sinkId: string }>;
+  expect(attempts).toHaveLength(1);
+  expect(attempts[0]).toMatchObject({ ok: true, sinkId: "openclaw-local" });
+
+  const capturedArgs = readFileSync(captureArgsPath, "utf8");
+  expect(capturedArgs).toContain("agent");
+  expect(capturedArgs).toContain("codex");
+  expect(capturedArgs).toContain("quest-observability-test");
+  expect(capturedArgs).toContain("manual-probe");
+});
+
 test("quest cli lists and retries failed webhook deliveries", async () => {
   const context = trackContext();
   let shouldFail = true;
@@ -2120,6 +2163,49 @@ test("quest cli doctor dedupes duplicate writable paths", () => {
   });
 });
 
+test("quest cli doctor can probe configured sinks", async () => {
+  const context = trackContext();
+  const receivedEvents: Array<{ eventType: string }> = [];
+  const server = Bun.serve({
+    fetch: async (request) => {
+      receivedEvents.push((await request.json()) as { eventType: string });
+      return new Response("ok");
+    },
+    port: 0,
+  });
+
+  try {
+    const sink = await runCliAsync(context, [
+      "observability",
+      "webhook",
+      "upsert",
+      "--id",
+      "doctor-webhook",
+      "--url",
+      `http://127.0.0.1:${server.port}/events`,
+    ]);
+    expect(sink.code).toBe(0);
+
+    const doctor = await runCliAsync(context, [
+      "doctor",
+      "--test-sinks",
+      "--sink-id",
+      "doctor-webhook",
+    ]);
+    expect(doctor.code).toBe(0);
+    const report = JSON.parse(doctor.stdout) as {
+      checks: Array<{ name: string; ok: boolean }>;
+      ok: boolean;
+    };
+    expect(report.ok).toBe(true);
+    expect(report.checks.find((check) => check.name === "sink:doctor-webhook")?.ok).toBe(true);
+    expect(receivedEvents).toHaveLength(1);
+    expect(receivedEvents[0]?.eventType).toBe("run_completed");
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("quest cli pretty prints doctor output when requested", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
@@ -2130,7 +2216,8 @@ test("quest cli pretty prints doctor output when requested", () => {
 
   expect(doctor.code).toBe(0);
   expect(doctor.stdout).toContain("Quest Runner Doctor");
-  expect(doctor.stdout).toContain("[ok] codex-binary");
+  expect(doctor.stdout).toContain("codex-binary");
+  expect(doctor.stdout).toContain("✓");
   expect(doctor.stdout).not.toContain('"checks"');
 });
 

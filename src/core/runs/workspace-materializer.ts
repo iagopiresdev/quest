@@ -59,6 +59,51 @@ const allowedPreparationArtifactPatterns = [
   "vendor/bundle/**",
 ] as const;
 
+async function detectWorkspaceInstallCommands(cwd: string): Promise<QuestCommandSpec[]> {
+  const hasBunLock = await pathExists(`${cwd}/bun.lock`);
+  const hasPackageJson = await pathExists(`${cwd}/package.json`);
+  const hasPnpmLock = await pathExists(`${cwd}/pnpm-lock.yaml`);
+  const hasPackageLock = await pathExists(`${cwd}/package-lock.json`);
+  const hasYarnLock = await pathExists(`${cwd}/yarn.lock`);
+  const hasRequirements = await pathExists(`${cwd}/requirements.txt`);
+  const commands: QuestCommandSpec[] = [];
+
+  // Pre-install exists to make slice and boss-fight trials self-sufficient when the operator
+  // prefers real dependency installs over shared source-tree node_modules links.
+  if (hasBunLock && hasPackageJson) {
+    commands.push({ argv: ["bun", "install", "--frozen-lockfile"], env: {} });
+  } else if (hasPnpmLock && hasPackageJson) {
+    commands.push({ argv: ["pnpm", "install", "--frozen-lockfile"], env: {} });
+  } else if (hasPackageLock && hasPackageJson) {
+    commands.push({ argv: ["npm", "ci"], env: {} });
+  } else if (hasYarnLock && hasPackageJson) {
+    commands.push({ argv: ["yarn", "install", "--frozen-lockfile"], env: {} });
+  }
+
+  if (hasRequirements) {
+    commands.push({ argv: ["python3", "-m", "pip", "install", "-r", "requirements.txt"], env: {} });
+  }
+
+  return commands;
+}
+
+export async function runWorkspacePreInstall(
+  preInstall: boolean,
+  cwd: string,
+  options: Parameters<typeof runWorkspacePreparationCommands>[2] = {},
+): Promise<void> {
+  if (!preInstall) {
+    return;
+  }
+
+  const commands = await detectWorkspaceInstallCommands(cwd);
+  if (commands.length === 0) {
+    return;
+  }
+
+  await runWorkspacePreparationCommands(commands, cwd, options);
+}
+
 export async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Promise<string> {
   const resolvedSourcePath = resolve(sourceRepositoryPath);
   const result = await runSubprocess({
@@ -423,7 +468,7 @@ export async function prepareExecutionWorkspace(
   if (run.sourceRepositoryPath) {
     const repositoryRoot = await resolveGitRepositoryRoot(run.sourceRepositoryPath);
     await materializeGitWorktree(repositoryRoot, cwd);
-    if (run.spec.execution.shareSourceDependencies) {
+    if (run.spec.execution.shareSourceDependencies && !run.spec.execution.preInstall) {
       await linkSourceDependenciesIntoWorkspace(repositoryRoot, cwd);
     }
     baseRevision = await readHeadRevision(cwd);
@@ -432,6 +477,7 @@ export async function prepareExecutionWorkspace(
   }
 
   await writeQuestContext(run, sliceState, cwd);
+  await runWorkspacePreInstall(run.spec.execution.preInstall, cwd, options);
   await runWorkspacePreparationCommands(run.spec.execution.prepareCommands, cwd, options);
   await refreshWorkspaceManifest(cwd);
   return { baseRevision };

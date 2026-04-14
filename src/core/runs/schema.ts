@@ -59,6 +59,7 @@ export const questRunEventTypeValues = [
   "run_integrated",
   "run_landing_started",
   "run_landed",
+  "run_base_refreshed",
   "run_rescue_status_updated",
   "run_feature_doc_written",
   "run_workspace_cleaned",

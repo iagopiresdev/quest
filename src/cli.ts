@@ -8,12 +8,14 @@ import { ZodError } from "zod";
 import { generateRunChronicle, writeRunChronicle } from "./core/chronicles/generator";
 import { isQuestDomainError } from "./core/errors";
 import { EventDispatcher } from "./core/observability/event-dispatcher";
+import { createSinkProbeEvent } from "./core/observability/probe";
 import {
   type DeliveryStatus,
   deliveryStatusSchema,
   linearSinkSchema,
   type ObservableEventType,
   observableEventTypeSchema,
+  openClawSinkSchema,
   slackSinkSchema,
   telegramSinkSchema,
   webhookSinkSchema,
@@ -30,6 +32,7 @@ import { appendEvent } from "./core/runs/lifecycle";
 import { QuestRunPipeline } from "./core/runs/pipeline";
 import { runSubprocess } from "./core/runs/process";
 import { buildProcessEnv } from "./core/runs/process-env";
+import { QuestRunRefresher } from "./core/runs/refresher";
 import type { QuestRunDocument, QuestRunEvent, QuestRunSliceState } from "./core/runs/schema";
 import { QuestRunStore } from "./core/runs/store";
 import { type RunUsageSummary, summarizeRunUsage } from "./core/runs/usage";
@@ -53,6 +56,7 @@ import {
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
+import { colorize, formatPrettyStatus } from "./core/ui/terminal";
 import { listCalibrationSuites, WorkerCalibrator } from "./core/workers/calibration";
 import {
   applyWorkerUpdate,
@@ -81,8 +85,10 @@ type QuestCliCommand =
   | "observability:deliveries:retry"
   | "observability:events:list"
   | "observability:sinks:list"
+  | "observability:sinks:test"
   | "observability:sink:delete"
   | "observability:linear:upsert"
+  | "observability:openclaw:upsert"
   | "observability:slack:upsert"
   | "observability:telegram:upsert"
   | "observability:webhook:upsert"
@@ -97,6 +103,7 @@ type QuestCliCommand =
   | "runs:integrate"
   | "runs:pause"
   | "runs:resume"
+  | "runs:refresh-base"
   | "runs:rescue"
   | "runs:rerun"
   | "runs:execute"
@@ -137,6 +144,7 @@ type QuestCliContext = {
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
   runIntegrator: QuestRunIntegrator;
+  runRefresher: QuestRunRefresher;
   runLander: QuestRunLander;
   runPipeline: QuestRunPipeline;
   runStore: QuestRunStore;
@@ -904,6 +912,21 @@ async function configureSetupSink(
         type: "slack",
         url: findOptionValue(sinkPlan.args, "--url"),
         urlEnv: findOptionValue(sinkPlan.args, "--url-env"),
+      }),
+    );
+  }
+
+  if (sinkPlan.kind === "openclaw") {
+    return await observabilityStore.upsertOpenClawSink(
+      openClawSinkSchema.parse({
+        agentId: requireOptionValue(sinkPlan.args, "--agent-id", "--agent-id <id>"),
+        enabled: true,
+        eventTypes: [],
+        executable: findOptionValue(sinkPlan.args, "--openclaw-executable"),
+        gatewayUrl: findOptionValue(sinkPlan.args, "--gateway-url"),
+        id: "setup-openclaw",
+        sessionId: findOptionValue(sinkPlan.args, "--session-id"),
+        type: "openclaw",
       }),
     );
   }
@@ -1758,8 +1781,50 @@ async function checkOpenClawStatus(
   }
 }
 
+async function testObservabilitySinks(
+  dispatcher: EventDispatcher,
+  observabilityStore: ObservabilityStore,
+  options: { label: string; sinkId?: string | undefined } = { label: "doctor" },
+): Promise<DoctorCheck[]> {
+  const sinks = await observabilityStore.listSinks();
+  const selectedSinks = options.sinkId
+    ? sinks.filter((sink) => sink.id === options.sinkId)
+    : sinks.filter((sink) => sink.enabled);
+
+  if (options.sinkId && selectedSinks.length === 0) {
+    return [
+      {
+        details: { sinkId: options.sinkId },
+        name: "sink-probe",
+        ok: false,
+      },
+    ];
+  }
+
+  const checks: DoctorCheck[] = [];
+  for (const sink of selectedSinks) {
+    const attempts = await dispatcher.dispatchProbe(createSinkProbeEvent(options.label), {
+      sinkId: sink.id,
+    });
+    const attempt = attempts[0];
+    checks.push({
+      details: {
+        sinkId: sink.id,
+        sinkType: sink.type,
+        status: attempt?.status ?? "skipped",
+      },
+      name: `sink:${sink.id}`,
+      ok: attempt?.ok === true,
+    });
+  }
+
+  return checks;
+}
+
 async function runDoctor(
   args: string[],
+  dispatcher: EventDispatcher,
+  observabilityStore: ObservabilityStore,
   secretStore: SecretStore,
   stateRoot: string,
   calibrationsRoot: string,
@@ -1784,6 +1849,8 @@ async function runDoctor(
     (findOptionValue(args, "--backend") ?? "") === "openclaw" ||
     hasFlag(args, "--check-openclaw") ||
     findOptionValue(args, "--openclaw-executable") !== undefined;
+  const shouldTestSinks = hasFlag(args, "--test-sinks");
+  const sinkId = findOptionValue(args, "--sink-id") ?? undefined;
   const writableChecks = await Promise.all(
     dedupePaths([
       stateRoot,
@@ -1845,6 +1912,15 @@ async function runDoctor(
     });
   }
 
+  if (shouldTestSinks) {
+    checks.push(
+      ...(await testObservabilitySinks(dispatcher, observabilityStore, {
+        label: "doctor",
+        sinkId,
+      })),
+    );
+  }
+
   return {
     checks,
     ok: checks.every((check) => check.ok),
@@ -1894,6 +1970,8 @@ async function runSetup(
 
   const doctor = (await runDoctor(
     args,
+    new EventDispatcher(observabilityStore, secretStore),
+    observabilityStore,
     secretStore,
     paths.stateRoot,
     paths.calibrationsRoot,
@@ -2018,7 +2096,7 @@ function formatDoctorCheck(check: DoctorCheck): string {
               : `${key}=${JSON.stringify(value)}`,
           )
           .join(", ")}`;
-  return `${check.ok ? "[ok]" : "[fail]"} ${check.name}${detailText}`;
+  return `${formatPrettyStatus(check.ok ? "ok" : "fail")} ${check.name}${detailText}`;
 }
 
 function formatSinkLine(sink: {
@@ -2038,14 +2116,30 @@ function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): 
   } else if (summary.integration.status === "integrated") {
     turnInStatus = "complete";
   }
+  let questStatus: "fail" | "info" | "ok" = "info";
+  if (summary.status === "completed") {
+    questStatus = "ok";
+  } else if (summary.status === "failed") {
+    questStatus = "fail";
+  }
+
+  let bossFightStatus: "fail" | "info" | "ok" = "info";
+  if (summary.integration.status === "failed") {
+    bossFightStatus = "fail";
+  } else if (
+    summary.integration.status === "integrated" ||
+    summary.integration.status === "landed"
+  ) {
+    bossFightStatus = "ok";
+  }
   return [
-    `${prettyLabels.quest} ${summary.id}`,
+    `${formatPrettyStatus(questStatus)} ${prettyLabels.quest} ${summary.id}`,
     `  ${prettyLabels.briefing}: ${summary.title}`,
     `  ${prettyLabels.questStatus}: ${summary.status}`,
     `  Updated: ${summary.updatedAt}`,
-    `  ${prettyLabels.party} Waves: ${summary.waves}`,
+    `  ${prettyLabels.party}: ${summary.waves} wave(s)`,
     `  ${prettyLabels.encounters}: ${formatCountMap(summary.counts.slices)}`,
-    `  ${prettyLabels.bossFight}: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
+    `  ${prettyLabels.bossFight}: ${formatPrettyStatus(bossFightStatus)} ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
     `  ${prettyLabels.turnIn}: ${turnInStatus}`,
     `  Rescue: ${summary.integration.rescueStatus}`,
     ...(summary.integration.rescueNote ? [`  Rescue Note: ${summary.integration.rescueNote}`] : []),
@@ -2201,10 +2295,11 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
     `${prettyLabels.briefing}: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
     ...plan.waves.flatMap((wave) => [
       `  ${prettyLabels.wave} ${wave.index}:`,
-      ...wave.slices.map(
-        (slice) =>
-          `    - ${slice.id} | Builder=${slice.assignedWorkerId ?? "unassigned"} | Tester=${slice.assignedTesterWorkerId ?? "unassigned"}`,
-      ),
+      ...wave.slices.map((slice) => `    • ${slice.id}`),
+      ...wave.slices.flatMap((slice) => [
+        `      Builder: ${slice.assignedWorkerId ?? "unassigned"}`,
+        `      Tester: ${slice.assignedTesterWorkerId ?? "unassigned"}`,
+      ]),
     ]),
     ...plan.unassigned.map(
       (slice) =>
@@ -2370,23 +2465,23 @@ function formatWatchEventLine(event: QuestRunEvent): string {
   const details = event.details;
   switch (event.type) {
     case "run_started":
-      return `[${event.at}] ${prettyLabels.quest} started`;
+      return `[${event.at}] ${formatPrettyStatus("info")} ${prettyLabels.quest} started`;
     case "run_completed":
-      return `[${event.at}] ${prettyLabels.quest} completed`;
+      return `[${event.at}] ${formatPrettyStatus("ok")} ${prettyLabels.quest} completed`;
     case "run_failed":
-      return `[${event.at}] ${prettyLabels.quest} failed`;
+      return `[${event.at}] ${formatPrettyStatus("fail")} ${prettyLabels.quest} failed`;
     case "run_integrated":
-      return `[${event.at}] ${prettyLabels.bossFight} cleared`;
+      return `[${event.at}] ${formatPrettyStatus("ok")} ${prettyLabels.bossFight} cleared`;
     case "run_landed":
-      return `[${event.at}] ${prettyLabels.turnIn} complete`;
+      return `[${event.at}] ${formatPrettyStatus("ok")} ${prettyLabels.turnIn} complete`;
     case "slice_started":
-      return `[${event.at}] ${prettyLabels.encounter} started: ${String(details.sliceId ?? "unknown")}`;
+      return `[${event.at}] ${formatPrettyStatus("info")} ${prettyLabels.encounter} started: ${String(details.sliceId ?? "unknown")}`;
     case "slice_testing_started":
-      return `[${event.at}] ${prettyLabels.trial} started: ${String(details.sliceId ?? "unknown")}`;
+      return `[${event.at}] ${formatPrettyStatus("info")} ${prettyLabels.trial} started: ${String(details.sliceId ?? "unknown")}`;
     case "slice_completed":
-      return `[${event.at}] ${prettyLabels.encounter} cleared: ${String(details.sliceId ?? "unknown")}`;
+      return `[${event.at}] ${formatPrettyStatus("ok")} ${prettyLabels.encounter} cleared: ${String(details.sliceId ?? "unknown")}`;
     case "slice_testing_completed":
-      return `[${event.at}] ${prettyLabels.trial} cleared: ${String(details.sliceId ?? "unknown")}`;
+      return `[${event.at}] ${formatPrettyStatus("ok")} ${prettyLabels.trial} cleared: ${String(details.sliceId ?? "unknown")}`;
     default:
       return `[${event.at}] ${event.type}`;
   }
@@ -2572,8 +2667,28 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
         "\n",
       );
     }
+    case "observability:sinks:test":
+    case "observability:deliveries:retry": {
+      const attempts =
+        (candidate.attempts as
+          | Array<{
+              eventType: string;
+              ok: boolean;
+              sinkId: string;
+              status: string;
+            }>
+          | undefined) ?? [];
+      return [
+        `Delivery attempts (${attempts.length})`,
+        ...attempts.map(
+          (attempt) =>
+            `  - [${attempt.ok ? "ok" : "fail"}] ${attempt.sinkId} | ${attempt.eventType} | ${attempt.status}`,
+        ),
+      ].join("\n");
+    }
     case "observability:webhook:upsert":
     case "observability:telegram:upsert":
+    case "observability:openclaw:upsert":
     case "observability:slack:upsert":
     case "observability:linear:upsert": {
       const sink = candidate.sink as
@@ -2611,24 +2726,6 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
         ),
       ].join("\n");
     }
-    case "observability:deliveries:retry": {
-      const attempts =
-        (candidate.attempts as
-          | Array<{
-              eventType: string;
-              ok: boolean;
-              sinkId: string;
-              status: string;
-            }>
-          | undefined) ?? [];
-      return [
-        `Delivery attempts (${attempts.length})`,
-        ...attempts.map(
-          (attempt) =>
-            `  - [${attempt.ok ? "ok" : "fail"}] ${attempt.sinkId} | ${attempt.eventType} | ${attempt.status}`,
-        ),
-      ].join("\n");
-    }
     case "plan": {
       return formatPlanPretty(candidate, value);
     }
@@ -2640,6 +2737,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "runs:execute":
     case "runs:integrate":
     case "runs:land":
+    case "runs:refresh-base":
     case "runs:cleanup":
     case "runs:abort":
     case "runs:cancel":
@@ -2721,7 +2819,7 @@ function writeError(error: unknown, mode: OutputMode): void {
     } else {
       void Bun.write(
         Bun.stderr,
-        `Validation failed\n${JSON.stringify(payload.details, null, 2)}\n`,
+        `${formatPrettyStatus("fail")} Validation failed\n${JSON.stringify(payload.details, null, 2)}\n`,
       );
     }
     return;
@@ -2736,16 +2834,13 @@ function writeError(error: unknown, mode: OutputMode): void {
     if (mode === "json") {
       void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
     } else {
+      const details =
+        payload.details === undefined
+          ? []
+          : ["", colorize("Details", "dim"), JSON.stringify(payload.details, null, 2)];
       void Bun.write(
         Bun.stderr,
-        [
-          `Error: ${payload.error}`,
-          `message: ${payload.message}`,
-          payload.details ? `details: ${JSON.stringify(payload.details, null, 2)}` : null,
-        ]
-          .filter((line) => line !== null)
-          .join("\n")
-          .concat("\n"),
+        `${[`${formatPrettyStatus("fail")} ${payload.error}`, payload.message, ...details].join("\n")}\n`,
       );
     }
     return;
@@ -2758,7 +2853,10 @@ function writeError(error: unknown, mode: OutputMode): void {
   if (mode === "json") {
     void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
   } else {
-    void Bun.write(Bun.stderr, `Error: ${payload.error}\nmessage: ${payload.message}\n`);
+    void Bun.write(
+      Bun.stderr,
+      `${formatPrettyStatus("fail")} ${payload.error}\n${payload.message}\n`,
+    );
   }
 }
 
@@ -2774,9 +2872,11 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "doctor",
     matches: (args) => args.length >= 1 && args[0] === "doctor",
-    run: async ({ args, secretStore }) =>
+    run: async ({ args, dispatcher, observabilityStore, secretStore }) =>
       await runDoctor(
         args,
+        dispatcher,
+        observabilityStore,
         secretStore,
         resolveQuestStateRoot(findOptionValue(args, "--state-root")),
         resolveQuestCalibrationsRoot(
@@ -2823,7 +2923,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         ),
       ),
     usage:
-      "quest doctor [--codex-executable <path>] [--openclaw-executable <path>] [--check-openclaw] [--gateway-url <url>] [--agent-id <id>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
+      "quest doctor [--codex-executable <path>] [--openclaw-executable <path>] [--check-openclaw] [--gateway-url <url>] [--agent-id <id>] [--test-sinks] [--sink-id <id>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
   },
   {
     id: "observability:events:list",
@@ -2844,6 +2944,19 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       sinks: await observabilityStore.listSinks(),
     }),
     usage: "quest observability sinks list [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:sinks:test",
+    matches: (args) =>
+      args.length >= 3 && args[0] === "observability" && args[1] === "sinks" && args[2] === "test",
+    run: async ({ args, dispatcher }) => ({
+      attempts: await dispatcher.dispatchProbe(
+        createSinkProbeEvent(findOptionValue(args, "--label") ?? "manual"),
+        { sinkId: findOptionValue(args, "--id") ?? undefined },
+      ),
+    }),
+    usage:
+      "quest observability sinks test [--id <sink-id>] [--label <manual>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
   },
   {
     id: "observability:deliveries:list",
@@ -2980,6 +3093,30 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     },
     usage:
       "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--disabled] [--observability-config <path>] [--state-root <path>]",
+  },
+  {
+    id: "observability:openclaw:upsert",
+    matches: (args) =>
+      args.length >= 3 &&
+      args[0] === "observability" &&
+      args[1] === "openclaw" &&
+      args[2] === "upsert",
+    run: async ({ args, observabilityStore }) => {
+      const sink = openClawSinkSchema.parse({
+        agentId: requireOptionValue(args, "--agent-id", "--agent-id <id>"),
+        enabled: !hasFlag(args, "--disabled"),
+        eventTypes: parseObservableEventTypes(findOptionValue(args, "--events")),
+        executable: findOptionValue(args, "--openclaw-executable") ?? undefined,
+        gatewayUrl: findOptionValue(args, "--gateway-url") ?? undefined,
+        id: findOptionValue(args, "--id") ?? "default-openclaw",
+        promptPrefix: findOptionValue(args, "--prompt-prefix") ?? undefined,
+        sessionId: findOptionValue(args, "--session-id") ?? undefined,
+        type: "openclaw",
+      });
+      return { sink: await observabilityStore.upsertOpenClawSink(sink) };
+    },
+    usage:
+      "quest observability openclaw upsert --agent-id <id> [--id <sink-id>] [--session-id <id>] [--gateway-url <url>] [--openclaw-executable <path>] [--events <event,event>] [--prompt-prefix <text>] [--disabled] [--observability-config <path>] [--state-root <path>]",
   },
   {
     id: "observability:sink:delete",
@@ -3332,6 +3469,18 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs land --id <run-id> [--source-repo <path>] [--target-ref <ref>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:refresh-base",
+    matches: (args) => args.length >= 3 && args[0] === "runs" && args[1] === "refresh-base",
+    run: async ({ args, runRefresher }) => ({
+      run: await runRefresher.refreshBase(requireOptionValue(args, "--id", "--id <run-id>"), {
+        sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
+        targetRef: findOptionValue(args, "--target-ref") ?? undefined,
+      }),
+    }),
+    usage:
+      "quest runs refresh-base --id <run-id> [--source-repo <path>] [--target-ref <ref>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:rescue",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rescue",
     run: async ({ args, runStore }) => ({
@@ -3585,6 +3734,7 @@ async function main(): Promise<number> {
   const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
   const runLander = new QuestRunLander(runStore);
+  const runRefresher = new QuestRunRefresher(runStore, runIntegrator);
   const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator, runLander);
   const calibrator = new WorkerCalibrator(registry, runStore, runExecutor, calibrationsRoot);
   const dispatcher = new EventDispatcher(observabilityStore, secretStore);
@@ -3602,6 +3752,7 @@ async function main(): Promise<number> {
       runIntegrator,
       runLander,
       runPipeline,
+      runRefresher,
       runStore,
       secretStore,
     });

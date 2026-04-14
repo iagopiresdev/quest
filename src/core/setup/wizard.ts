@@ -8,7 +8,7 @@ import {
 import { writeSetupBanner, writeSetupSection, writeSetupSummary } from "./ui";
 
 export type SetupWizardBackend = "codex" | "hermes" | "openclaw";
-export type SetupWizardSinkKind = "linear" | "none" | "slack" | "telegram" | "webhook";
+export type SetupWizardSinkKind = "linear" | "none" | "openclaw" | "slack" | "telegram" | "webhook";
 
 export type SetupWizardWorkerPlan = {
   args: string[];
@@ -221,7 +221,7 @@ async function promptSinkPlan(
   const sinkKind = await chooseOne(
     cli,
     "Observability sink",
-    ["none", "webhook", "telegram", "slack", "linear"] as const,
+    ["none", "webhook", "telegram", "slack", "linear", "openclaw"] as const,
     "none",
   );
   if (sinkKind === "none") {
@@ -279,6 +279,21 @@ async function promptSinkPlan(
 
     const webhookUrl = await promptWithDefault(cli, "Slack webhook URL", "");
     return { args: ["--url", webhookUrl], kind: "slack" };
+  }
+
+  if (sinkKind === "openclaw") {
+    const agentId = await promptWithDefault(cli, "OpenClaw sink agent id", "main");
+    const sessionId = await promptWithDefault(
+      cli,
+      "OpenClaw sink session id",
+      "quest-observability",
+    );
+    const gatewayUrl = await promptWithDefault(cli, "OpenClaw sink gateway URL", "");
+    const args = ["--agent-id", agentId, "--session-id", sessionId];
+    if (gatewayUrl.length > 0) {
+      args.push("--gateway-url", gatewayUrl);
+    }
+    return { args, kind: "openclaw" };
   }
 
   const issueId = await promptWithDefault(cli, "Linear issue id", "");

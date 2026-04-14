@@ -30,6 +30,7 @@ export const questFeatureDocSchema = z
 export const questExecutionSchema = z
   .object({
     idleTimeoutMinutes: z.number().int().min(1).max(240).optional(),
+    preInstall: z.boolean().default(false),
     prepareCommands: z.array(questCommandSchema).max(8).optional(),
     shareSourceDependencies: z.boolean().default(true),
     timeoutMinutes: z.number().int().min(1).max(240).default(20),
@@ -61,6 +62,7 @@ export const questSpecSchema = z
   .object({
     acceptanceChecks: z.array(questCommandSchema).max(24).default([]),
     execution: questExecutionSchema.default({
+      preInstall: false,
       shareSourceDependencies: true,
       timeoutMinutes: 20,
     }),
