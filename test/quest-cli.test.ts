@@ -1369,6 +1369,34 @@ test("quest cli creates persisted runs and reads them back", () => {
   });
 });
 
+test("quest cli lists runs while warning about legacy run files", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "List with warnings" })),
+  });
+  expect(created.code).toBe(0);
+
+  const runsRoot = join(context.stateRoot, "runs");
+  writeFileSync(
+    join(runsRoot, "quest-00000000-deadbeef.json"),
+    JSON.stringify({ id: "quest-00000000-deadbeef", version: 0 }),
+    "utf8",
+  );
+
+  const listed = runCli(context, ["runs", "list"]);
+  expect(listed.code).toBe(0);
+  const payload = JSON.parse(listed.stdout);
+  expect(payload.runs).toHaveLength(1);
+  expect(payload.warnings).toEqual([
+    expect.objectContaining({
+      reason: "legacy_run_document",
+      runId: "quest-00000000-deadbeef",
+    }),
+  ]);
+});
+
 test("quest cli executes a planned run in dry-run mode", () => {
   const context = trackContext();
   expectWorkerUpserted(context);
@@ -1596,6 +1624,46 @@ test("quest cli reports aggregate usage while skipping invalid legacy runs", () 
   expect(payload.runs).toHaveLength(1);
   expect(payload.runs[0].runId).toBe(runId);
   expect(payload.runs[0].totals.totalTokens).toBe(12345);
+  expect(payload.warnings).toEqual([
+    expect.objectContaining({
+      reason: "invalid_json",
+      runId: "quest-00000000-deadbeef",
+    }),
+  ]);
+});
+
+test("quest cli prunes old workspaces", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Prune workspaces" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+  expect(executed.code).toBe(0);
+
+  const pruned = runCli(context, ["workspaces", "prune", "--older-than", "0ms"]);
+  expect(pruned.code).toBe(0);
+  const payload = JSON.parse(pruned.stdout);
+  expect(payload.result.pruned).toEqual([
+    expect.objectContaining({
+      runId,
+      status: "completed",
+    }),
+  ]);
+});
+
+test("quest cli rejects yaml specs with a clear error", () => {
+  const context = trackContext();
+  const specPath = join(context.stateRoot, "spec.yaml");
+  writeFileSync(specPath, "version: 1\ntitle: bad yaml\n", "utf8");
+
+  const planned = runCli(context, ["plan", "--file", specPath]);
+  expect(planned.code).toBe(1);
+  expect(planned.stderr).toContain("Only JSON specs are supported today");
 });
 
 test("quest cli rejects dry-run auto-integration", () => {

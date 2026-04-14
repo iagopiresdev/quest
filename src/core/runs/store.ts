@@ -60,6 +60,17 @@ export type QuestRunWatchdogResult = {
   run: QuestRunDocument;
 };
 
+export type QuestRunListWarning = {
+  path: string;
+  reason: string;
+  runId: string;
+};
+
+export type QuestRunListResult = {
+  runs: QuestRunSummary[];
+  warnings: QuestRunListWarning[];
+};
+
 function createQuestRunId(): string {
   const timePart = Date.now().toString(36).slice(-8).padStart(8, "0");
   const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(4)))
@@ -82,14 +93,27 @@ function summarizeRun(run: QuestRunDocument): QuestRunSummary {
   };
 }
 
+function isLegacySkippableRunDocument(rawDocument: unknown): boolean {
+  if (typeof rawDocument !== "object" || rawDocument === null) {
+    return true;
+  }
+
+  const candidate = rawDocument as Record<string, unknown>;
+  if (candidate.version !== 1) {
+    return true;
+  }
+
+  return !("plan" in candidate) || !("slices" in candidate) || !("spec" in candidate);
+}
+
 async function readRunSummaryForListing(
   path: string,
   runId: string,
   workspacesRoot: string,
-): Promise<QuestRunSummary | null> {
+): Promise<{ summary: QuestRunSummary | null; warning: QuestRunListWarning | null }> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    return null;
+    return { summary: null, warning: null };
   }
 
   let rawDocument: unknown;
@@ -97,7 +121,14 @@ async function readRunSummaryForListing(
     rawDocument = JSON.parse(await file.text()) as unknown;
   } catch (error: unknown) {
     if (error instanceof SyntaxError) {
-      return null;
+      return {
+        summary: null,
+        warning: {
+          path,
+          reason: "invalid_json",
+          runId,
+        },
+      };
     }
 
     throw new QuestDomainError({
@@ -106,6 +137,17 @@ async function readRunSummaryForListing(
       message: `Failed to read quest state from ${path}`,
       statusCode: 1,
     });
+  }
+
+  if (isLegacySkippableRunDocument(rawDocument)) {
+    return {
+      summary: null,
+      warning: {
+        path,
+        reason: "legacy_run_document",
+        runId,
+      },
+    };
   }
 
   const parsed = questRunDocumentSchema.safeParse(rawDocument);
@@ -118,12 +160,15 @@ async function readRunSummaryForListing(
     });
   }
 
-  return summarizeRun(
-    await validateWorkspacePaths(
-      hydrateWorkspacePaths(parsed.data, workspacesRoot),
-      workspacesRoot,
+  return {
+    summary: summarizeRun(
+      await validateWorkspacePaths(
+        hydrateWorkspacePaths(parsed.data, workspacesRoot),
+        workspacesRoot,
+      ),
     ),
-  );
+    warning: null,
+  };
 }
 
 function resolveRunWorkspaceRootForStore(runId: string, workspacesRoot: string): string {
@@ -510,6 +555,11 @@ export class QuestRunStore {
   }
 
   async listRuns(): Promise<QuestRunSummary[]> {
+    const result = await this.listRunsWithWarnings();
+    return result.runs;
+  }
+
+  async listRunsWithWarnings(): Promise<QuestRunListResult> {
     let entries: string[];
 
     try {
@@ -521,7 +571,7 @@ export class QuestRunStore {
         "code" in error &&
         error.code === "ENOENT"
       ) {
-        return [];
+        return { runs: [], warnings: [] };
       }
 
       throw new QuestDomainError({
@@ -550,10 +600,14 @@ export class QuestRunStore {
     );
 
     const summaries: QuestRunSummary[] = [];
+    const warnings: QuestRunListWarning[] = [];
     for (const result of runs) {
       if (result.status === "fulfilled") {
-        if (result.value) {
-          summaries.push(result.value);
+        if (result.value.summary) {
+          summaries.push(result.value.summary);
+        }
+        if (result.value.warning) {
+          warnings.push(result.value.warning);
         }
         continue;
       }
@@ -561,7 +615,10 @@ export class QuestRunStore {
       throw result.reason;
     }
 
-    return summaries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      runs: summaries.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+      warnings,
+    };
   }
 
   async saveRun(run: QuestRunDocument): Promise<QuestRunDocument> {

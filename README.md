@@ -401,7 +401,7 @@ Operational notes:
 - `runs cleanup` now reaps those temporary OpenClaw agents after the quest workspace is no longer needed
 - real OpenClaw code-edit canaries should always include acceptance checks, because the backend can still report success before a file change is proven on disk
 
-If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error instead of silently forking from stale or partial state.
+If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error that includes the changed-path count and the underlying `git status --short` output instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
 If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into the boss fight automatically after all slice trials pass.
@@ -621,6 +621,7 @@ cat spec.json | quest run --stdin --worker-id quest-codex
 cat spec.json | quest run --stdin --source-repo /abs/path/to/repo
 
 # list persisted quest runs
+# list-style aggregate commands skip legacy/broken run documents and return warnings instead of aborting
 quest runs list
 
 # inspect one persisted quest run
@@ -652,6 +653,7 @@ quest runs logs --id quest-abc12345-deadbeef
 
 # inspect best-effort token usage from persisted runner output
 quest runs usage --id quest-abc12345-deadbeef
+quest runs usage --all
 
 # preview or write the post-turn-in chronicle
 quest runs chronicle --id quest-abc12345-deadbeef
@@ -698,6 +700,11 @@ quest doctor --check-openclaw --agent-id codex
 # boss-fight failures can also be cleaned directly because the turn-in path is already broken
 quest runs cleanup --id quest-abc12345-deadbeef
 
+# prune old quest workspaces in bulk
+# default statuses: landed, completed, aborted, orphaned
+quest workspaces prune
+quest workspaces prune --older-than 168h --status landed,completed
+
 # abort a pending or running run
 quest runs abort --id quest-abc12345-deadbeef
 
@@ -723,6 +730,9 @@ QUEST_RUNNER_USE_DIST=1 ./bin/quest runs list
 # repo-local wrapper defaults to source execution for reliability;
 # set QUEST_RUNNER_USE_DIST=1 if you want to validate the compiled artifact explicitly
 ./bin/quest runs list
+
+# YAML specs are not supported yet; convert first
+yq -o=json spec.yaml | quest run --stdin
 ```
 
 ## State

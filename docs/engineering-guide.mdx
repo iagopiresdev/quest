@@ -116,6 +116,7 @@ The following invariants should stay true:
 - JSON is the stable CLI contract for automation. Human-readable output may exist as a presentation layer, but it must be derived from the same result object instead of inventing a second command surface.
 - New state should be appended, not inferred from logs after the fact.
 - Failed boss fights must not strand cleanup. If turn-in already failed, cleanup should be allowed to reap workspaces and temporary runner identities.
+- Aggregate operator commands should degrade gracefully over legacy junk. `runs list`, `runs usage --all`, and workspace-prune scans must skip malformed pre-v1 run files with explicit warnings instead of aborting the whole command, while still surfacing real tampering on current run documents.
 
 If a future change makes these rules harder to see, the design is getting worse.
 
@@ -140,6 +141,8 @@ Rules:
 - Do not ship adapter, steering, or integration changes after only testing the happy path.
 - When a backend needs a workspace-bound temporary identity, do not delete that identity until the quest workspace is safely past the phases that still depend on it.
 - When a backend uses workspace-bound temporary identities, add a live cleanup canary as well as a mocked regression test. Safe creation without safe reaping is not a complete lifecycle.
+- If the CLI only accepts JSON specs, reject `.yaml` and `.yml` paths with an explicit conversion hint instead of exposing a raw parser exception. Format mismatch errors should tell the operator what to do next.
+- Dirty source-repo failures must be actionable. Include file counts and `git status --short` context so the operator can fix the tree without a second manual diagnostic step.
 
 Minimum edge cases to consider for execution-facing work:
 

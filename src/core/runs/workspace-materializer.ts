@@ -104,13 +104,20 @@ export async function ensureGitRepositoryIsClean(repositoryRoot: string): Promis
   }
 
   if (result.stdout.trim().length > 0) {
+    const changedPaths = result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
     throw new QuestDomainError({
       code: "quest_source_repo_dirty",
       details: {
+        changedPathCount: changedPaths.length,
         path: repositoryRoot,
         status: result.stdout,
       },
-      message: `Source repository has uncommitted changes: ${repositoryRoot}`,
+      message:
+        `Source repository has uncommitted changes (${changedPaths.length} path(s)): ` +
+        `${repositoryRoot}`,
       statusCode: 1,
     });
   }

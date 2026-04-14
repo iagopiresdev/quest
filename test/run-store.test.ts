@@ -110,6 +110,34 @@ test("run store skips invalid legacy runs when listing summaries", async () => {
   }
 });
 
+test("run store reports warnings for legacy runs while listing summaries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    writeFileSync(
+      join(root, "quest-00000000-deadbeef.json"),
+      JSON.stringify({ id: "quest-00000000-deadbeef", version: 0 }),
+      "utf8",
+    );
+
+    const listed = await store.listRunsWithWarnings();
+    expect(listed.runs).toHaveLength(1);
+    expect(listed.runs[0]?.id).toBe(run.id);
+    expect(listed.warnings).toEqual([
+      expect.objectContaining({
+        reason: "legacy_run_document",
+        runId: "quest-00000000-deadbeef",
+      }),
+    ]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store still surfaces tampered workspace paths when listing summaries", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);

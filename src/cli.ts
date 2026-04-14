@@ -88,6 +88,7 @@ type QuestCliCommand =
   | "observability:webhook:upsert"
   | "plan"
   | "run"
+  | "workspaces:prune"
   | "runs:abort"
   | "runs:babysit"
   | "runs:cancel"
@@ -532,6 +533,59 @@ function parseRescueStatus(value: string): "abandoned" | "pending" | "rescued" |
   throw new Error(`Invalid rescue status: ${value}`);
 }
 
+function parseDurationToMilliseconds(value: string): number {
+  const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/i);
+  if (!match) {
+    throw new Error(`Invalid duration: ${value}`);
+  }
+
+  const amount = Number.parseInt(match[1] ?? "0", 10);
+  const unit = (match[2] ?? "").toLowerCase();
+  const multipliers: Record<string, number> = {
+    d: 24 * 60 * 60 * 1000,
+    h: 60 * 60 * 1000,
+    m: 60 * 1000,
+    ms: 1,
+    s: 1000,
+  };
+  return amount * (multipliers[unit] ?? 0);
+}
+
+function parsePruneStatuses(
+  value: string | undefined,
+):
+  | Array<"aborted" | "completed" | "failed" | "integrated" | "landed" | "orphaned" | "rescued">
+  | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const allowed = new Set([
+    "aborted",
+    "completed",
+    "failed",
+    "integrated",
+    "landed",
+    "orphaned",
+    "rescued",
+  ]);
+
+  return parseCommaSeparatedValues(value).map((entry) => {
+    if (!allowed.has(entry)) {
+      throw new Error(`Invalid workspace prune status: ${entry}`);
+    }
+
+    return entry as
+      | "aborted"
+      | "completed"
+      | "failed"
+      | "integrated"
+      | "landed"
+      | "orphaned"
+      | "rescued";
+  });
+}
+
 function determineOutputMode(args: string[]): OutputMode {
   if (hasFlag(args, "--json")) {
     return "json";
@@ -584,6 +638,11 @@ async function readJsonInput(args: string[]): Promise<unknown> {
   const useStdin = hasFlag(args, "--stdin");
 
   if (filePath) {
+    if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) {
+      throw new Error(
+        `Only JSON specs are supported today; convert ${filePath} with 'yq -o=json' first`,
+      );
+    }
     return JSON.parse(await Bun.file(filePath).text()) as unknown;
   }
 
@@ -2198,6 +2257,61 @@ function formatLogsPretty(candidate: Record<string, unknown>): string {
   return [`Chronicle${logView ? ` for ${logView.runId}` : ""}`, ...logLines].join("\n");
 }
 
+function formatWorkspacePrunePretty(candidate: Record<string, unknown>, value: unknown): string {
+  const result = candidate.result as
+    | {
+        pruned: Array<{ runId: string; status: string }>;
+        skipped: Array<{ reason: string; runId: string; status: string }>;
+        warnings: Array<{ reason: string; runId: string }>;
+      }
+    | undefined;
+  if (!result) {
+    return JSON.stringify(value, null, 2);
+  }
+
+  return [
+    `Workspace prune`,
+    `  pruned: ${result.pruned.length}`,
+    `  skipped: ${result.skipped.length}`,
+    `  warnings: ${result.warnings.length}`,
+    ...result.pruned.map((entry) => `  - pruned ${entry.runId} (${entry.status})`),
+    ...result.skipped.map(
+      (entry) => `  - skipped ${entry.runId} (${entry.status}) reason=${entry.reason}`,
+    ),
+    ...result.warnings.map((warning) => `  - warning ${warning.runId}: ${warning.reason}`),
+  ].join("\n");
+}
+
+function formatRunsUsageListPretty(candidate: Record<string, unknown>): string {
+  const runs = (candidate.runs as RunUsageSummary[] | undefined) ?? [];
+  const warnings =
+    (candidate.warnings as Array<{ reason: string; runId: string }> | undefined) ?? [];
+  const runText =
+    runs.length === 0 ? "Usage\n  no runs" : runs.map((run) => formatUsagePretty(run)).join("\n\n");
+  if (warnings.length === 0) {
+    return runText;
+  }
+
+  return [
+    runText,
+    "",
+    "Warnings",
+    ...warnings.map((warning) => `  - ${warning.runId}: ${warning.reason}`),
+  ].join("\n");
+}
+
+function formatRunsListPretty(candidate: Record<string, unknown>): string {
+  const runs =
+    (candidate.runs as Array<{ id: string; questTitle: string; status: string }> | undefined) ?? [];
+  const warnings =
+    (candidate.warnings as Array<{ reason: string; runId: string }> | undefined) ?? [];
+  return [
+    `${prettyLabels.questLog} (${runs.length})`,
+    ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.questTitle}`),
+    ...warnings.map((warning) => `  - warning ${warning.runId}: ${warning.reason}`),
+  ].join("\n");
+}
+
 function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string {
   const candidate =
     typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
@@ -2403,6 +2517,9 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "plan": {
       return formatPlanPretty(candidate, value);
     }
+    case "workspaces:prune": {
+      return formatWorkspacePrunePretty(candidate, value);
+    }
     case "run":
     case "runs:status":
     case "runs:execute":
@@ -2432,17 +2549,10 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
         return formatUsagePretty(summary);
       }
 
-      const runs = (candidate.runs as RunUsageSummary[] | undefined) ?? [];
-      return runs.length === 0
-        ? "Usage\n  no runs"
-        : runs.map((run) => formatUsagePretty(run)).join("\n\n");
+      return formatRunsUsageListPretty(candidate);
     }
     case "runs:list": {
-      const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
-      return [
-        `${prettyLabels.questLog} (${runs.length})`,
-        ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.spec.title}`),
-      ].join("\n");
+      return formatRunsListPretty(candidate);
     }
     case "runs:logs": {
       return formatLogsPretty(candidate);
@@ -2993,9 +3103,28 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest run --file <path> [--worker-id <worker-id>] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "workspaces:prune",
+    matches: (args) => args.length >= 2 && args[0] === "workspaces" && args[1] === "prune",
+    run: async ({ args, runCleanup }) => ({
+      result: await runCleanup.pruneWorkspaces({
+        olderThanMs: findOptionValue(args, "--older-than")
+          ? parseDurationToMilliseconds(
+              requireOptionValue(args, "--older-than", "--older-than <72h>"),
+            )
+          : undefined,
+        statuses: parsePruneStatuses(findOptionValue(args, "--status")),
+      }),
+    }),
+    usage:
+      "quest workspaces prune [--older-than <72h>] [--status <landed,completed,aborted,orphaned>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:list",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "list",
-    run: async ({ runStore }) => ({ runs: await runStore.listRuns() }),
+    run: async ({ runStore }) => {
+      const listed = await runStore.listRunsWithWarnings();
+      return { runs: listed.runs, warnings: listed.warnings };
+    },
     usage: "quest runs list [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
@@ -3247,11 +3376,11 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         return { usage: summarizeRunUsage(await runStore.getRun(runId)) };
       }
 
-      const runs = await runStore.listRuns();
+      const listed = await runStore.listRunsWithWarnings();
       const usage = await Promise.all(
-        runs.map(async (run) => summarizeRunUsage(await runStore.getRun(run.id))),
+        listed.runs.map(async (run) => summarizeRunUsage(await runStore.getRun(run.id))),
       );
-      return { runs: usage };
+      return { runs: usage, warnings: listed.warnings };
     },
     usage:
       "quest runs usage [--id <run-id> | --all] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",

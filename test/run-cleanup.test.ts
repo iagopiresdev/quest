@@ -310,3 +310,55 @@ test("run cleanup removes temporary OpenClaw quest agents after workspace cleanu
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test("run cleanup can prune old completed workspaces while keeping failed runs by default", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-cleanup-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const cleanup = new QuestRunCleanup(runStore);
+
+  try {
+    await workerRegistry.upsertWorker(createWorker());
+
+    const completedRun = await runStore.createRun(
+      createSpec({ title: "Prunable run" }),
+      await workerRegistry.listWorkers(),
+    );
+    const executedCompleted = await executor.executeRun(completedRun.id, { dryRun: true });
+    executedCompleted.updatedAt = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    await runStore.saveRun(executedCompleted);
+
+    const failedRun = await runStore.createRun(
+      createSpec({ title: "Keep failed run" }),
+      await workerRegistry.listWorkers(),
+    );
+    failedRun.status = "failed";
+    failedRun.updatedAt = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    await runStore.saveRun(failedRun);
+
+    const result = await cleanup.pruneWorkspaces();
+
+    expect(result.pruned).toEqual([
+      expect.objectContaining({
+        runId: completedRun.id,
+        status: "completed",
+      }),
+    ]);
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: "status_filtered",
+          runId: failedRun.id,
+          status: "failed",
+        }),
+      ]),
+    );
+    expect(existsSync(join(workspacesRoot, completedRun.id))).toBe(false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
