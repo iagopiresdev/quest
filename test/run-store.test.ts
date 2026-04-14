@@ -138,6 +138,35 @@ test("run store reports warnings for legacy runs while listing summaries", async
   }
 });
 
+test("run store still surfaces drifted v1-shaped runs as invalid", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    await store.createRun(createSpec({ maxParallel: 2 }), [createWorkerForRunner("ember")]);
+    writeFileSync(
+      join(root, "quest-00000000-drifted1.json"),
+      JSON.stringify({
+        id: "quest-00000000-drifted1",
+        version: 1,
+        plan: { warnings: [], waves: [] },
+        slices: [],
+        spec: { version: 1 },
+      }),
+      "utf8",
+    );
+
+    try {
+      await store.listRunsWithWarnings();
+      throw new Error("Expected invalid_quest_run");
+    } catch (error: unknown) {
+      expect((error as QuestDomainError).code).toBe("invalid_quest_run");
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store still surfaces tampered workspace paths when listing summaries", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);
