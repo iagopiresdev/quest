@@ -38,6 +38,7 @@ Future roadmap notes for the training-ground system live in [docs/specs/training
 Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
 Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
 Turn-in and recovery notes live in [docs/specs/run-turn-in-and-recovery-v1.mdx](./docs/specs/run-turn-in-and-recovery-v1.mdx).
+Party bonfire notes live in [docs/specs/party-bonfire-v1.mdx](./docs/specs/party-bonfire-v1.mdx).
 Tester-lane planning notes live in [docs/specs/tester-lane-v1.mdx](./docs/specs/tester-lane-v1.mdx).
 Fresh-install canary notes live in [docs/specs/fresh-install-canary-v1.mdx](./docs/specs/fresh-install-canary-v1.mdx).
 Contribution guidance lives in [CONTRIBUTING.md](./CONTRIBUTING.md).
@@ -646,6 +647,15 @@ quest runs list --skip-invalid
 # inspect one persisted quest run
 quest runs status --id quest-abc12345-deadbeef
 
+# inspect the global party rest state
+quest party status
+
+# rest the party at a bonfire before the next dispatch
+quest party bonfire --reason "backend maintenance"
+
+# let the party press on again
+quest party resume
+
 # watch one run live until it settles
 quest runs watch --id quest-abc12345-deadbeef
 
@@ -657,6 +667,9 @@ quest runs execute --id quest-abc12345-deadbeef --dry-run
 
 # execute a persisted run and backfill a source repo for worktree materialization
 quest runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
+
+# if the party rests at a bonfire, new dispatch is blocked until resume
+# quest runs execute --id quest-abc12345-deadbeef
 
 # execute and auto-integrate in one step
 quest runs execute --id quest-abc12345-deadbeef --auto-integrate --target-ref main

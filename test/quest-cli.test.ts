@@ -1829,6 +1829,56 @@ test("quest cli rejects execute landing without auto-integrate", () => {
   expect(JSON.parse(executed.stderr).error).toBe("quest_run_invalid_execute_options");
 });
 
+test("quest cli can light and resume a party bonfire", () => {
+  const context = trackContext();
+
+  const lit = runCli(context, ["party", "bonfire", "--reason", "maintenance window"]);
+  expect(lit.code).toBe(0);
+  const litPayload = JSON.parse(lit.stdout);
+  expect(litPayload.partyState.status).toBe("resting");
+  expect(litPayload.partyState.reason).toBe("maintenance window");
+  expect(litPayload.partyState.events.at(-1).type).toBe("party_bonfire_lit");
+
+  const status = runCli(context, ["party", "status"]);
+  expect(status.code).toBe(0);
+  expect(JSON.parse(status.stdout).partyState.status).toBe("resting");
+
+  const resumed = runCli(context, ["party", "resume"]);
+  expect(resumed.code).toBe(0);
+  const resumedPayload = JSON.parse(resumed.stdout);
+  expect(resumedPayload.partyState.status).toBe("active");
+  expect(resumedPayload.partyState.reason).toBeNull();
+  expect(resumedPayload.partyState.events.at(-1).type).toBe("party_resumed");
+});
+
+test("quest cli blocks new dispatch while the party rests at a bonfire", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Bonfire blocked quest run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  expect(runCli(context, ["party", "bonfire", "--reason", "operator pause"]).code).toBe(0);
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId]);
+  expect(executed.code).toBe(1);
+  expect(JSON.parse(executed.stderr)).toEqual(
+    expect.objectContaining({
+      error: "quest_party_resting",
+      message: "The party rests at a bonfire: operator pause",
+    }),
+  );
+
+  const status = runCli(context, ["runs", "status", "--id", runId]);
+  expect(status.code).toBe(0);
+  const statusPayload = JSON.parse(status.stdout);
+  expect(statusPayload.partyState.status).toBe("resting");
+  expect(statusPayload.run.status).toBe("planned");
+});
+
 test("quest cli returns logs and aborts a planned run", () => {
   const context = trackContext();
   expectWorkerUpserted(context);

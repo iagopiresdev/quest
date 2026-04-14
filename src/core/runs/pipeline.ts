@@ -1,4 +1,5 @@
 import { QuestDomainError } from "../errors";
+import type { QuestPartyStateStore } from "../party-state";
 import type { QuestRunExecutor } from "./executor";
 import type { QuestRunIntegrator } from "./integrator";
 import type { QuestRunLander } from "./lander";
@@ -17,6 +18,7 @@ export class QuestRunPipeline {
     private readonly runExecutor: QuestRunExecutor,
     private readonly runIntegrator: QuestRunIntegrator,
     private readonly runLander: QuestRunLander,
+    private readonly partyStateStore: QuestPartyStateStore,
   ) {}
 
   async executeRun(
@@ -40,6 +42,8 @@ export class QuestRunPipeline {
         statusCode: 1,
       });
     }
+
+    await this.partyStateStore.requireDispatchAllowed();
 
     const executedRun = await this.runExecutor.executeRun(runId, {
       dryRun: options.dryRun,

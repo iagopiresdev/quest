@@ -21,6 +21,7 @@ import {
   webhookSinkSchema,
 } from "./core/observability/schema";
 import { ObservabilityStore } from "./core/observability/store";
+import { type QuestPartyState, QuestPartyStateStore } from "./core/party-state";
 import { planQuest, rankTesterWorkersForSlice, rankWorkersForSlice } from "./core/planning/planner";
 import { type QuestSpec, questSpecSchema } from "./core/planning/spec-schema";
 import { parseOpenClawJsonOutput } from "./core/runs/adapters/openclaw-shared";
@@ -55,6 +56,7 @@ import {
   resolveQuestCalibrationsRoot,
   resolveQuestObservabilityConfigPath,
   resolveQuestObservabilityDeliveriesPath,
+  resolveQuestPartyStatePath,
   resolveQuestRunsRoot,
   resolveQuestSettingsPath,
   resolveQuestStateRoot,
@@ -86,6 +88,9 @@ import {
 
 type QuestCliCommand =
   | "doctor"
+  | "party:bonfire"
+  | "party:resume"
+  | "party:status"
   | "observability:deliveries:list"
   | "observability:deliveries:retry"
   | "observability:events:list"
@@ -147,6 +152,7 @@ type QuestCliContext = {
   dispatcher: EventDispatcher;
   observabilityStore: ObservabilityStore;
   outputMode: OutputMode;
+  partyStateStore: QuestPartyStateStore;
   runCleanup: QuestRunCleanup;
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
@@ -207,6 +213,13 @@ type RunDetailSummary = {
   updatedAt: string;
   waves: number;
   slices: RunSliceSummary[];
+};
+
+type PartyStateView = {
+  events: QuestPartyState["events"];
+  reason: string | null;
+  status: QuestPartyState["status"];
+  updatedAt: string;
 };
 
 type WorkerStatusSummary = {
@@ -1603,6 +1616,15 @@ function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
   };
 }
 
+function summarizePartyState(state: QuestPartyState): PartyStateView {
+  return {
+    events: state.events,
+    reason: state.reason ?? null,
+    status: state.status,
+    updatedAt: state.updatedAt,
+  };
+}
+
 async function dispatchResultEvents(value: unknown, dispatcher: EventDispatcher): Promise<void> {
   if (!isRecord(value)) {
     return;
@@ -2152,6 +2174,7 @@ function formatWorkerLine(worker: RegisteredWorker): string {
 }
 
 const prettyLabels = {
+  bonfire: "Bonfire",
   bossFight: "Boss Fight",
   briefing: "Briefing",
   encounter: "Encounter",
@@ -2169,6 +2192,33 @@ const prettyLabels = {
   trials: "Trials",
   wave: "Wave",
 } as const;
+
+function formatPartyStatePretty(
+  partyState: PartyStateView,
+  options: { includeEvents?: boolean | undefined } = {},
+): string[] {
+  const headline =
+    partyState.status === "resting" ? "The party rests at a bonfire." : "The party presses on.";
+  const lines = [
+    `${prettyLabels.party}: ${partyState.status}`,
+    `  status line: ${headline}`,
+    `  updated at: ${partyState.updatedAt}`,
+  ];
+  if (partyState.reason) {
+    lines.push(`  reason: ${partyState.reason}`);
+  }
+  if (options.includeEvents) {
+    lines.push(
+      ...partyState.events
+        .slice(-5)
+        .map(
+          (event) =>
+            `  event: ${event.type} @ ${event.at}${event.reason ? ` | ${event.reason}` : ""}`,
+        ),
+    );
+  }
+  return lines;
+}
 
 function formatDoctorCheck(check: DoctorCheck): string {
   const detailEntries = Object.entries(check.details ?? {}).filter(([, value]) => value !== null);
@@ -2195,7 +2245,10 @@ function formatSinkLine(sink: {
   return `${sink.id} | ${sink.type} | ${sink.enabled ? "enabled" : "disabled"} | events=${events}`;
 }
 
-function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): string[] {
+function formatRunSummaryBlock(
+  summary: ReturnType<typeof summarizeRunDetail>,
+  partyState?: PartyStateView | undefined,
+): string[] {
   let turnInStatus = "pending";
   if (summary.integration.status === "landed") {
     turnInStatus = "landed";
@@ -2219,6 +2272,7 @@ function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): 
     bossFightStatus = "ok";
   }
   return [
+    ...(partyState ? [...formatPartyStatePretty(partyState), ""] : []),
     `${formatPrettyStatus(questStatus)} ${prettyLabels.quest} ${summary.id}`,
     `  ${prettyLabels.briefing}: ${summary.title}`,
     `  ${prettyLabels.questStatus}: ${summary.status}`,
@@ -2418,20 +2472,24 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
 
 function formatRunPretty(candidate: Record<string, unknown>, fallback: unknown): string {
   const run = candidate.run as QuestRunDocument | undefined;
+  const partyState = candidate.partyState as PartyStateView | undefined;
   return run
-    ? formatRunSummaryBlock(summarizeRunDetail(run)).join("\n")
+    ? formatRunSummaryBlock(summarizeRunDetail(run), partyState).join("\n")
     : JSON.stringify(fallback, null, 2);
 }
 
 function formatRunsSummaryPretty(candidate: Record<string, unknown>): string {
+  const partyState = candidate.partyState as PartyStateView | undefined;
   if (candidate.summary) {
-    return formatRunSummaryBlock(candidate.summary as ReturnType<typeof summarizeRunDetail>).join(
-      "\n",
-    );
+    return formatRunSummaryBlock(
+      candidate.summary as ReturnType<typeof summarizeRunDetail>,
+      partyState,
+    ).join("\n");
   }
 
   const runs = (candidate.runs as QuestRunDocument[] | undefined) ?? [];
   return [
+    ...(partyState ? [...formatPartyStatePretty(partyState), ""] : []),
     prettyLabels.questLog,
     ...runs.map(
       (run) => `  - ${formatRunSummaryBlock(summarizeRunDetail(run))[0]} | status=${run.status}`,
@@ -2532,11 +2590,13 @@ function formatRunsUsageListPretty(candidate: Record<string, unknown>): string {
 }
 
 function formatRunsListPretty(candidate: Record<string, unknown>): string {
+  const partyState = candidate.partyState as PartyStateView | undefined;
   const runs =
     (candidate.runs as Array<{ id: string; questTitle: string; status: string }> | undefined) ?? [];
   const warnings =
     (candidate.warnings as Array<{ reason: string; runId: string }> | undefined) ?? [];
   return [
+    ...(partyState ? [...formatPartyStatePretty(partyState), ""] : []),
     `${prettyLabels.questLog} (${runs.length})`,
     ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.questTitle}`),
     ...warnings.map((warning) => `  - warning ${warning.runId}: ${warning.reason}`),
@@ -2637,8 +2697,12 @@ function hasRunWatchSettled(run: QuestRunDocument): boolean {
   return run.executionStage === undefined && run.status !== "running";
 }
 
-function formatWatchHeartbeat(run: QuestRunDocument): string {
+function formatWatchHeartbeat(
+  run: QuestRunDocument,
+  partyState?: PartyStateView | undefined,
+): string {
   return [
+    ...(partyState ? [...formatPartyStatePretty(partyState), ""] : []),
     `${prettyLabels.heartbeat}:`,
     `  ${prettyLabels.questStatus}: ${run.status}`,
     `  Stage: ${run.executionStage ?? "idle"}`,
@@ -2673,6 +2737,7 @@ function formatWatchEventLine(event: QuestRunEvent): string {
 }
 
 async function watchQuestRun(
+  partyStateStore: QuestPartyStateStore,
   runStore: QuestRunStore,
   runId: string,
   options: { outputMode: OutputMode; pollMs: number },
@@ -2683,6 +2748,7 @@ async function watchQuestRun(
 
   while (true) {
     const run = await runStore.getRun(runId);
+    const partyState = summarizePartyState(await partyStateStore.readState());
 
     if (options.outputMode === "pretty") {
       const newEvents = run.events.slice(seenEventCount);
@@ -2693,7 +2759,7 @@ async function watchQuestRun(
 
       if (!hasRunWatchSettled(run)) {
         if (newEvents.length === 0 && heartbeatTick % heartbeatEvery === 0) {
-          void Bun.write(Bun.stdout, `${formatWatchHeartbeat(run)}\n`);
+          void Bun.write(Bun.stdout, `${formatWatchHeartbeat(run, partyState)}\n`);
         }
         heartbeatTick += 1;
       }
@@ -2723,6 +2789,14 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "setup": {
       return formatSetupPretty(candidate);
+    }
+    case "party:bonfire":
+    case "party:resume":
+    case "party:status": {
+      const partyState = candidate.partyState as PartyStateView | undefined;
+      return partyState
+        ? formatPartyStatePretty(partyState, { includeEvents: true }).join("\n")
+        : JSON.stringify(value, null, 2);
     }
     case "workers:list": {
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
@@ -3065,6 +3139,32 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       ),
     usage:
       "quest doctor [--codex-executable <path>] [--openclaw-executable <path>] [--check-openclaw] [--gateway-url <url>] [--agent-id <id>] [--test-sinks] [--sink-id <id>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
+  },
+  {
+    id: "party:status",
+    matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "status",
+    run: async ({ partyStateStore }) => ({
+      partyState: summarizePartyState(await partyStateStore.readState()),
+    }),
+    usage: "quest party status [--state-root <path>]",
+  },
+  {
+    id: "party:bonfire",
+    matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "bonfire",
+    run: async ({ args, partyStateStore }) => ({
+      partyState: summarizePartyState(
+        await partyStateStore.lightBonfire(findOptionValue(args, "--reason") ?? undefined),
+      ),
+    }),
+    usage: "quest party bonfire [--reason <text>] [--state-root <path>]",
+  },
+  {
+    id: "party:resume",
+    matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "resume",
+    run: async ({ partyStateStore }) => ({
+      partyState: summarizePartyState(await partyStateStore.resumeParty()),
+    }),
+    usage: "quest party resume [--state-root <path>]",
   },
   {
     id: "observability:events:list",
@@ -3529,11 +3629,15 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "runs:list",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "list",
-    run: async ({ args, runStore }) => {
+    run: async ({ args, partyStateStore, runStore }) => {
       const listed = await runStore.listRunsWithWarnings({
         skipInvalidSchema: hasFlag(args, "--skip-invalid"),
       });
-      return { runs: listed.runs, warnings: listed.warnings };
+      return {
+        partyState: summarizePartyState(await partyStateStore.readState()),
+        runs: listed.runs,
+        warnings: listed.warnings,
+      };
     },
     usage:
       "quest runs list [--skip-invalid] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
@@ -3692,7 +3796,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "runs:execute",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "execute",
-    run: async ({ args, runPipeline }) => ({
+    run: async ({ args, partyStateStore, runPipeline }) => ({
+      partyState: summarizePartyState(await partyStateStore.readState()),
       run: await runPipeline.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
         autoIntegrate: hasFlag(args, "--auto-integrate"),
         dryRun: hasFlag(args, "--dry-run"),
@@ -3792,7 +3897,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "runs:status",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "status",
-    run: async ({ args, runStore }) => ({
+    run: async ({ args, partyStateStore, runStore }) => ({
+      partyState: summarizePartyState(await partyStateStore.readState()),
       run: await runStore.getRun(requireOptionValue(args, "--id", "--id <run-id>")),
     }),
     usage:
@@ -3801,30 +3907,45 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "runs:watch",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "watch",
-    run: async ({ args, outputMode, runStore }) => ({
-      run: await watchQuestRun(runStore, requireOptionValue(args, "--id", "--id <run-id>"), {
-        outputMode,
-        pollMs: findOptionValue(args, "--poll-ms")
-          ? parsePositiveInteger(
-              requireOptionValue(args, "--poll-ms", "--poll-ms <1000>"),
-              "poll-ms",
-            )
-          : 1000,
-      }),
-    }),
+    run: async ({ args, outputMode, partyStateStore, runStore }) => {
+      const run = await watchQuestRun(
+        partyStateStore,
+        runStore,
+        requireOptionValue(args, "--id", "--id <run-id>"),
+        {
+          outputMode,
+          pollMs: findOptionValue(args, "--poll-ms")
+            ? parsePositiveInteger(
+                requireOptionValue(args, "--poll-ms", "--poll-ms <1000>"),
+                "poll-ms",
+              )
+            : 1000,
+        },
+      );
+      return {
+        partyState: summarizePartyState(await partyStateStore.readState()),
+        run,
+      };
+    },
     usage:
       "quest runs watch --id <run-id> [--poll-ms <1000>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:summary",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "summary",
-    run: async ({ args, runStore }) => {
+    run: async ({ args, partyStateStore, runStore }) => {
       const runId = findOptionValue(args, "--id");
       if (runId) {
-        return { summary: summarizeRunDetail(await runStore.getRun(runId)) };
+        return {
+          partyState: summarizePartyState(await partyStateStore.readState()),
+          summary: summarizeRunDetail(await runStore.getRun(runId)),
+        };
       }
 
-      return { runs: await runStore.listRuns() };
+      return {
+        partyState: summarizePartyState(await partyStateStore.readState()),
+        runs: await runStore.listRuns(),
+      };
     },
     usage:
       "quest runs summary [--id <run-id>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
@@ -3904,10 +4025,14 @@ async function main(): Promise<number> {
   const settingsPath = resolveQuestSettingsPath(
     definedPathOptions(stateRoot, "explicitSettingsPath", findOptionValue(args, "--settings")),
   );
+  const partyStatePath = resolveQuestPartyStatePath({
+    stateRoot,
+  });
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const secretStore = new SecretStore();
   const settingsStore = new QuestSettingsStore(settingsPath);
+  const partyStateStore = new QuestPartyStateStore(partyStatePath);
   const observabilityStore = new ObservabilityStore(
     observabilityConfigPath,
     observabilityDeliveriesPath,
@@ -3917,7 +4042,7 @@ async function main(): Promise<number> {
   const runIntegrator = new QuestRunIntegrator(runStore);
   const runLander = new QuestRunLander(runStore);
   const runRefresher = new QuestRunRefresher(runStore, runIntegrator);
-  const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator, runLander);
+  const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator, runLander, partyStateStore);
   const calibrator = new WorkerCalibrator(registry, runStore, runExecutor, calibrationsRoot);
   const dispatcher = new EventDispatcher(observabilityStore, secretStore);
 
@@ -3928,6 +4053,7 @@ async function main(): Promise<number> {
       dispatcher,
       observabilityStore,
       outputMode,
+      partyStateStore,
       registry,
       runCleanup,
       runExecutor,

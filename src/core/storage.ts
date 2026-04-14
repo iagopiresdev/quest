@@ -104,6 +104,18 @@ export function resolveQuestSettingsPath(
   return join(resolveQuestStateRoot(options.stateRoot), "settings.json");
 }
 
+export function resolveQuestPartyStatePath(
+  options: { explicitPartyStatePath?: string | undefined; stateRoot?: string | undefined } = {},
+): string {
+  const configuredPath =
+    options.explicitPartyStatePath?.trim() || Bun.env.QUEST_RUNNER_PARTY_STATE_PATH?.trim();
+  if (configuredPath) {
+    return resolve(configuredPath);
+  }
+
+  return join(resolveQuestStateRoot(options.stateRoot), "party-state.json");
+}
+
 export function resolveQuestRunPath(
   runId: string,
   options: {
@@ -141,6 +153,7 @@ export async function readJsonFileOrDefault<T>(
   options: {
     invalidJsonCode?:
       | "invalid_quest_run"
+      | "invalid_quest_party_state"
       | "invalid_quest_settings"
       | "invalid_worker_registry"
       | "invalid_observability_config";

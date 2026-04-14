@@ -111,6 +111,7 @@ The following invariants should stay true:
 - Setup-time worker shaping must compile down to the normal worker model. Archetypes, party mode, and onboarding defaults are presentation helpers, not parallel registry formats.
 - Feature-doc / chronicle writes must append the same lifecycle event whether they happen during turn-in or through a later operator command, or observability stops being replayable from events alone.
 - Turn-in must stay stricter than boss fight. An integrated run is not landed until the source checkout is clean, the target has not drifted, and the landing step succeeds.
+- Global rest state must be persisted if it gates dispatch. A bonfire that only lives in one CLI process is a false control plane because Quest dispatch spans separate invocations.
 - Rescue state needs both history and a query surface. Keep the full rescue event trail, but denormalize the latest rescue note onto the run so summary views do not need to replay events for a basic operator answer.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
@@ -131,6 +132,7 @@ Rules:
 
 - Every feature needs automated coverage for happy path and edge cases.
 - Execution-facing features also need a real canary when the dependency exists locally.
+- Dispatch-control features need a restart-safe test path. If a feature claims to pause global dispatch, it must survive a fresh CLI invocation from persisted state.
 - Install/setup-facing features also need a fresh-install canary through the public `quest` command in a real terminal session such as `tmux`.
 - A canary should use the real interface the operator will use:
   - real `codex exec`

@@ -1,0 +1,75 @@
+---
+title: Party Bonfire v1
+description: Add a persisted global dispatch-rest state that pauses new encounter dispatch without cancelling in-flight work.
+---
+
+# Party Bonfire v1
+
+## Goal
+
+Add a global party rest state with two operator commands:
+
+- `quest party bonfire [--reason <text>]`
+- `quest party resume`
+
+The feature should fit the existing RPG presentation layer while staying operationally strict.
+
+## Scope
+
+- Persist party state in `~/.quest-runner/party-state.json`
+- Block new `runs execute` dispatch while the party is resting
+- Allow already running encounters, trials, and boss-fight work to finish
+- Surface the rest state in pretty output and `runs status` / `runs summary` / `runs list` / `runs watch`
+
+## Non-goals
+
+- Not a force-cancel
+- Not per-worker or per-backend freezing
+- Not a background daemon
+- Not an observability sink event stream in v1
+
+## State model
+
+Persist a single global document:
+
+- `status: active | resting`
+- optional `reason`
+- `updatedAt`
+- audit `events`
+
+The state must survive separate CLI invocations. An in-memory flag would be misleading because Quest is command-driven.
+
+## Dispatch rule
+
+Only gate new dispatch boundaries:
+
+- block `quest runs execute`
+
+Do not block:
+
+- `quest run`
+- `quest runs status`
+- `quest runs watch`
+- `quest runs land`
+- `quest runs cleanup`
+- already-running execution phases
+
+This keeps Bonfire aligned with “rest at checkpoint” rather than “kill everything now.”
+
+## CLI surface
+
+- `quest party status`
+- `quest party bonfire [--reason <text>]`
+- `quest party resume`
+
+Pretty mode should render:
+
+- `The party rests at a bonfire.`
+- `The party presses on.`
+
+## Validation
+
+- unit test for persisted bonfire/resume transitions
+- pipeline test proving `runs execute` fails with `quest_party_resting`
+- CLI test for `party bonfire` / `party resume`
+- CLI test showing a planned run stays `planned` while the party is resting

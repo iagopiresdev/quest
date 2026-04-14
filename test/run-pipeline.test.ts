@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { QuestDomainError } from "../src/core/errors";
+import { QuestPartyStateStore } from "../src/core/party-state";
 import { QuestRunExecutor } from "../src/core/runs/executor";
 import { QuestRunIntegrator } from "../src/core/runs/integrator";
 import { QuestRunLander } from "../src/core/runs/lander";
@@ -21,10 +22,11 @@ test("run pipeline can auto-integrate a completed run", async () => {
   const workspacesRoot = join(root, "workspaces");
   const workerRegistry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
   const integrator = new QuestRunIntegrator(runStore);
   const lander = new QuestRunLander(runStore);
-  const pipeline = new QuestRunPipeline(executor, integrator, lander);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander, partyStateStore);
 
   try {
     writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
@@ -69,10 +71,11 @@ test("run pipeline rejects dry-run auto-integration", async () => {
   const workspacesRoot = join(root, "workspaces");
   const workerRegistry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
   const integrator = new QuestRunIntegrator(runStore);
   const lander = new QuestRunLander(runStore);
-  const pipeline = new QuestRunPipeline(executor, integrator, lander);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander, partyStateStore);
 
   try {
     await workerRegistry.upsertWorker(createWorker());
@@ -100,10 +103,11 @@ test("run pipeline can auto-integrate and land a completed run", async () => {
   const workspacesRoot = join(root, "workspaces");
   const workerRegistry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
   const integrator = new QuestRunIntegrator(runStore);
   const lander = new QuestRunLander(runStore);
-  const pipeline = new QuestRunPipeline(executor, integrator, lander);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander, partyStateStore);
 
   try {
     writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'landed-change\\n');\n", "utf8");
@@ -127,6 +131,32 @@ test("run pipeline can auto-integrate and land a completed run", async () => {
     expect(landedRun.landedAt).toBeString();
     expect(landedRun.landedRevision).toBeString();
     expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("landed-change\n");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run pipeline refuses new dispatch while the party rests at a bonfire", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-pipeline-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const lander = new QuestRunLander(runStore);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander, partyStateStore);
+
+  try {
+    await workerRegistry.upsertWorker(createWorker());
+    const run = await runStore.createRun(createSpec(), await workerRegistry.listWorkers());
+    await partyStateStore.lightBonfire("maintenance");
+
+    await expect(pipeline.executeRun(run.id)).rejects.toMatchObject({
+      code: "quest_party_resting",
+    } satisfies Partial<QuestDomainError>);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
