@@ -7,7 +7,12 @@ import { appendEvent } from "./lifecycle";
 import { matchesQuestPathPattern } from "./path-patterns";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
-import type { QuestRunCheckResult, QuestRunDocument, QuestRunSliceState } from "./schema";
+import type {
+  QuestRunActiveProcess,
+  QuestRunCheckResult,
+  QuestRunDocument,
+  QuestRunSliceState,
+} from "./schema";
 import type { QuestRunStore } from "./store";
 import {
   assertWorkspacePathWithinRoot,
@@ -39,6 +44,53 @@ function requireIntegratableRun(run: QuestRunDocument): void {
       statusCode: 1,
     });
   }
+}
+
+function buildTrackedProcess(
+  command: string[],
+  options: {
+    kind: QuestRunActiveProcess["kind"];
+    pid: number;
+    sliceId?: string | undefined;
+  },
+): QuestRunActiveProcess {
+  return {
+    command: command
+      .slice(0, 32)
+      .map((part) => (part.length <= 240 ? part : `${part.slice(0, 237)}...`)),
+    kind: options.kind,
+    pid: options.pid,
+    sliceId: options.sliceId,
+    startedAt: new Date().toISOString(),
+  };
+}
+
+function clearExecutionStateOnRun(run: QuestRunDocument): void {
+  run.activeProcesses = [];
+  delete run.executionHeartbeatAt;
+  delete run.executionHostPid;
+  delete run.executionStage;
+}
+
+function createTrackedProcessHooks(
+  runStore: QuestRunStore,
+  runId: string,
+  descriptor: { kind: QuestRunActiveProcess["kind"]; sliceId?: string | undefined },
+): {
+  onExit: (pid: number) => Promise<void>;
+  onSpawn: (command: string[], pid: number) => Promise<void>;
+} {
+  return {
+    onExit: async (pid) => {
+      await runStore.clearActiveProcess(runId, pid);
+    },
+    onSpawn: async (command, pid) => {
+      await runStore.registerActiveProcess(
+        runId,
+        buildTrackedProcess(command, { ...descriptor, pid }),
+      );
+    },
+  };
 }
 
 async function readHeadRevision(cwd: string): Promise<string> {
@@ -563,7 +615,12 @@ async function integrateSlice(
 async function runIntegrationChecks(
   commands: QuestCommandSpec[],
   cwd: string,
-  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
+  options: {
+    idleTimeoutMs?: number | undefined;
+    onExit?: ((pid: number) => Promise<void> | void) | undefined;
+    onSpawn?: ((command: string[], pid: number) => Promise<void> | void) | undefined;
+    timeoutMs?: number | undefined;
+  } = {},
 ): Promise<QuestRunCheckResult[]> {
   const results: QuestRunCheckResult[] = [];
 
@@ -573,6 +630,8 @@ async function runIntegrationChecks(
       cwd,
       env: buildProcessEnv(command.env),
       idleTimeoutMs: options.idleTimeoutMs,
+      onExit: options.onExit,
+      onSpawn: (pid) => options.onSpawn?.(command.argv, pid),
       timeoutMs: options.timeoutMs,
     });
     results.push({
@@ -629,110 +688,133 @@ export class QuestRunIntegrator {
       ? run.spec.execution.idleTimeoutMinutes * 60 * 1000
       : undefined;
     await ensureGitRepositoryIsClean(repositoryRoot);
+    await this.runStore.markRunExecutionHost(run.id, "integrate");
 
-    const integrationWorkspacePath = await prepareIntegrationWorkspace(
-      run,
-      repositoryRoot,
-      targetRef,
-    );
-    appendEvent(run, "run_integration_started", {
-      integrationWorkspacePath,
-      runId: run.id,
-      sourceRepositoryPath: repositoryRoot,
-      targetRef,
-    });
-    await this.runStore.saveRun(run);
-
-    let appliedSliceCount = 0;
-    for (const sliceState of orderedSlices(run)) {
-      let applied: boolean;
-      try {
-        applied = await integrateSlice(run, integrationWorkspacePath, sliceState);
-      } catch (error: unknown) {
-        await this.runStore.saveRun(run);
-        throw error;
-      }
-      appendEvent(run, "slice_integrated", {
-        applied,
-        integrationStatus: sliceState.integrationStatus,
-        sliceId: sliceState.sliceId,
-      });
-      await this.runStore.saveRun(run);
-      if (applied) {
-        appliedSliceCount += 1;
-      }
-    }
-
-    if (run.spec.acceptanceChecks.length > 0) {
-      await runWorkspacePreparationCommands(
-        run.spec.execution.prepareCommands,
-        integrationWorkspacePath,
-        {
-          idleTimeoutMs,
-          timeoutMs,
-        },
+    try {
+      const integrationWorkspacePath = await prepareIntegrationWorkspace(
+        run,
+        repositoryRoot,
+        targetRef,
       );
-      appendEvent(run, "run_integration_checks_started", {
-        checkCount: run.spec.acceptanceChecks.length,
+      appendEvent(run, "run_integration_started", {
         integrationWorkspacePath,
         runId: run.id,
+        sourceRepositoryPath: repositoryRoot,
+        targetRef,
       });
+      await this.runStore.saveRun(run);
 
-      const checkResults = await runIntegrationChecks(
-        run.spec.acceptanceChecks,
-        integrationWorkspacePath,
-        { idleTimeoutMs, timeoutMs },
-      );
-      run.lastIntegrationChecks = checkResults;
-      const failedCheck = checkResults.find((check) => check.exitCode !== 0);
-      if (failedCheck) {
-        appendEvent(run, "run_integration_checks_failed", {
-          command: failedCheck.command,
-          exitCode: failedCheck.exitCode,
+      let appliedSliceCount = 0;
+      for (const sliceState of orderedSlices(run)) {
+        let applied: boolean;
+        try {
+          applied = await integrateSlice(run, integrationWorkspacePath, sliceState);
+        } catch (error: unknown) {
+          run.integrationRescueStatus = "pending";
+          appendEvent(run, "run_integration_failed", {
+            phase: "integrate",
+            runId: run.id,
+            sliceId: sliceState.sliceId,
+          });
+          await this.runStore.saveRun(run);
+          throw error;
+        }
+        appendEvent(run, "slice_integrated", {
+          applied,
+          integrationStatus: sliceState.integrationStatus,
+          sliceId: sliceState.sliceId,
+        });
+        await this.runStore.saveRun(run);
+        if (applied) {
+          appliedSliceCount += 1;
+        }
+      }
+
+      if (run.spec.acceptanceChecks.length > 0) {
+        await runWorkspacePreparationCommands(
+          run.spec.execution.prepareCommands,
+          integrationWorkspacePath,
+          {
+            idleTimeoutMs,
+            ...createTrackedProcessHooks(this.runStore, run.id, { kind: "prepare" }),
+            timeoutMs,
+          },
+        );
+        appendEvent(run, "run_integration_checks_started", {
+          checkCount: run.spec.acceptanceChecks.length,
+          integrationWorkspacePath,
+          runId: run.id,
+        });
+
+        const checkResults = await runIntegrationChecks(
+          run.spec.acceptanceChecks,
+          integrationWorkspacePath,
+          {
+            idleTimeoutMs,
+            ...createTrackedProcessHooks(this.runStore, run.id, { kind: "integration" }),
+            timeoutMs,
+          },
+        );
+        run.lastIntegrationChecks = checkResults;
+        const failedCheck = checkResults.find((check) => check.exitCode !== 0);
+        if (failedCheck) {
+          run.integrationRescueStatus = "pending";
+          appendEvent(run, "run_integration_checks_failed", {
+            command: failedCheck.command,
+            exitCode: failedCheck.exitCode,
+            integrationWorkspacePath,
+            runId: run.id,
+          });
+          appendEvent(run, "run_integration_failed", {
+            phase: "integration_checks",
+            runId: run.id,
+          });
+          await this.runStore.saveRun(run);
+          throw new QuestDomainError({
+            code: "quest_integration_failed",
+            details: {
+              command: failedCheck.command,
+              integrationWorkspacePath,
+              runId: run.id,
+              stderr: failedCheck.stderr,
+              stdout: failedCheck.stdout,
+            },
+            message: `Integration acceptance check failed for run ${run.id}`,
+            statusCode: 1,
+          });
+        }
+
+        appendEvent(run, "run_integration_checks_completed", {
+          checkCount: run.spec.acceptanceChecks.length,
           integrationWorkspacePath,
           runId: run.id,
         });
         await this.runStore.saveRun(run);
-        throw new QuestDomainError({
-          code: "quest_integration_failed",
-          details: {
-            command: failedCheck.command,
-            integrationWorkspacePath,
-            runId: run.id,
-            stderr: failedCheck.stderr,
-            stdout: failedCheck.stdout,
-          },
-          message: `Integration acceptance check failed for run ${run.id}`,
-          statusCode: 1,
+      }
+
+      appendEvent(run, "run_integrated", {
+        appliedSliceCount,
+        integrationWorkspacePath,
+        runId: run.id,
+        sourceRepositoryPath: repositoryRoot,
+        targetRef,
+      });
+      run.integrationRescueStatus = "unset";
+
+      if (run.spec.featureDoc.enabled) {
+        const featureDocPath = await writeRunChronicle(run);
+        run.featureDocGeneratedAt = new Date().toISOString();
+        run.featureDocPath = featureDocPath;
+        appendEvent(run, "run_feature_doc_written", {
+          featureDocPath,
+          runId: run.id,
         });
       }
 
-      appendEvent(run, "run_integration_checks_completed", {
-        checkCount: run.spec.acceptanceChecks.length,
-        integrationWorkspacePath,
-        runId: run.id,
-      });
-      await this.runStore.saveRun(run);
+      return await this.runStore.saveRun(run);
+    } finally {
+      clearExecutionStateOnRun(run);
+      await this.runStore.clearRunExecutionState(run.id);
     }
-
-    appendEvent(run, "run_integrated", {
-      appliedSliceCount,
-      integrationWorkspacePath,
-      runId: run.id,
-      sourceRepositoryPath: repositoryRoot,
-      targetRef,
-    });
-
-    if (run.spec.featureDoc.enabled) {
-      const featureDocPath = await writeRunChronicle(run);
-      run.featureDocGeneratedAt = new Date().toISOString();
-      run.featureDocPath = featureDocPath;
-      appendEvent(run, "run_feature_doc_written", {
-        featureDocPath,
-        runId: run.id,
-      });
-    }
-
-    return await this.runStore.saveRun(run);
   }
 }

@@ -164,6 +164,8 @@ export async function runSubprocess(options: {
   env: Record<string, string | undefined>;
   idleTimeoutMs?: number | undefined;
   maxOutputBytes?: number | undefined;
+  onExit?: ((pid: number) => Promise<void> | void) | undefined;
+  onSpawn?: ((pid: number) => Promise<void> | void) | undefined;
   signal?: AbortSignal | undefined;
   stdin?: string | undefined;
   timeoutMs?: number | undefined;
@@ -178,6 +180,9 @@ export async function runSubprocess(options: {
     env: options.env,
     stdin: options.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
   });
+  if ("pid" in process && typeof process.pid === "number") {
+    await options.onSpawn?.(process.pid);
+  }
 
   const abortProcess = (): void => {
     aborted = true;
@@ -223,6 +228,7 @@ export async function runSubprocess(options: {
         }, options.timeoutMs);
   resetIdleTimeout();
 
+  const pid = "pid" in process && typeof process.pid === "number" ? process.pid : null;
   const [exitCode, stdout, stderr] = await Promise.all([
     process.exited,
     readPipe(process.stdout, maxOutputBytes, resetIdleTimeout),
@@ -234,6 +240,9 @@ export async function runSubprocess(options: {
   }
   clearIdleTimeout();
   options.signal?.removeEventListener("abort", abortListener);
+  if (pid !== null) {
+    await options.onExit?.(pid);
+  }
 
   return {
     aborted,

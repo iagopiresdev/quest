@@ -13,11 +13,13 @@ import {
   OpenClawCliRunnerAdapter,
   RunnerRegistry,
 } from "./adapters";
+import type { RunnerExecutionContext } from "./adapters/types";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
 import { runSubprocess } from "./process";
 import { buildProcessEnv } from "./process-env";
 import {
   QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH,
+  type QuestRunActiveProcess,
   type QuestRunCheckResult,
   type QuestRunDocument,
   type QuestRunSliceOutput,
@@ -104,7 +106,12 @@ function resolveExecutionCwd(
 async function runAcceptanceChecks(
   commands: QuestCommandSpec[],
   cwd: string,
-  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
+  options: {
+    idleTimeoutMs?: number | undefined;
+    onExit?: ((pid: number) => Promise<void> | void) | undefined;
+    onSpawn?: ((command: string[], pid: number) => Promise<void> | void) | undefined;
+    timeoutMs?: number | undefined;
+  } = {},
 ): Promise<QuestRunCheckResult[]> {
   const results: QuestRunCheckResult[] = [];
 
@@ -114,6 +121,8 @@ async function runAcceptanceChecks(
       cwd,
       env: buildProcessEnv(command.env),
       idleTimeoutMs: options.idleTimeoutMs,
+      onExit: options.onExit,
+      onSpawn: (pid) => options.onSpawn?.(command.argv, pid),
       timeoutMs: options.timeoutMs,
     });
     results.push({
@@ -195,6 +204,47 @@ function toSliceOutput(result: WaveExecutionSuccess["result"]): QuestRunSliceOut
   };
 }
 
+function clearExecutionStateOnRun(run: QuestRunDocument): void {
+  run.activeProcesses = [];
+  delete run.executionHeartbeatAt;
+  delete run.executionHostPid;
+  delete run.executionStage;
+}
+
+function sanitizeTrackedCommand(command: string[]): string[] {
+  return command
+    .slice(0, 32)
+    .map((part) => (part.length <= 240 ? part : `${part.slice(0, 237)}...`));
+}
+
+type TrackedProcessDescriptor = {
+  kind: QuestRunActiveProcess["kind"];
+  phase?: QuestRunActiveProcess["phase"] | undefined;
+  sliceId?: string | undefined;
+  workerId?: string | undefined;
+};
+
+function buildTrackedProcess(
+  command: string[],
+  options: {
+    kind: QuestRunActiveProcess["kind"];
+    phase?: QuestRunActiveProcess["phase"] | undefined;
+    pid: number;
+    sliceId?: string | undefined;
+    workerId?: string | undefined;
+  },
+): QuestRunActiveProcess {
+  return {
+    command: sanitizeTrackedCommand(command),
+    kind: options.kind,
+    phase: options.phase,
+    pid: options.pid,
+    sliceId: options.sliceId,
+    startedAt: nowIsoString(),
+    workerId: options.workerId,
+  };
+}
+
 export class QuestRunExecutor {
   private readonly runnerRegistry: RunnerRegistry;
 
@@ -210,6 +260,74 @@ export class QuestRunExecutor {
       new HermesApiRunnerAdapter(secretStore),
       new OpenClawCliRunnerAdapter(secretStore),
     ]);
+  }
+
+  private createTrackedProcessHooks(
+    runId: string,
+    descriptor: TrackedProcessDescriptor,
+  ): Pick<RunnerExecutionContext, "onSubprocessExit" | "onSubprocessSpawn"> {
+    return {
+      onSubprocessExit: async (pid) => {
+        await this.runStore.clearActiveProcess(runId, pid);
+      },
+      onSubprocessSpawn: async (command, pid) => {
+        await this.runStore.registerActiveProcess(
+          runId,
+          buildTrackedProcess(command, {
+            ...descriptor,
+            pid,
+          }),
+        );
+      },
+    };
+  }
+
+  private async finalizeCompletedRun(run: QuestRunDocument): Promise<QuestRunDocument> {
+    setRunStatus(run, "completed");
+    appendEvent(run, "run_completed", {
+      completedSliceCount: run.slices.filter((slice) => slice.status === "completed").length,
+    });
+    await this.runStore.saveRun(run);
+    clearExecutionStateOnRun(run);
+    await this.runStore.clearRunExecutionState(run.id);
+    return run;
+  }
+
+  private async finalizeFailedRun(run: QuestRunDocument, error: unknown): Promise<void> {
+    const eventAt = nowIsoString();
+    setRunStatus(run, "failed");
+
+    const activeSliceStates = run.slices.filter(
+      (slice) => slice.status === "running" || slice.status === "testing",
+    );
+    activeSliceStates.forEach((sliceState) => {
+      setSliceStatus(sliceState, "failed", {
+        completedAt: eventAt,
+        lastError: truncatePersistedMessage(error instanceof Error ? error.message : String(error)),
+        lastOutput: undefined,
+        lastTesterOutput: undefined,
+      });
+      appendEvent(
+        run,
+        "slice_failed",
+        {
+          error: sliceState.lastError,
+          sliceId: sliceState.sliceId,
+          workerId: sliceState.assignedWorkerId,
+        },
+        eventAt,
+      );
+    });
+
+    appendEvent(
+      run,
+      "run_failed",
+      { error: error instanceof Error ? error.message : String(error) },
+      eventAt,
+    );
+    await this.runStore.saveRun(run);
+    clearExecutionStateOnRun(run);
+    await this.runStore.clearRunExecutionState(run.id);
   }
 
   private async executeTesterPhase(
@@ -243,6 +361,12 @@ export class QuestRunExecutor {
     const testerResult = await adapter.execute({
       cwd,
       idleTimeoutMs,
+      ...this.createTrackedProcessHooks(run.id, {
+        kind: "runner",
+        phase: "test",
+        sliceId: sliceState.sliceId,
+        workerId: testerWorker.id,
+      }),
       phase: "test",
       run,
       signal: undefined,
@@ -283,6 +407,7 @@ export class QuestRunExecutor {
     setRunStatus(run, "running");
     appendEvent(run, "run_started", { dryRun: options.dryRun === true }, startedAt);
     await this.runStore.saveRun(run);
+    await this.runStore.markRunExecutionHost(run.id, "execute");
 
     try {
       for (const wave of run.plan.waves) {
@@ -350,6 +475,10 @@ export class QuestRunExecutor {
             const cwd = resolveExecutionCwd(run, sliceState, worker);
             const preparedWorkspace = await prepareExecutionWorkspace(run, sliceState, cwd, {
               idleTimeoutMs,
+              ...this.createTrackedProcessHooks(run.id, {
+                kind: "prepare",
+                sliceId: sliceState.sliceId,
+              }),
               timeoutMs,
             });
             if (preparedWorkspace.baseRevision) {
@@ -359,6 +488,12 @@ export class QuestRunExecutor {
               result: await adapter.execute({
                 cwd,
                 idleTimeoutMs,
+                ...this.createTrackedProcessHooks(run.id, {
+                  kind: "runner",
+                  phase: "build",
+                  sliceId: sliceState.sliceId,
+                  workerId: worker.id,
+                }),
                 phase: "build",
                 run,
                 signal: undefined,
@@ -447,6 +582,12 @@ export class QuestRunExecutor {
 
           const checkResults = await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd, {
             idleTimeoutMs,
+            ...this.createTrackedProcessHooks(run.id, {
+              kind: "trial",
+              sliceId: sliceState.sliceId,
+              workerId:
+                sliceState.assignedTesterWorkerId ?? sliceState.assignedWorkerId ?? undefined,
+            }),
             timeoutMs,
           });
           sliceState.lastChecks = checkResults;
@@ -556,47 +697,9 @@ export class QuestRunExecutor {
         }
       }
 
-      setRunStatus(run, "completed");
-      appendEvent(run, "run_completed", {
-        completedSliceCount: run.slices.filter((slice) => slice.status === "completed").length,
-      });
-      await this.runStore.saveRun(run);
-      return run;
+      return await this.finalizeCompletedRun(run);
     } catch (error: unknown) {
-      const eventAt = nowIsoString();
-      setRunStatus(run, "failed");
-
-      const activeSliceStates = run.slices.filter(
-        (slice) => slice.status === "running" || slice.status === "testing",
-      );
-      activeSliceStates.forEach((sliceState) => {
-        setSliceStatus(sliceState, "failed", {
-          completedAt: eventAt,
-          lastError: truncatePersistedMessage(
-            error instanceof Error ? error.message : String(error),
-          ),
-          lastOutput: undefined,
-          lastTesterOutput: undefined,
-        });
-        appendEvent(
-          run,
-          "slice_failed",
-          {
-            error: sliceState.lastError,
-            sliceId: sliceState.sliceId,
-            workerId: sliceState.assignedWorkerId,
-          },
-          eventAt,
-        );
-      });
-
-      appendEvent(
-        run,
-        "run_failed",
-        { error: error instanceof Error ? error.message : String(error) },
-        eventAt,
-      );
-      await this.runStore.saveRun(run);
+      await this.finalizeFailedRun(run, error);
       throw error;
     }
   }

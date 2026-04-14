@@ -12,7 +12,9 @@ import {
 } from "../storage";
 import type { RegisteredWorker } from "../workers/schema";
 import { appendEvent, nowIsoString, setRunStatus, setSliceStatus } from "./lifecycle";
+import { isPidAlive, terminatePid } from "./process-monitor";
 import {
+  type QuestRunActiveProcess,
   type QuestRunDocument,
   type QuestRunEvent,
   type QuestRunSliceState,
@@ -50,6 +52,12 @@ export type QuestRunLogView = {
     wave: number;
     workspacePath: string;
   }>;
+};
+
+export type QuestRunWatchdogResult = {
+  action: "marked_orphaned" | "noop";
+  reason: string | null;
+  run: QuestRunDocument;
 };
 
 function createQuestRunId(): string {
@@ -453,7 +461,9 @@ export class QuestRunStore {
     };
 
     const run: QuestRunDocument = {
+      activeProcesses: [],
       ...runBase,
+      integrationRescueStatus: "unset",
       slices: buildInitialSliceStates(runBase),
       status: plan.unassigned.length > 0 ? "blocked" : "planned",
       updatedAt: createdAt,
@@ -577,9 +587,16 @@ export class QuestRunStore {
   }
 
   async abortRun(runId: string): Promise<QuestRunDocument> {
+    return this.cancelRun(runId);
+  }
+
+  async cancelRun(runId: string): Promise<QuestRunDocument> {
     const run = await this.getRun(runId);
 
-    if (run.status === "completed" || run.status === "failed") {
+    if (
+      (run.status === "completed" || run.status === "failed") &&
+      run.executionStage === undefined
+    ) {
       throw new QuestDomainError({
         code: "quest_run_not_abortable",
         details: { runId, status: run.status },
@@ -593,7 +610,35 @@ export class QuestRunStore {
     }
 
     const eventAt = nowIsoString();
+    appendEvent(
+      run,
+      "run_cancel_requested",
+      {
+        activeProcessCount: run.activeProcesses.length,
+        executionHostPid: run.executionHostPid ?? null,
+        runId,
+      },
+      eventAt,
+    );
+
+    const pidCandidates = [
+      ...(run.executionHostPid ? [run.executionHostPid] : []),
+      ...run.activeProcesses.map((processState) => processState.pid),
+    ];
+    const seenPids = new Set<number>();
+    for (const pid of pidCandidates) {
+      if (seenPids.has(pid)) {
+        continue;
+      }
+      seenPids.add(pid);
+      await terminatePid(pid);
+    }
+
     setRunStatus(run, "aborted");
+    run.activeProcesses = [];
+    delete run.executionHeartbeatAt;
+    delete run.executionHostPid;
+    delete run.executionStage;
 
     run.slices.forEach((slice) => {
       if (slice.status === "completed" || slice.status === "failed" || slice.status === "blocked") {
@@ -617,6 +662,145 @@ export class QuestRunStore {
 
     appendEvent(run, "run_aborted", { runId }, eventAt);
     return this.saveRun(run);
+  }
+
+  async markRunExecutionHost(
+    runId: string,
+    stage: "execute" | "integrate" | "land",
+    hostPid: number = process.pid,
+  ): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    run.executionHeartbeatAt = nowIsoString();
+    run.executionHostPid = hostPid;
+    run.executionStage = stage;
+    return this.saveRun(run);
+  }
+
+  async heartbeatRun(runId: string): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    run.executionHeartbeatAt = nowIsoString();
+    return this.saveRun(run);
+  }
+
+  async clearRunExecutionState(runId: string): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    run.activeProcesses = [];
+    delete run.executionHeartbeatAt;
+    delete run.executionHostPid;
+    delete run.executionStage;
+    return this.saveRun(run);
+  }
+
+  async registerActiveProcess(
+    runId: string,
+    processState: QuestRunActiveProcess,
+  ): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    run.executionHeartbeatAt = nowIsoString();
+    run.activeProcesses = [
+      ...run.activeProcesses.filter((activeProcess) => activeProcess.pid !== processState.pid),
+      processState,
+    ];
+    return this.saveRun(run);
+  }
+
+  async clearActiveProcess(runId: string, pid: number): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    run.executionHeartbeatAt = nowIsoString();
+    run.activeProcesses = run.activeProcesses.filter((activeProcess) => activeProcess.pid !== pid);
+    return this.saveRun(run);
+  }
+
+  async markRunOrphaned(
+    runId: string,
+    details: { reason: string; staleMinutes?: number | undefined },
+  ): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    if (run.status !== "running" && run.executionStage === undefined) {
+      return run;
+    }
+
+    const eventAt = nowIsoString();
+    setRunStatus(run, "orphaned");
+    run.activeProcesses = [];
+    delete run.executionHostPid;
+    delete run.executionHeartbeatAt;
+    delete run.executionStage;
+    appendEvent(run, "run_orphaned", { ...details, runId }, eventAt);
+    return this.saveRun(run);
+  }
+
+  async updateIntegrationRescueStatus(
+    runId: string,
+    status: "abandoned" | "pending" | "rescued" | "unset",
+    note?: string | undefined,
+  ): Promise<QuestRunDocument> {
+    const run = await this.getRun(runId);
+    run.integrationRescueStatus = status;
+    appendEvent(run, "run_rescue_status_updated", {
+      note: note ?? null,
+      runId,
+      status,
+    });
+    return this.saveRun(run);
+  }
+
+  async babysitRuns(
+    options: { runId?: string | undefined; staleMinutes?: number | undefined } = {},
+  ): Promise<QuestRunWatchdogResult[]> {
+    const runs = options.runId
+      ? [await this.getRun(options.runId)]
+      : await Promise.all(
+          (await this.listRuns()).map(async (summary) => await this.getRun(summary.id)),
+        );
+    const staleMinutes = options.staleMinutes ?? 15;
+    const staleThresholdMs = staleMinutes * 60 * 1000;
+    const results: QuestRunWatchdogResult[] = [];
+
+    for (const run of runs) {
+      if (run.status !== "running" && run.executionStage === undefined) {
+        results.push({ action: "noop", reason: null, run });
+        continue;
+      }
+
+      const hostAlive = run.executionHostPid ? isPidAlive(run.executionHostPid) : false;
+      const liveChildCount = run.activeProcesses.filter((activeProcess) =>
+        isPidAlive(activeProcess.pid),
+      ).length;
+      const lastHeartbeatAt = run.executionHeartbeatAt ?? run.updatedAt;
+      const lastHeartbeatMs = Date.parse(lastHeartbeatAt);
+      const stale = Number.isFinite(lastHeartbeatMs)
+        ? Date.now() - lastHeartbeatMs >= staleThresholdMs
+        : false;
+
+      if (!hostAlive && (run.executionHostPid !== undefined || stale || liveChildCount === 0)) {
+        results.push({
+          action: "marked_orphaned",
+          reason: hostAlive ? null : "execution_host_dead",
+          run: await this.markRunOrphaned(run.id, {
+            reason: "execution_host_dead",
+            staleMinutes,
+          }),
+        });
+        continue;
+      }
+
+      if (!hostAlive && liveChildCount === 0 && stale) {
+        results.push({
+          action: "marked_orphaned",
+          reason: "stale_without_live_processes",
+          run: await this.markRunOrphaned(run.id, {
+            reason: "stale_without_live_processes",
+            staleMinutes,
+          }),
+        });
+        continue;
+      }
+
+      results.push({ action: "noop", reason: null, run });
+    }
+
+    return results;
   }
 
   async pauseRun(runId: string, reason?: string | undefined): Promise<QuestRunDocument> {

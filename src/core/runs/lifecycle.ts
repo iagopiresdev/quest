@@ -1,4 +1,5 @@
 import type {
+  QuestRunActiveProcess,
   QuestRunCheckResult,
   QuestRunDocument,
   QuestRunEvent,
@@ -26,6 +27,32 @@ export function appendEvent(
 
 export function setRunStatus(run: QuestRunDocument, status: QuestRunStatus): void {
   run.status = status;
+}
+
+export function setRunExecutionState(
+  run: QuestRunDocument,
+  options: {
+    activeProcesses?: QuestRunActiveProcess[] | undefined;
+    heartbeatAt?: string | undefined;
+    hostPid?: number | undefined;
+    stage?: "execute" | "integrate" | "land" | undefined;
+  } = {},
+): void {
+  if ("activeProcesses" in options) {
+    run.activeProcesses = options.activeProcesses ?? [];
+  }
+
+  if ("heartbeatAt" in options) {
+    run.executionHeartbeatAt = options.heartbeatAt;
+  }
+
+  if ("hostPid" in options) {
+    run.executionHostPid = options.hostPid;
+  }
+
+  if ("stage" in options) {
+    run.executionStage = options.stage;
+  }
 }
 
 export function setSliceStatus(

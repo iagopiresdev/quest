@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { QuestDomainError } from "../src/core/errors";
 import { QuestRunExecutor } from "../src/core/runs/executor";
 import { QuestRunIntegrator } from "../src/core/runs/integrator";
+import { QuestRunLander } from "../src/core/runs/lander";
 import { QuestRunPipeline } from "../src/core/runs/pipeline";
 import { QuestRunStore } from "../src/core/runs/store";
 import { WorkerRegistry } from "../src/core/workers/registry";
@@ -22,7 +23,8 @@ test("run pipeline can auto-integrate a completed run", async () => {
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const executor = new QuestRunExecutor(runStore, workerRegistry);
   const integrator = new QuestRunIntegrator(runStore);
-  const pipeline = new QuestRunPipeline(executor, integrator);
+  const lander = new QuestRunLander(runStore);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander);
 
   try {
     writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
@@ -69,7 +71,8 @@ test("run pipeline rejects dry-run auto-integration", async () => {
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const executor = new QuestRunExecutor(runStore, workerRegistry);
   const integrator = new QuestRunIntegrator(runStore);
-  const pipeline = new QuestRunPipeline(executor, integrator);
+  const lander = new QuestRunLander(runStore);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander);
 
   try {
     await workerRegistry.upsertWorker(createWorker());
@@ -83,6 +86,47 @@ test("run pipeline rejects dry-run auto-integration", async () => {
     ).rejects.toMatchObject({
       code: "quest_run_invalid_execute_options",
     } satisfies Partial<QuestDomainError>);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run pipeline can auto-integrate and land a completed run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-pipeline-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-land.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const lander = new QuestRunLander(runStore);
+  const pipeline = new QuestRunPipeline(executor, integrator, lander);
+
+  try {
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'landed-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [createSlice({ owns: ["tracked.txt"] })],
+      }),
+      await workerRegistry.listWorkers(),
+      { sourceRepositoryPath: repositoryRoot },
+    );
+    const landedRun = await pipeline.executeRun(run.id, {
+      autoIntegrate: true,
+      land: true,
+      targetRef: "HEAD",
+    });
+
+    expect(landedRun.landedAt).toBeString();
+    expect(landedRun.landedRevision).toBeString();
+    expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("landed-change\n");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

@@ -33,6 +33,7 @@ export const questRunStatusValues = [
   "blocked",
   "running",
   "paused",
+  "orphaned",
   "completed",
   "failed",
   "aborted",
@@ -45,14 +46,20 @@ export const questRunEventTypeValues = [
   "run_started",
   "run_paused",
   "run_resumed",
+  "run_orphaned",
+  "run_cancel_requested",
   "run_completed",
   "run_failed",
   "run_aborted",
   "run_integration_started",
+  "run_integration_failed",
   "run_integration_checks_started",
   "run_integration_checks_completed",
   "run_integration_checks_failed",
   "run_integrated",
+  "run_landing_started",
+  "run_landed",
+  "run_rescue_status_updated",
   "run_feature_doc_written",
   "run_workspace_cleaned",
   "slice_started",
@@ -155,6 +162,18 @@ export const questRunCheckResultSchema = z
   })
   .strict();
 
+export const questRunActiveProcessSchema = z
+  .object({
+    command: z.array(nonEmptyString(240)).min(1).max(32),
+    kind: z.enum(["integration", "landing", "prepare", "runner", "trial"]),
+    phase: z.enum(["build", "test"]).optional(),
+    pid: z.number().int().min(1),
+    sliceId: nonEmptyString(80).optional(),
+    startedAt: isoDateStringSchema,
+    workerId: nonEmptyString(80).optional(),
+  })
+  .strict();
+
 export const questRunSliceStateSchema = z
   .object({
     assignedRunner: z.string().trim().min(1).max(80).nullable(),
@@ -182,13 +201,21 @@ export const questRunSliceStateSchema = z
 
 export const questRunDocumentSchema = z
   .object({
+    activeProcesses: z.array(questRunActiveProcessSchema).default([]),
     createdAt: isoDateStringSchema,
+    executionHeartbeatAt: isoDateStringSchema.optional(),
+    executionHostPid: z.number().int().min(1).optional(),
+    executionStage: z.enum(["execute", "integrate", "land"]).optional(),
     featureDocGeneratedAt: isoDateStringSchema.optional(),
     featureDocPath: nonEmptyString(400).optional(),
     id: questRunIdSchema,
+    integrationRescueStatus: z.enum(["abandoned", "pending", "rescued", "unset"]).optional(),
     integrationBaseRevision: nonEmptyString(80).optional(),
     integrationWorkspacePath: nonEmptyString(400).optional(),
     lastIntegrationChecks: z.array(questRunCheckResultSchema).optional(),
+    landedAt: isoDateStringSchema.optional(),
+    landedRevision: nonEmptyString(80).optional(),
+    landedTargetRef: nonEmptyString(120).optional(),
     plan: questPlanSchema,
     sourceRepositoryPath: nonEmptyString(400).optional(),
     spec: questSpecSchema,
@@ -210,3 +237,4 @@ export type QuestRunSliceOutput = z.infer<typeof questRunSliceOutputSchema>;
 export type QuestRunSliceState = z.infer<typeof questRunSliceStateSchema>;
 export type QuestRunPlan = QuestPlan;
 export type QuestRunSpec = QuestSpec;
+export type QuestRunActiveProcess = z.infer<typeof questRunActiveProcessSchema>;

@@ -275,7 +275,12 @@ export async function refreshWorkspaceManifest(cwd: string): Promise<void> {
 export async function runWorkspacePreparationCommands(
   commands: QuestCommandSpec[] | undefined,
   cwd: string,
-  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
+  options: {
+    idleTimeoutMs?: number | undefined;
+    onExit?: ((pid: number) => Promise<void> | void) | undefined;
+    onSpawn?: ((command: string[], pid: number) => Promise<void> | void) | undefined;
+    timeoutMs?: number | undefined;
+  } = {},
 ): Promise<void> {
   for (const command of commands ?? []) {
     const result = await runSubprocess({
@@ -283,6 +288,8 @@ export async function runWorkspacePreparationCommands(
       cwd,
       env: buildProcessEnv(command.env),
       idleTimeoutMs: options.idleTimeoutMs,
+      onExit: options.onExit,
+      onSpawn: (pid) => options.onSpawn?.(command.argv, pid),
       timeoutMs: options.timeoutMs,
     });
 
@@ -386,7 +393,12 @@ export async function prepareExecutionWorkspace(
   run: QuestRunDocument,
   sliceState: QuestRunSliceState,
   cwd: string,
-  options: { idleTimeoutMs?: number | undefined; timeoutMs?: number | undefined } = {},
+  options: {
+    idleTimeoutMs?: number | undefined;
+    onExit?: ((pid: number) => Promise<void> | void) | undefined;
+    onSpawn?: ((command: string[], pid: number) => Promise<void> | void) | undefined;
+    timeoutMs?: number | undefined;
+  } = {},
 ): Promise<{ baseRevision?: string | undefined }> {
   const workspaceRoot = run.workspaceRoot;
   if (!workspaceRoot) {

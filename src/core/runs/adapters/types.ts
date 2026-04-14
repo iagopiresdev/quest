@@ -12,6 +12,8 @@ export type RunnerExecutionResult = {
 export type RunnerExecutionContext = {
   cwd: string;
   idleTimeoutMs?: number | undefined;
+  onSubprocessExit?: ((pid: number) => Promise<void> | void) | undefined;
+  onSubprocessSpawn?: ((command: string[], pid: number) => Promise<void> | void) | undefined;
   phase: "build" | "test";
   run: QuestRunDocument;
   signal?: AbortSignal | undefined;

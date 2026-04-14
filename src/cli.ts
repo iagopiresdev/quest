@@ -25,6 +25,7 @@ import { parseOpenClawJsonOutput } from "./core/runs/adapters/openclaw-shared";
 import { QuestRunCleanup } from "./core/runs/cleanup";
 import { QuestRunExecutor } from "./core/runs/executor";
 import { QuestRunIntegrator } from "./core/runs/integrator";
+import { QuestRunLander } from "./core/runs/lander";
 import { appendEvent } from "./core/runs/lifecycle";
 import { QuestRunPipeline } from "./core/runs/pipeline";
 import { runSubprocess } from "./core/runs/process";
@@ -88,10 +89,14 @@ type QuestCliCommand =
   | "plan"
   | "run"
   | "runs:abort"
+  | "runs:babysit"
+  | "runs:cancel"
   | "runs:cleanup"
+  | "runs:land"
   | "runs:integrate"
   | "runs:pause"
   | "runs:resume"
+  | "runs:rescue"
   | "runs:rerun"
   | "runs:execute"
   | "runs:logs"
@@ -129,6 +134,7 @@ type QuestCliContext = {
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
   runIntegrator: QuestRunIntegrator;
+  runLander: QuestRunLander;
   runPipeline: QuestRunPipeline;
   runStore: QuestRunStore;
   secretStore: SecretStore;
@@ -169,6 +175,8 @@ type RunDetailSummary = {
   id: string;
   integration: {
     checkCount: number;
+    landedAt: string | null;
+    rescueStatus: string;
     status: string;
     targetRef: string | null;
     workspacePath: string | null;
@@ -514,6 +522,14 @@ function parseObservableEventType(value: string | undefined): ObservableEventTyp
 
 function parseDeliveryStatus(value: string | undefined): DeliveryStatus | undefined {
   return value ? deliveryStatusSchema.parse(value) : undefined;
+}
+
+function parseRescueStatus(value: string): "abandoned" | "pending" | "rescued" | "unset" {
+  if (value === "abandoned" || value === "pending" || value === "rescued" || value === "unset") {
+    return value;
+  }
+
+  throw new Error(`Invalid rescue status: ${value}`);
 }
 
 function determineOutputMode(args: string[]): OutputMode {
@@ -1378,7 +1394,9 @@ function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
   }, {});
 
   let integrationStatus: RunDetailSummary["integration"]["status"] = "not_started";
-  if (run.events.some((event) => event.type === "run_integrated")) {
+  if (run.landedAt) {
+    integrationStatus = "landed";
+  } else if (run.events.some((event) => event.type === "run_integrated")) {
     integrationStatus = "integrated";
   } else if (run.events.some((event) => event.type === "run_integration_checks_failed")) {
     integrationStatus = "failed";
@@ -1394,6 +1412,8 @@ function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
     id: run.id,
     integration: {
       checkCount: run.lastIntegrationChecks?.length ?? 0,
+      landedAt: run.landedAt ?? null,
+      rescueStatus: run.integrationRescueStatus ?? "unset",
       status: integrationStatus,
       targetRef: run.targetRef ?? null,
       workspacePath: run.integrationWorkspacePath ?? null,
@@ -1937,8 +1957,12 @@ function formatSinkLine(sink: {
 }
 
 function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): string[] {
-  const turnInStatus =
-    summary.integration.status === "integrated" ? prettyLabels.turnIn.toLowerCase() : "pending";
+  let turnInStatus = "pending";
+  if (summary.integration.status === "landed") {
+    turnInStatus = "landed";
+  } else if (summary.integration.status === "integrated") {
+    turnInStatus = "ready";
+  }
   return [
     `${prettyLabels.quest} ${summary.id}`,
     `  briefing: ${summary.title}`,
@@ -1948,6 +1972,9 @@ function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): 
     `  ${prettyLabels.encounters}: ${formatCountMap(summary.counts.slices)}`,
     `  ${prettyLabels.bossFight.toLowerCase()}: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
     `  ${prettyLabels.turnIn.toLowerCase()}: ${turnInStatus}`,
+    `  rescue: ${summary.integration.rescueStatus}`,
+    ...(summary.integration.targetRef ? [`  target ref: ${summary.integration.targetRef}`] : []),
+    ...(summary.integration.landedAt ? [`  landed at: ${summary.integration.landedAt}`] : []),
     ...summary.slices.map(
       (slice) =>
         `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | builder=${slice.builderWorkerId ?? "unassigned"} | tester=${slice.testerWorkerId ?? "unassigned"} | ${prettyLabels.bossFight.toLowerCase()}=${slice.integrationStatus}`,
@@ -2380,10 +2407,14 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "runs:status":
     case "runs:execute":
     case "runs:integrate":
+    case "runs:land":
     case "runs:cleanup":
     case "runs:abort":
+    case "runs:cancel":
+    case "runs:babysit":
     case "runs:pause":
     case "runs:resume":
+    case "runs:rescue":
     case "runs:rerun": {
       return formatRunPretty(candidate, value);
     }
@@ -2977,6 +3008,29 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs abort --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:cancel",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "cancel",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.cancelRun(requireOptionValue(args, "--id", "--id <run-id>")),
+    }),
+    usage:
+      "quest runs cancel --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:babysit",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "babysit",
+    run: async ({ args, runStore }) => ({
+      results: await runStore.babysitRuns({
+        runId: findOptionValue(args, "--id") ?? undefined,
+        staleMinutes: findOptionValue(args, "--stale-minutes")
+          ? Number(requireOptionValue(args, "--stale-minutes", "--stale-minutes <n>"))
+          : undefined,
+      }),
+    }),
+    usage:
+      "quest runs babysit [--id <run-id>] [--stale-minutes <n>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:pause",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "pause",
     run: async ({ args, runStore }) => ({
@@ -3019,6 +3073,33 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs integrate --id <run-id> [--source-repo <path>] [--target-ref <ref>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:land",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "land",
+    run: async ({ args, runLander }) => ({
+      run: await runLander.landRun(requireOptionValue(args, "--id", "--id <run-id>"), {
+        sourceRepositoryPath: findOptionValue(args, "--source-repo") ?? undefined,
+        targetRef: findOptionValue(args, "--target-ref") ?? undefined,
+      }),
+    }),
+    usage:
+      "quest runs land --id <run-id> [--source-repo <path>] [--target-ref <ref>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:rescue",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rescue",
+    run: async ({ args, runStore }) => ({
+      run: await runStore.updateIntegrationRescueStatus(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+        parseRescueStatus(
+          requireOptionValue(args, "--status", "--status <pending|rescued|abandoned|unset>"),
+        ),
+        findOptionValue(args, "--note") ?? undefined,
+      ),
+    }),
+    usage:
+      "quest runs rescue --id <run-id> --status <pending|rescued|abandoned|unset> [--note <text>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:rerun",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "rerun",
     run: async ({ args, registry, runStore }) => {
@@ -3041,12 +3122,13 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       run: await runPipeline.executeRun(requireOptionValue(args, "--id", "--id <run-id>"), {
         autoIntegrate: hasFlag(args, "--auto-integrate"),
         dryRun: hasFlag(args, "--dry-run"),
+        land: hasFlag(args, "--land"),
         sourceRepositoryPath: findOptionValue(args, "--source-repo") || undefined,
         targetRef: findOptionValue(args, "--target-ref") || undefined,
       }),
     }),
     usage:
-      "quest runs execute --id <run-id> [--dry-run] [--auto-integrate] [--target-ref <ref>] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest runs execute --id <run-id> [--dry-run] [--auto-integrate] [--land] [--target-ref <ref>] [--source-repo <path>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:slices:reassign",
@@ -3238,7 +3320,8 @@ async function main(): Promise<number> {
   const runCleanup = new QuestRunCleanup(runStore, registry, secretStore);
   const runExecutor = new QuestRunExecutor(runStore, registry, secretStore);
   const runIntegrator = new QuestRunIntegrator(runStore);
-  const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator);
+  const runLander = new QuestRunLander(runStore);
+  const runPipeline = new QuestRunPipeline(runExecutor, runIntegrator, runLander);
   const calibrator = new WorkerCalibrator(registry, runStore, runExecutor, calibrationsRoot);
   const dispatcher = new EventDispatcher(observabilityStore, secretStore);
 
@@ -3252,6 +3335,7 @@ async function main(): Promise<number> {
       runCleanup,
       runExecutor,
       runIntegrator,
+      runLander,
       runPipeline,
       runStore,
       secretStore,

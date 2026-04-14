@@ -103,6 +103,21 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
           QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
         }),
         idleTimeoutMs: context.idleTimeoutMs,
+        onExit: (pid) => context.onSubprocessExit?.(pid),
+        onSpawn: (pid) =>
+          context.onSubprocessSpawn?.(
+            [
+              executable,
+              "exec",
+              "-C",
+              context.cwd,
+              "-m",
+              context.worker.backend.profile,
+              "--output-last-message",
+              outputPath,
+            ],
+            pid,
+          ),
         signal: context.signal,
         stdin: prompt,
         timeoutMs: context.timeoutMs ?? 20 * 60 * 1000,

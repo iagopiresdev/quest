@@ -9,6 +9,7 @@ export const QUEST_ERROR_CODES = [
   "invalid_quest_spec",
   "quest_dependency_cycle",
   "quest_runner_command_failed",
+  "quest_run_not_landable",
   "quest_run_not_integratable",
   "quest_run_invalid_execute_options",
   "quest_run_not_cleanupable",

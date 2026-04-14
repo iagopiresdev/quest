@@ -166,6 +166,82 @@ test("run store returns slice logs and supports aborting pending runs", async ()
   }
 });
 
+test("run store can cancel a running run and clear execution tracking", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    run.status = "running";
+    run.executionHostPid = 999_999;
+    run.executionHeartbeatAt = new Date(Date.now() - 60_000).toISOString();
+    run.executionStage = "execute";
+    run.activeProcesses = [
+      {
+        command: ["bun", "worker.ts"],
+        kind: "runner",
+        phase: "build",
+        pid: 999_998,
+        sliceId: "parser",
+        startedAt: new Date().toISOString(),
+        workerId: "ember",
+      },
+    ];
+    await store.saveRun(run);
+
+    const cancelled = await store.cancelRun(run.id);
+    expect(cancelled.status).toBe("aborted");
+    expect(cancelled.activeProcesses).toHaveLength(0);
+    expect(cancelled.executionHostPid).toBeUndefined();
+    expect(cancelled.events.some((event) => event.type === "run_cancel_requested")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run store can mark stale dead-host runs orphaned", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    run.status = "running";
+    run.executionHostPid = 999_997;
+    run.executionHeartbeatAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    run.executionStage = "execute";
+    await store.saveRun(run);
+
+    const [result] = await store.babysitRuns({ staleMinutes: 15 });
+    expect(result?.action).toBe("marked_orphaned");
+    expect(result?.run.status).toBe("orphaned");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run store records explicit rescue status changes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(createSpec({ maxParallel: 2 }), [
+      createWorkerForRunner("ember"),
+    ]);
+    const updated = await store.updateIntegrationRescueStatus(run.id, "rescued", "manual merge");
+    expect(updated.integrationRescueStatus).toBe("rescued");
+    expect(updated.events.at(-1)).toMatchObject({
+      details: expect.objectContaining({ note: "manual merge", status: "rescued" }),
+      type: "run_rescue_status_updated",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store can reassign a blocked slice into a new executable wave", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);

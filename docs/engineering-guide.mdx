@@ -109,6 +109,7 @@ The following invariants should stay true:
 - Builder and tester output must be persisted separately when both phases run, or operators lose the ability to diagnose whether the encounter or the trial caused a failure.
 - Setup-time worker shaping must compile down to the normal worker model. Archetypes, party mode, and onboarding defaults are presentation helpers, not parallel registry formats.
 - Feature-doc / chronicle writes must append the same lifecycle event whether they happen during turn-in or through a later operator command, or observability stops being replayable from events alone.
+- Turn-in must stay stricter than boss fight. An integrated run is not landed until the source checkout is clean, the target has not drifted, and the landing step succeeds.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
@@ -146,11 +147,13 @@ Minimum edge cases to consider for execution-facing work:
 - explicit operator steering after a stale plan choice
 - oversized runner output
 - timeout and abort paths
+- dead-host/orphan watchdog paths
 - idle stalls on subprocess-backed runners
 - env filtering and secret redaction
 - source dependency linking in isolated worktrees
 - source-repo dirtiness and cleanup safety
 - integration drift or stale target ref
+- landing drift or wrong checked-out branch
 - sink delivery failure and replay
 
 For runner adapters specifically:

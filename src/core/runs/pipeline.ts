@@ -1,11 +1,13 @@
 import { QuestDomainError } from "../errors";
 import type { QuestRunExecutor } from "./executor";
 import type { QuestRunIntegrator } from "./integrator";
+import type { QuestRunLander } from "./lander";
 import type { QuestRunDocument } from "./schema";
 
 export type ExecuteRunPipelineOptions = {
   autoIntegrate?: boolean | undefined;
   dryRun?: boolean | undefined;
+  land?: boolean | undefined;
   sourceRepositoryPath?: string | undefined;
   targetRef?: string | undefined;
 };
@@ -14,6 +16,7 @@ export class QuestRunPipeline {
   constructor(
     private readonly runExecutor: QuestRunExecutor,
     private readonly runIntegrator: QuestRunIntegrator,
+    private readonly runLander: QuestRunLander,
   ) {}
 
   async executeRun(
@@ -29,6 +32,15 @@ export class QuestRunPipeline {
       });
     }
 
+    if (options.land && !options.autoIntegrate) {
+      throw new QuestDomainError({
+        code: "quest_run_invalid_execute_options",
+        details: { autoIntegrate: false, land: true, runId },
+        message: "Landing requires auto-integration during execute",
+        statusCode: 1,
+      });
+    }
+
     const executedRun = await this.runExecutor.executeRun(runId, {
       dryRun: options.dryRun,
       sourceRepositoryPath: options.sourceRepositoryPath,
@@ -39,7 +51,15 @@ export class QuestRunPipeline {
       return executedRun;
     }
 
-    return await this.runIntegrator.integrateRun(runId, {
+    const integratedRun = await this.runIntegrator.integrateRun(runId, {
+      sourceRepositoryPath: options.sourceRepositoryPath,
+      targetRef: options.targetRef,
+    });
+    if (!options.land) {
+      return integratedRun;
+    }
+
+    return await this.runLander.landRun(runId, {
       sourceRepositoryPath: options.sourceRepositoryPath,
       targetRef: options.targetRef,
     });

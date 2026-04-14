@@ -72,6 +72,8 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
           QUEST_WORKSPACE_ROOT: context.run.workspaceRoot ?? "",
         }),
         idleTimeoutMs: context.idleTimeoutMs,
+        onExit: (pid) => context.onSubprocessExit?.(pid),
+        onSpawn: (pid) => context.onSubprocessSpawn?.(command, pid),
         signal: context.signal,
         stdin: payload,
         timeoutMs: context.timeoutMs ?? 5 * 60 * 1000,

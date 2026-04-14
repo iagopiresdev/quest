@@ -37,6 +37,7 @@ Project structure, spec-driven workflow, and documentation rules live in [docs/d
 Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
 Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
 Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
+Turn-in and recovery notes live in [docs/specs/run-turn-in-and-recovery-v1.mdx](./docs/specs/run-turn-in-and-recovery-v1.mdx).
 Tester-lane planning notes live in [docs/specs/tester-lane-v1.mdx](./docs/specs/tester-lane-v1.mdx).
 Fresh-install canary notes live in [docs/specs/fresh-install-canary-v1.mdx](./docs/specs/fresh-install-canary-v1.mdx).
 Contribution guidance lives in [CONTRIBUTING.md](./CONTRIBUTING.md).
@@ -404,8 +405,13 @@ If the run has `--source-repo <path>`, Quest Runner materializes each slice work
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
 If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into the boss fight automatically after all slice trials pass.
+If you want full turn-in in the same command, `runs execute --auto-integrate --land` advances from execution through boss fight into a fast-forward landing step on the current clean source checkout.
+`runs land` is the explicit turn-in command when you want to inspect an integrated run before landing it.
 Top-level spec `acceptanceChecks` run in that integration worktree after slices are replayed. If they fail, integration exits non-zero and the recorded integration checks stay on the run for inspection.
 `--dry-run --auto-integrate` is intentionally invalid because the dry-run adapter does not produce real slice results to land.
+`--land` without `--auto-integrate` is intentionally invalid on `runs execute`; use `runs land` for already integrated runs.
+`runs cancel` is the explicit stop command for active execution, boss fight, or turn-in phases. `runs abort` remains as a compatibility alias.
+`runs babysit` marks dead or stale in-flight runs as `orphaned`, and `runs rescue` records whether a failed boss fight or turn-in was manually recovered or abandoned.
 Acceptance checks are structured argv commands, not shell strings. Example:
 
 ```json
@@ -632,8 +638,14 @@ quest runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
 # execute and auto-integrate in one step
 quest runs execute --id quest-abc12345-deadbeef --auto-integrate --target-ref main
 
+# execute, boss fight, and turn-in in one step
+quest runs execute --id quest-abc12345-deadbeef --auto-integrate --land --target-ref main
+
 # integrate a completed run into a dedicated integration worktree
 quest runs integrate --id quest-abc12345-deadbeef --target-ref main
+
+# land an already integrated run into the current clean source checkout
+quest runs land --id quest-abc12345-deadbeef --target-ref main
 
 # inspect persisted slice logs/output
 quest runs logs --id quest-abc12345-deadbeef
@@ -688,6 +700,15 @@ quest runs cleanup --id quest-abc12345-deadbeef
 
 # abort a pending or running run
 quest runs abort --id quest-abc12345-deadbeef
+
+# cancel an active execution / boss fight / turn-in phase
+quest runs cancel --id quest-abc12345-deadbeef
+
+# mark stale dead-host runs as orphaned
+quest runs babysit --stale-minutes 15
+
+# record manual rescue state after a failed boss fight or turn-in
+quest runs rescue --id quest-abc12345-deadbeef --status rescued --note "landed manually"
 
 # create a fresh run from a prior run's spec
 quest runs rerun --id quest-abc12345-deadbeef

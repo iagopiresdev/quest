@@ -1433,6 +1433,72 @@ test("quest cli can auto-integrate after execution", () => {
   );
 });
 
+test("quest cli can auto-integrate and land after execution", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-auto-land.ts");
+  writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'landed-change\\n');\n", "utf8");
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(
+      createSpec({
+        slices: [createSlice({ owns: ["tracked.txt"] })],
+        title: "Auto-land quest run",
+      }),
+    ),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, [
+    "runs",
+    "execute",
+    "--id",
+    runId,
+    "--auto-integrate",
+    "--land",
+  ]);
+  expect(executed.code).toBe(0);
+  const executedRun = JSON.parse(executed.stdout).run;
+  expect(executedRun.landedAt).toBeTruthy();
+  expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("landed-change\n");
+});
+
+test("quest cli can land an already integrated run", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+  const scriptPath = join(context.stateRoot, "worker-land-command.ts");
+  writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'land-command-change\\n');\n", "utf8");
+
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = runCli(context, ["run", "--stdin", "--source-repo", repositoryRoot], {
+    input: JSON.stringify(
+      createSpec({
+        slices: [createSlice({ owns: ["tracked.txt"] })],
+        title: "Land command quest run",
+      }),
+    ),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  expect(runCli(context, ["runs", "execute", "--id", runId, "--auto-integrate"]).code).toBe(0);
+  const landed = runCli(context, ["runs", "land", "--id", runId, "--target-ref", "HEAD"]);
+  expect(landed.code).toBe(0);
+  const landedRun = JSON.parse(landed.stdout).run;
+  expect(landedRun.landedRevision).toBeTruthy();
+  expect(readFileSync(join(repositoryRoot, "tracked.txt"), "utf8")).toBe("land-command-change\n");
+});
+
 test("quest cli writes a chronicle after turn-in when feature docs are enabled", () => {
   const context = trackContext();
   const repositoryRoot = createCommittedRepo(context.stateRoot);
@@ -1554,6 +1620,21 @@ test("quest cli rejects dry-run auto-integration", () => {
   expect(JSON.parse(executed.stderr).error).toBe("quest_run_invalid_execute_options");
 });
 
+test("quest cli rejects execute landing without auto-integrate", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Land without auto-integrate is invalid" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executed = runCli(context, ["runs", "execute", "--id", runId, "--land"]);
+  expect(executed.code).toBe(1);
+  expect(JSON.parse(executed.stderr).error).toBe("quest_run_invalid_execute_options");
+});
+
 test("quest cli returns logs and aborts a planned run", () => {
   const context = trackContext();
   expectWorkerUpserted(context);
@@ -1574,6 +1655,49 @@ test("quest cli returns logs and aborts a planned run", () => {
   const abortedRun = JSON.parse(aborted.stdout).run;
   expect(abortedRun.status).toBe("aborted");
   expect(abortedRun.slices[0].status).toBe("aborted");
+});
+
+test("quest cli can babysit dead runs and update rescue state", () => {
+  const context = trackContext();
+  expectWorkerUpserted(context);
+
+  const created = runCli(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Babysit quest run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+  const runPath = join(context.stateRoot, "runs", `${runId}.json`);
+  const rawRun = JSON.parse(readFileSync(runPath, "utf8")) as {
+    executionHeartbeatAt?: string;
+    executionHostPid?: number;
+    executionStage?: string;
+    status: string;
+  };
+  rawRun.status = "running";
+  rawRun.executionHostPid = 999_997;
+  rawRun.executionHeartbeatAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  rawRun.executionStage = "execute";
+  writeFileSync(runPath, `${JSON.stringify(rawRun, null, 2)}\n`, "utf8");
+
+  const babysat = runCli(context, ["runs", "babysit", "--id", runId, "--stale-minutes", "15"]);
+  expect(babysat.code).toBe(0);
+  const babysitPayload = JSON.parse(babysat.stdout);
+  expect(babysitPayload.results[0].action).toBe("marked_orphaned");
+  expect(babysitPayload.results[0].run.status).toBe("orphaned");
+
+  const rescued = runCli(context, [
+    "runs",
+    "rescue",
+    "--id",
+    runId,
+    "--status",
+    "rescued",
+    "--note",
+    "manual resolution",
+  ]);
+  expect(rescued.code).toBe(0);
+  const rescuedRun = JSON.parse(rescued.stdout).run;
+  expect(rescuedRun.integrationRescueStatus).toBe("rescued");
 });
 
 test("quest cli cleans up run workspaces", () => {

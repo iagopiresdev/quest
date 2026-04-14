@@ -279,6 +279,8 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
         cwd: context.cwd,
         env: target.env,
         idleTimeoutMs: context.idleTimeoutMs,
+        onExit: (pid) => context.onSubprocessExit?.(pid),
+        onSpawn: (pid) => context.onSubprocessSpawn?.(command, pid),
         signal: context.signal,
         timeoutMs: context.timeoutMs ?? 20 * 60 * 1000,
       });

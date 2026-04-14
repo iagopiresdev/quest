@@ -1,0 +1,103 @@
+# Run Turn-in And Recovery v1
+
+## Goal
+
+Close the main lifecycle gaps left by v0:
+
+- landing integrated runs back into the source checkout
+- canceling live execution phases
+- marking dead hosts as orphaned
+- recording explicit rescue state after a failed boss fight or turn-in
+
+This spec keeps the existing conservative model. Execution, boss fight, and turn-in are still distinct phases in the domain even when the CLI can auto-advance across them.
+
+## Scope
+
+In scope:
+
+- `quest runs land`
+- `quest runs execute --auto-integrate --land`
+- `quest runs cancel`
+- `quest runs babysit`
+- `quest runs rescue --status <pending|rescued|abandoned|unset>`
+- persisted execution host / child-process tracking
+- persisted landing and rescue metadata on the run document
+
+Out of scope:
+
+- daemonized watchdog loops
+- remote process termination beyond local PID tracking
+- automatic push to a remote Git branch
+- merge conflict recovery automation
+
+## Lifecycle
+
+The operator-visible phases are:
+
+1. `Encounter`
+Builder work on a slice.
+
+2. `Trial`
+Tester lane plus slice acceptance checks.
+
+3. `Boss Fight`
+Integration worktree replay plus top-level acceptance checks.
+
+4. `Turn-in`
+Fast-forward landing from the integration worktree into the clean source checkout.
+
+## Landing Rules
+
+Landing is intentionally conservative:
+
+- the run must already be integrated
+- the source checkout must be clean
+- the source target must still point at the integration base revision
+- if a named target ref is supplied, it must match the currently checked out branch
+- landing uses `git merge --ff-only <integration-head>`
+
+This keeps turn-in safe and explicit. Quest Runner does not silently retarget another branch behind the operator's back.
+
+## Cancel And Watchdog Rules
+
+- `runs cancel` is allowed while an execution stage is active, even if the run status itself is still `completed` during boss fight or turn-in
+- cancel clears tracked subprocess state and marks the run `aborted`
+- `runs babysit` inspects live execution metadata and marks stale dead-host runs `orphaned`
+- the watchdog is command-driven in v1, not a background daemon
+
+## Rescue Rules
+
+`integrationRescueStatus` is explicit state, not inferred later from logs:
+
+- `unset`
+Normal path, no recovery action needed.
+
+- `pending`
+Boss fight or turn-in failed and needs operator attention.
+
+- `rescued`
+Operator recovered the run outside the default path.
+
+- `abandoned`
+Operator chose to give up on recovery.
+
+This is recorded through `runs rescue`, not hidden inside comments or ad hoc run notes.
+
+## Validation
+
+Required automated coverage:
+
+- landing success
+- landing drift refusal
+- cancel of an active run with tracked subprocess metadata
+- watchdog orphaning of stale dead-host runs
+- explicit rescue-state update
+- CLI coverage for `--land`, `runs land`, `runs cancel`, `runs babysit`, and `runs rescue`
+
+Required live canary:
+
+- disposable source repo
+- `quest run --source-repo`
+- `quest runs execute --auto-integrate --land`
+- verify source repo content changed only at turn-in
+- verify integration worktree remains the replay surface before landing
