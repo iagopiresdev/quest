@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -476,7 +476,26 @@ test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   expect(result.doctor.ok).toBe(true);
   expect(result.createdWorker.id).toBe("quest-codex");
   expect(result.createdWorker.backend.adapter).toBe("codex-cli");
+  expect(result.settings.planner.testerSelectionStrategy).toBe("balanced");
   expect(result.workers).toHaveLength(1);
+});
+
+test("quest cli setup persists tester routing strategy", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
+
+  const setup = runCli(context, [
+    "setup",
+    "--yes",
+    "--codex-executable",
+    codexExecutable,
+    "--tester-selection",
+    "prefer-cheapest",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.settings.planner.testerSelectionStrategy).toBe("prefer-cheapest");
 });
 
 test("quest cli setup bootstraps a hermes worker from detected api", async () => {
@@ -1698,16 +1717,79 @@ test("quest cli prunes old workspaces", () => {
       status: "completed",
     }),
   ]);
+  expect(payload.result.usage).toEqual(
+    expect.objectContaining({
+      exceedsThreshold: expect.any(Boolean),
+      thresholdBytes: expect.any(Number),
+      workspaceBytes: expect.any(Number),
+    }),
+  );
 });
 
-test("quest cli rejects yaml specs with a clear error", () => {
+test("quest cli accepts yaml specs", () => {
   const context = trackContext();
+  expectWorkerUpserted(context);
   const specPath = join(context.stateRoot, "spec.yaml");
-  writeFileSync(specPath, "version: 1\ntitle: bad yaml\n", "utf8");
+  writeFileSync(
+    specPath,
+    [
+      "version: 1",
+      "title: yaml quest",
+      "workspace: command-center",
+      "maxParallel: 1",
+      "slices:",
+      "  - id: parser",
+      "    title: Parser",
+      "    discipline: coding",
+      "    goal: Implement parser changes",
+      "    owns:",
+      "      - src/security/url.ts",
+    ].join("\n"),
+    "utf8",
+  );
 
   const planned = runCli(context, ["plan", "--file", specPath]);
-  expect(planned.code).toBe(1);
-  expect(planned.stderr).toContain("Only JSON specs are supported today");
+  expect(planned.code).toBe(0);
+  const payload = JSON.parse(planned.stdout);
+  expect(payload.plan.waves).toHaveLength(1);
+  expect(payload.plan.waves[0].slices[0].id).toBe("parser");
+});
+
+test("quest cli validates and quarantines invalid runs", () => {
+  const context = trackContext();
+  const runId = "quest-00000000-drifted2";
+  mkdirSync(join(context.stateRoot, "runs"), { recursive: true });
+  const runPath = join(context.stateRoot, "runs", `${runId}.json`);
+  writeFileSync(
+    runPath,
+    JSON.stringify({
+      id: runId,
+      version: 1,
+      plan: { warnings: [], waves: [] },
+      slices: [],
+      spec: { version: 1 },
+    }),
+    "utf8",
+  );
+
+  const validation = runCli(context, ["runs", "validate", "--id", runId]);
+  expect(validation.code).toBe(0);
+  const validationPayload = JSON.parse(validation.stdout);
+  expect(validationPayload.validation.reason).toBe("invalid_schema");
+
+  const listedStrict = runCli(context, ["runs", "list"]);
+  expect(listedStrict.code).toBe(1);
+
+  const listedTolerant = runCli(context, ["runs", "list", "--skip-invalid"]);
+  expect(listedTolerant.code).toBe(0);
+  expect(JSON.parse(listedTolerant.stdout).warnings).toEqual([
+    expect.objectContaining({ reason: "invalid_schema", runId }),
+  ]);
+
+  const quarantined = runCli(context, ["runs", "quarantine", "--id", runId]);
+  expect(quarantined.code).toBe(0);
+  const quarantinePayload = JSON.parse(quarantined.stdout);
+  expect(quarantinePayload.quarantine.quarantinedPath).toContain(".quarantine");
 });
 
 test("quest cli rejects dry-run auto-integration", () => {

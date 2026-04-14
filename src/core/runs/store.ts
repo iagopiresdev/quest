@@ -1,8 +1,9 @@
-import { readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readdir, rename } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { QuestDomainError } from "../errors";
 import { isBuilderCompatibleWithSlice, planQuest } from "../planning/planner";
 import type { QuestSpec } from "../planning/spec-schema";
+import { isRecord } from "../shared/type-guards";
 import {
   readJsonFileOrDefault,
   resolveQuestRunPath,
@@ -66,6 +67,15 @@ export type QuestRunListWarning = {
   runId: string;
 };
 
+export type QuestRunValidationResult = {
+  issues?: unknown;
+  ok: boolean;
+  path: string;
+  reason: "invalid_json" | "invalid_schema" | "legacy_run_document" | "missing" | "valid";
+  runId: string;
+  summary?: QuestRunSummary;
+};
+
 export type QuestRunListResult = {
   runs: QuestRunSummary[];
   warnings: QuestRunListWarning[];
@@ -94,22 +104,22 @@ function summarizeRun(run: QuestRunDocument): QuestRunSummary {
 }
 
 function isLegacySkippableRunDocument(rawDocument: unknown): boolean {
-  if (typeof rawDocument !== "object" || rawDocument === null) {
+  if (!isRecord(rawDocument)) {
     return true;
   }
 
-  const candidate = rawDocument as Record<string, unknown>;
-  if (candidate.version !== 1) {
+  if (rawDocument.version !== 1) {
     return true;
   }
 
-  return !("plan" in candidate) || !("slices" in candidate) || !("spec" in candidate);
+  return !("plan" in rawDocument) || !("slices" in rawDocument) || !("spec" in rawDocument);
 }
 
 async function readRunSummaryForListing(
   path: string,
   runId: string,
   workspacesRoot: string,
+  options: { skipInvalidSchema?: boolean } = {},
 ): Promise<{ summary: QuestRunSummary | null; warning: QuestRunListWarning | null }> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
@@ -152,6 +162,17 @@ async function readRunSummaryForListing(
 
   const parsed = questRunDocumentSchema.safeParse(rawDocument);
   if (!parsed.success) {
+    if (options.skipInvalidSchema) {
+      return {
+        summary: null,
+        warning: {
+          path,
+          reason: "invalid_schema",
+          runId,
+        },
+      };
+    }
+
     throw new QuestDomainError({
       code: "invalid_quest_run",
       details: parsed.error.flatten(),
@@ -523,6 +544,10 @@ export class QuestRunStore {
     );
   }
 
+  getWorkspacesRoot(): string {
+    return this.workspacesRoot;
+  }
+
   async getRun(runId: string): Promise<QuestRunDocument> {
     const path = resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot });
     const rawDocument = await readJsonFileOrDefault<QuestRunDocument | null>(path, null, {
@@ -559,7 +584,9 @@ export class QuestRunStore {
     return result.runs;
   }
 
-  async listRunsWithWarnings(): Promise<QuestRunListResult> {
+  async listRunsWithWarnings(
+    options: { skipInvalidSchema?: boolean } = {},
+  ): Promise<QuestRunListResult> {
     let entries: string[];
 
     try {
@@ -595,6 +622,7 @@ export class QuestRunStore {
           resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot }),
           runId,
           this.workspacesRoot,
+          options,
         ),
       ),
     );
@@ -618,6 +646,99 @@ export class QuestRunStore {
     return {
       runs: summaries.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
       warnings,
+    };
+  }
+
+  async validateRunDocument(runId: string): Promise<QuestRunValidationResult> {
+    const path = resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot });
+    const file = Bun.file(path);
+    if (!(await file.exists())) {
+      return {
+        ok: false,
+        path,
+        reason: "missing",
+        runId,
+      };
+    }
+
+    let rawDocument: unknown;
+    try {
+      rawDocument = JSON.parse(await file.text()) as unknown;
+    } catch (error: unknown) {
+      if (error instanceof SyntaxError) {
+        return {
+          ok: false,
+          path,
+          reason: "invalid_json",
+          runId,
+        };
+      }
+
+      throw new QuestDomainError({
+        code: "quest_storage_failure",
+        details: { path, reason: error instanceof Error ? error.message : String(error) },
+        message: `Failed to read quest state from ${path}`,
+        statusCode: 1,
+      });
+    }
+
+    if (isLegacySkippableRunDocument(rawDocument)) {
+      return {
+        ok: false,
+        path,
+        reason: "legacy_run_document",
+        runId,
+      };
+    }
+
+    const parsed = questRunDocumentSchema.safeParse(rawDocument);
+    if (!parsed.success) {
+      return {
+        issues: parsed.error.flatten(),
+        ok: false,
+        path,
+        reason: "invalid_schema",
+        runId,
+      };
+    }
+
+    const summary = summarizeRun(
+      await validateWorkspacePaths(
+        hydrateWorkspacePaths(parsed.data, this.workspacesRoot),
+        this.workspacesRoot,
+      ),
+    );
+    return {
+      ok: true,
+      path,
+      reason: "valid",
+      runId,
+      summary,
+    };
+  }
+
+  async quarantineRunDocument(
+    runId: string,
+  ): Promise<{ originalPath: string; quarantinedPath: string; runId: string }> {
+    const path = resolveQuestRunPath(runId, { explicitRunsRoot: this.runsRoot });
+    const file = Bun.file(path);
+    if (!(await file.exists())) {
+      throw new QuestDomainError({
+        code: "quest_run_not_found",
+        details: { runId },
+        message: `Quest run ${runId} was not found`,
+        statusCode: 1,
+      });
+    }
+
+    const quarantineRoot = join(this.runsRoot, ".quarantine");
+    await mkdir(quarantineRoot, { recursive: true });
+    const quarantinePath = join(quarantineRoot, `${Date.now()}-${basename(path)}`);
+    await rename(path, quarantinePath);
+    return {
+      originalPath: path,
+      quarantinedPath: quarantinePath,
+      runId,
     };
   }
 

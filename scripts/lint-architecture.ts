@@ -1,8 +1,9 @@
 const architectureRuleViolations: string[] = [];
 
 const projectRoot = new URL("..", import.meta.url);
-const sourceRoot = new URL("../src/core", import.meta.url);
+const sourceRoot = new URL("../src", import.meta.url);
 const defaultedPolicyParamPattern = /\b(?:phase|role)\s*:\s*[^)=\n]+\s*=\s*["'][A-Za-z0-9_-]+["']/g;
+const recordCastPattern = /\bas\s+Record<string,\s*unknown>/g;
 
 async function collectTypeScriptFiles(root: URL): Promise<string[]> {
   const files: string[] = [];
@@ -42,8 +43,25 @@ async function lintDefaultedPolicyParameters(): Promise<void> {
   }
 }
 
+async function lintRecordCastChains(): Promise<void> {
+  const files = await collectTypeScriptFiles(sourceRoot);
+
+  for (const filePath of files) {
+    const sourceText = await Bun.file(filePath).text();
+    const matches = [...sourceText.matchAll(recordCastPattern)];
+
+    for (const match of matches) {
+      architectureRuleViolations.push(
+        `${relativeToProject(filePath)}: raw record cast detected (${match[0]}). ` +
+          "Use a shared record/type guard instead of collapsing unknown input behind an inline Record<string, unknown> cast chain.",
+      );
+    }
+  }
+}
+
 async function main(): Promise<void> {
   await lintDefaultedPolicyParameters();
+  await lintRecordCastChains();
 
   if (architectureRuleViolations.length === 0) {
     await Bun.write(Bun.stdout, "Architecture checks passed.\n");

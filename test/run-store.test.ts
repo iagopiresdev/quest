@@ -167,6 +167,46 @@ test("run store still surfaces drifted v1-shaped runs as invalid", async () => {
   }
 });
 
+test("run store can validate and quarantine drifted v1-shaped runs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    await store.createRun(createSpec({ maxParallel: 2 }), [createWorkerForRunner("ember")]);
+    const runId = "quest-00000000-drifted2";
+    writeFileSync(
+      join(root, `${runId}.json`),
+      JSON.stringify({
+        id: runId,
+        version: 1,
+        plan: { warnings: [], waves: [] },
+        slices: [],
+        spec: { version: 1 },
+      }),
+      "utf8",
+    );
+
+    const validation = await store.validateRunDocument(runId);
+    expect(validation.ok).toBe(false);
+    expect(validation.reason).toBe("invalid_schema");
+    expect(validation.issues).toBeDefined();
+
+    const listed = await store.listRunsWithWarnings({ skipInvalidSchema: true });
+    expect(listed.warnings).toEqual([
+      expect.objectContaining({
+        reason: "invalid_schema",
+        runId,
+      }),
+    ]);
+
+    const quarantine = await store.quarantineRunDocument(runId);
+    expect(quarantine.originalPath).toContain(`${runId}.json`);
+    expect(quarantine.quarantinedPath).toContain(".quarantine");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store still surfaces tampered workspace paths when listing summaries", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);

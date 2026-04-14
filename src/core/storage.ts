@@ -92,6 +92,18 @@ export function resolveQuestObservabilityDeliveriesPath(
   return join(resolveQuestStateRoot(options.stateRoot), "observability", "deliveries.json");
 }
 
+export function resolveQuestSettingsPath(
+  options: { explicitSettingsPath?: string | undefined; stateRoot?: string | undefined } = {},
+): string {
+  const configuredPath =
+    options.explicitSettingsPath?.trim() || Bun.env.QUEST_RUNNER_SETTINGS_PATH?.trim();
+  if (configuredPath) {
+    return resolve(configuredPath);
+  }
+
+  return join(resolveQuestStateRoot(options.stateRoot), "settings.json");
+}
+
 export function resolveQuestRunPath(
   runId: string,
   options: {
@@ -129,6 +141,7 @@ export async function readJsonFileOrDefault<T>(
   options: {
     invalidJsonCode?:
       | "invalid_quest_run"
+      | "invalid_quest_settings"
       | "invalid_worker_registry"
       | "invalid_observability_config";
     invalidJsonMessage?: string;

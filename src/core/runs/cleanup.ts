@@ -1,3 +1,4 @@
+import { readdir, stat } from "node:fs/promises";
 import { QuestDomainError } from "../errors";
 import { SecretStore } from "../secret-store";
 import type { WorkerRegistry } from "../workers/registry";
@@ -17,6 +18,7 @@ export type QuestWorkspacePruneStatus =
   | "rescued";
 
 export type QuestWorkspacePruneResult = {
+  dryRun: boolean;
   pruned: Array<{
     runId: string;
     status: QuestWorkspacePruneStatus;
@@ -27,8 +29,44 @@ export type QuestWorkspacePruneResult = {
     runId: string;
     status: QuestWorkspacePruneStatus;
   }>;
+  usage: {
+    exceedsThreshold: boolean;
+    thresholdBytes: number;
+    workspaceBytes: number;
+  };
   warnings: QuestRunListWarning[];
 };
+
+async function measureDirectoryBytes(path: string): Promise<number> {
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+    let total = 0;
+    for (const entry of entries) {
+      const entryPath = `${path}/${entry.name}`;
+      if (entry.isDirectory()) {
+        total += await measureDirectoryBytes(entryPath);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        total += (await stat(entryPath)).size;
+      }
+    }
+
+    return total;
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return 0;
+    }
+
+    throw new QuestDomainError({
+      code: "quest_storage_failure",
+      details: { path, reason: error instanceof Error ? error.message : String(error) },
+      message: `Failed to inspect quest workspace usage at ${path}`,
+      statusCode: 1,
+    });
+  }
+}
 
 function requireCleanupableRun(run: QuestRunDocument): void {
   if (run.status === "running") {
@@ -118,17 +156,34 @@ export class QuestRunCleanup {
 
   async pruneWorkspaces(
     options: {
+      dryRun?: boolean | undefined;
       olderThanMs?: number | undefined;
+      skipInvalidSchema?: boolean | undefined;
       statuses?: QuestWorkspacePruneStatus[] | undefined;
+      warningThresholdBytes?: number | undefined;
     } = {},
   ): Promise<QuestWorkspacePruneResult> {
     const olderThanMs = options.olderThanMs ?? 72 * 60 * 60 * 1000;
     const statuses = new Set(options.statuses ?? ["landed", "completed", "aborted", "orphaned"]);
-    const listed = await this.runStore.listRunsWithWarnings();
+    const workspaceBytes = await measureDirectoryBytes(this.runStore.getWorkspacesRoot());
+    const thresholdBytes = options.warningThresholdBytes ?? 2 * 1024 * 1024 * 1024;
+    const listed = await this.runStore.listRunsWithWarnings(
+      options.skipInvalidSchema === undefined
+        ? {}
+        : {
+            skipInvalidSchema: options.skipInvalidSchema,
+          },
+    );
     const now = Date.now();
     const result: QuestWorkspacePruneResult = {
+      dryRun: options.dryRun === true,
       pruned: [],
       skipped: [],
+      usage: {
+        exceedsThreshold: workspaceBytes >= thresholdBytes,
+        thresholdBytes,
+        workspaceBytes,
+      },
       warnings: listed.warnings,
     };
 
@@ -155,12 +210,20 @@ export class QuestRunCleanup {
       }
 
       try {
-        const cleaned = await this.cleanupRun(run.id);
-        result.pruned.push({
-          runId: cleaned.id,
-          status,
-          workspaceRoot: cleaned.workspaceRoot ?? null,
-        });
+        if (options.dryRun) {
+          result.pruned.push({
+            runId: run.id,
+            status,
+            workspaceRoot: run.workspaceRoot ?? null,
+          });
+        } else {
+          const cleaned = await this.cleanupRun(run.id);
+          result.pruned.push({
+            runId: cleaned.id,
+            status,
+            workspaceRoot: cleaned.workspaceRoot ?? null,
+          });
+        }
       } catch (error: unknown) {
         result.skipped.push({
           reason: error instanceof Error ? error.message : String(error),

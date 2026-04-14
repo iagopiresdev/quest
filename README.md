@@ -173,6 +173,7 @@ Quest specs can now persist execution policy explicitly under `execution`, for e
   "execution": {
     "timeoutMinutes": 20,
     "idleTimeoutMinutes": 5,
+    "testerSelectionStrategy": "balanced",
     "preInstall": true,
     "prepareCommands": [
       {
@@ -447,6 +448,8 @@ Current sink support:
 - `linear`
 - `openclaw`
 
+The `openclaw` sink delivers quest events into a dedicated OpenClaw agent/session thread, so setup can reuse an existing local OpenClaw agent as an observability inbox without coupling the run engine to OpenClaw’s task scheduler.
+
 Internally, sinks already live behind a typed sink model instead of a webhook-only config shape. That keeps the current webhook path simple while leaving room for future Telegram, Linear, Slack, or metrics sinks without rewriting delivery storage.
 
 The core model is:
@@ -492,6 +495,7 @@ quest setup --yes --backend openclaw --openclaw-executable /path/to/openclaw
 # - Codex native login or OPENAI_API_KEY
 # - first reachable Hermes model from /models
 # - preferred OpenClaw agent (codex first, then first listed agent)
+# - sink auth defaults from TELEGRAM_BOT_TOKEN, SLACK_WEBHOOK_URL, and LINEAR_API_KEY when present
 
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
@@ -636,8 +640,8 @@ cat spec.json | quest run --stdin --worker-id quest-codex
 cat spec.json | quest run --stdin --source-repo /abs/path/to/repo
 
 # list persisted quest runs
-# list-style aggregate commands skip legacy/broken run documents and return warnings instead of aborting
 quest runs list
+quest runs list --skip-invalid
 
 # inspect one persisted quest run
 quest runs status --id quest-abc12345-deadbeef
@@ -675,6 +679,11 @@ quest runs logs --id quest-abc12345-deadbeef
 # inspect best-effort token usage from persisted runner output
 quest runs usage --id quest-abc12345-deadbeef
 quest runs usage --all
+quest runs usage --all --skip-invalid
+
+# validate or quarantine one bad persisted run document
+quest runs validate --id quest-abc12345-deadbeef
+quest runs quarantine --id quest-abc12345-deadbeef
 
 # preview or write the post-turn-in chronicle
 quest runs chronicle --id quest-abc12345-deadbeef
@@ -714,6 +723,7 @@ quest doctor --test-sinks --sink-id local-openclaw
 # - backend
 # - hybrid vs split party mode
 # - builder/tester archetypes and strengths
+# - tester routing strategy
 # - one observability sink
 # - optional Training Grounds calibration
 
@@ -727,6 +737,7 @@ quest runs cleanup --id quest-abc12345-deadbeef
 # default statuses: landed, completed, aborted, orphaned
 quest workspaces prune
 quest workspaces prune --older-than 168h --status landed,completed
+quest workspaces prune --dry-run --skip-invalid
 
 # abort a pending or running run
 quest runs abort --id quest-abc12345-deadbeef
@@ -754,7 +765,7 @@ QUEST_RUNNER_USE_DIST=1 ./bin/quest runs list
 # set QUEST_RUNNER_USE_DIST=1 if you want to validate the compiled artifact explicitly
 ./bin/quest runs list
 
-# YAML specs are not supported yet; convert first
+# JSON and YAML quest specs are both supported
 yq -o=json spec.yaml | quest run --stdin
 ```
 

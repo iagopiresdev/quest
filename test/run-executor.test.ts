@@ -69,7 +69,12 @@ function createWorker(
 function createSpec(overrides: Partial<QuestSpec> = {}): QuestSpec {
   return {
     acceptanceChecks: [],
-    execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+    execution: {
+      preInstall: false,
+      shareSourceDependencies: true,
+      testerSelectionStrategy: "balanced",
+      timeoutMinutes: 20,
+    },
     featureDoc: { enabled: false },
     hotspots: [],
     maxParallel: 2,
@@ -157,7 +162,12 @@ test("run executor completes a planned run with the local-command adapter", asyn
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -233,7 +243,12 @@ test("run executor uses a dedicated tester worker during the trial phase", async
 
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -300,7 +315,12 @@ test("run executor executes the worker inside the slice workspace", async () => 
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -464,6 +484,7 @@ test("run executor runs workspace preparation commands before builder and slice 
           preInstall: false,
           prepareCommands: [createCommand(["sh", "-lc", "printf 'prepared\\n' > prep-marker.txt"])],
           shareSourceDependencies: true,
+          testerSelectionStrategy: "balanced",
           timeoutMinutes: 20,
         },
         slices: [
@@ -508,6 +529,7 @@ test("run executor rejects workspace preparation commands that mutate tracked so
           preInstall: false,
           prepareCommands: [createCommand(["sh", "-lc", "printf 'dirty\\n' > tracked.txt"])],
           shareSourceDependencies: true,
+          testerSelectionStrategy: "balanced",
           timeoutMinutes: 20,
         },
       }),
@@ -602,7 +624,12 @@ test("run executor records failure for a failing local-command adapter", async (
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -663,7 +690,12 @@ test("run executor persists passing acceptance checks", async () => {
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -715,7 +747,12 @@ test("run executor fails when acceptance checks fail", async () => {
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -820,7 +857,12 @@ test("run executor passes explicit env into acceptance checks without leaking am
     await workerRegistry.upsertWorker(createWorker("ember", "local-command", ["bun", scriptPath]));
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -1088,7 +1130,12 @@ test("run executor completes a planned run with the hermes-api adapter", async (
 
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,
@@ -1247,7 +1294,12 @@ test("run executor completes a planned run with the openclaw-cli adapter", async
 
     const spec: QuestSpec = {
       acceptanceChecks: [],
-      execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
       featureDoc: { enabled: false },
       hotspots: [],
       maxParallel: 1,

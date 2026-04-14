@@ -9,6 +9,11 @@ type SetupWizardWorkerPlan = {
 };
 type SetupWizardResult = {
   calibrateWorkerIds: string[];
+  settingsUpdate: {
+    planner: {
+      testerSelectionStrategy: string;
+    };
+  };
   sinkPlan: { kind: string } | null;
   workerPlans: SetupWizardWorkerPlan[];
 };
@@ -59,6 +64,7 @@ export async function writeSetupSummary(
     `${colorize("Party mode", "cyan")}: ${partyMode}`,
     `${colorize("Workers", "cyan")}: ${result.workerPlans.length}`,
     ...result.workerPlans.map(summarizeWorkerPlan),
+    `${colorize("Tester routing", "cyan")}: ${result.settingsUpdate.planner.testerSelectionStrategy}`,
     `${colorize("Sink", "cyan")}: ${result.sinkPlan?.kind ?? "none"}`,
     `${colorize("Training Grounds", "cyan")}: ${
       result.calibrateWorkerIds.length > 0 ? result.calibrateWorkerIds.join(", ") : "skipped"

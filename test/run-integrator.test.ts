@@ -229,6 +229,7 @@ test("run integrator runs workspace preparation commands before top-level checks
             ]),
           ],
           shareSourceDependencies: true,
+          testerSelectionStrategy: "balanced",
           timeoutMinutes: 20,
         },
         slices: [

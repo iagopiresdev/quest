@@ -99,7 +99,12 @@ test("planner assigns independent slices into the same wave and respects depende
 test("planner serializes overlapping ownership even when maxParallel allows more", () => {
   const spec: QuestSpec = {
     acceptanceChecks: [],
-    execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+    execution: {
+      preInstall: false,
+      shareSourceDependencies: true,
+      testerSelectionStrategy: "balanced",
+      timeoutMinutes: 20,
+    },
     featureDoc: { enabled: false },
     hotspots: ["src/orchestration/**"],
     maxParallel: 3,
@@ -150,7 +155,12 @@ test("planner defers runnable slices to later waves instead of scheduling null a
   const singleWorker = [workers[0] as RegisteredWorker];
   const spec: QuestSpec = {
     acceptanceChecks: [],
-    execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+    execution: {
+      preInstall: false,
+      shareSourceDependencies: true,
+      testerSelectionStrategy: "balanced",
+      timeoutMinutes: 20,
+    },
     featureDoc: { enabled: false },
     hotspots: [],
     maxParallel: 2,
@@ -191,7 +201,12 @@ test("planner defers runnable slices to later waves instead of scheduling null a
 test("planner reports slices with no compatible worker as unassigned", () => {
   const spec: QuestSpec = {
     acceptanceChecks: [],
-    execution: { preInstall: false, shareSourceDependencies: true, timeoutMinutes: 20 },
+    execution: {
+      preInstall: false,
+      shareSourceDependencies: true,
+      testerSelectionStrategy: "balanced",
+      timeoutMinutes: 20,
+    },
     featureDoc: { enabled: false },
     hotspots: [],
     maxParallel: 2,

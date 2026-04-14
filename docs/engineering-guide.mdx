@@ -40,8 +40,8 @@ Read [Design System](/docs/design-system) first when the question is about proje
 9. Keep worker progression inspectable too.
    Calibration history, trust changes, and top strengths should be visible through the CLI so the RPG layer stays grounded in real measured outcomes instead of hidden registry state.
 
-10. Setup should import trustworthy local backend state.
-   If Codex login, Hermes models, or OpenClaw agents are already present locally, setup and worker creation should reuse those facts as defaults instead of forcing the operator to retype them. Imported defaults must still compile down into persisted worker records.
+10. Setup should import trustworthy local backend and sink state.
+   If Codex login, Hermes models, OpenClaw agents, or sink auth env vars are already present locally, setup and worker creation should reuse those facts as defaults instead of forcing the operator to retype them. Imported defaults must still compile down into persisted worker or sink records.
 
 11. Treat mocked coverage as necessary but insufficient.
    If a feature touches real execution, steering, integration, or sink delivery, validate it through at least one real canary path in addition to unit and CLI tests.
@@ -118,7 +118,8 @@ The following invariants should stay true:
 - JSON is the stable CLI contract for automation. Human-readable output may exist as a presentation layer, but it must be derived from the same result object instead of inventing a second command surface.
 - New state should be appended, not inferred from logs after the fact.
 - Failed boss fights must not strand cleanup. If turn-in already failed, cleanup should be allowed to reap workspaces and temporary runner identities.
-- Aggregate operator commands should degrade gracefully over legacy junk. `runs list`, `runs usage --all`, and workspace-prune scans must skip malformed pre-v1 run files with explicit warnings instead of aborting the whole command, while still surfacing real tampering on current run documents.
+- Aggregate operator commands should degrade gracefully over legacy junk. `runs list`, `runs usage --all`, and workspace-prune scans may expose an explicit tolerant mode for malformed pre-v1 run files, but the strict path must remain the default and current-document tampering must still surface as a typed failure.
+- Recovery should be explicit. If operators choose a tolerant aggregate mode, there should still be first-class `runs validate` and `runs quarantine` commands for diagnosis and recovery instead of forcing manual file deletion.
 
 If a future change makes these rules harder to see, the design is getting worse.
 
@@ -227,6 +228,7 @@ Use TypeScript as a modeling tool, not just linting.
 - Normalize unbounded runner text before persisting it into bounded schema fields so a verbose model cannot make stored run state invalid.
 - When a backend needs provider-specific advanced flags, keep them in a bounded typed map instead of scattering one-off properties across worker presets and adapter constructors.
 - Do not use an enum or union selector plus a default parameter to collapse distinct domain policies into one helper. Model the policy as separate named functions and keep the type narrow at each boundary.
+- Do not use inline `as Record<string, unknown>` casts as a shortcut for unknown-input handling. Narrow with a shared guard first, then read properties through that guard.
 
 Good:
 
@@ -392,6 +394,7 @@ Rules:
 - runner, steering, integration, and sink changes should add or update a real canary procedure in the implementation notes, not just a mocked test
 - battle testing should prefer disposable repos plus real backends over synthetic fixtures when validating orchestration behavior
 - architecture checks should guard known design regressions when a simple static rule is available, especially for planner and orchestration anti-patterns that are easy to reintroduce during refactors
+- architecture checks should also block ad hoc record-cast chains when the repo already provides a shared narrowing helper
 
 Add tests for:
 

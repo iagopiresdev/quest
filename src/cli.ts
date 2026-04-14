@@ -37,21 +37,26 @@ import type { QuestRunDocument, QuestRunEvent, QuestRunSliceState } from "./core
 import { QuestRunStore } from "./core/runs/store";
 import { type RunUsageSummary, summarizeRunUsage } from "./core/runs/usage";
 import { SecretStore } from "./core/secret-store";
+import { QuestSettingsStore } from "./core/settings";
 import {
   type DetectedCodexSetup,
   type DetectedHermesSetup,
   type DetectedOpenClawSetup,
+  type DetectedSinkSetup,
   detectCodexSetup,
   detectHermesSetup,
   detectOpenClawSetup,
+  detectSinkSetup,
 } from "./core/setup/detection";
 import { runSetupWizard } from "./core/setup/wizard";
+import { isRecord } from "./core/shared/type-guards";
 import {
   ensureDirectory,
   resolveQuestCalibrationsRoot,
   resolveQuestObservabilityConfigPath,
   resolveQuestObservabilityDeliveriesPath,
   resolveQuestRunsRoot,
+  resolveQuestSettingsPath,
   resolveQuestStateRoot,
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
@@ -102,6 +107,7 @@ type QuestCliCommand =
   | "runs:land"
   | "runs:integrate"
   | "runs:pause"
+  | "runs:quarantine"
   | "runs:resume"
   | "runs:refresh-base"
   | "runs:rescue"
@@ -115,6 +121,7 @@ type QuestCliCommand =
   | "runs:status"
   | "runs:summary"
   | "runs:usage"
+  | "runs:validate"
   | "runs:watch"
   | "runs:chronicle"
   | "secrets:delete"
@@ -148,6 +155,7 @@ type QuestCliContext = {
   runLander: QuestRunLander;
   runPipeline: QuestRunPipeline;
   runStore: QuestRunStore;
+  settingsStore: QuestSettingsStore;
   secretStore: SecretStore;
 };
 
@@ -511,7 +519,12 @@ function buildPlanExplanation(spec: QuestSpec, workers: RegisteredWorker[]) {
       preferredTesterWorkerId: slice.preferredTesterWorkerId ?? null,
       preferredWorkerId: slice.preferredWorkerId ?? null,
       sliceId: slice.id,
-      testerCandidates: rankTesterWorkersForSlice(slice, workers).map((assignment) => ({
+      testerCandidates: rankTesterWorkersForSlice(
+        slice,
+        workers,
+        undefined,
+        spec.execution.testerSelectionStrategy,
+      ).map((assignment) => ({
         role: assignment.worker.role,
         runner: assignment.worker.backend.runner,
         score: assignment.score,
@@ -658,12 +671,11 @@ async function readJsonInput(args: string[]): Promise<unknown> {
   const useStdin = hasFlag(args, "--stdin");
 
   if (filePath) {
+    const raw = await Bun.file(filePath).text();
     if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) {
-      throw new Error(
-        `Only JSON specs are supported today; convert ${filePath} with 'yq -o=json' first`,
-      );
+      return Bun.YAML.parse(raw) as unknown;
     }
-    return JSON.parse(await Bun.file(filePath).text()) as unknown;
+    return JSON.parse(raw) as unknown;
   }
 
   if (useStdin || !stdinIsTty()) {
@@ -672,6 +684,27 @@ async function readJsonInput(args: string[]): Promise<unknown> {
   }
 
   throw new Error("Expected --file <path> or --stdin");
+}
+
+async function readQuestSpecInput(
+  args: string[],
+  settingsStore: QuestSettingsStore,
+): Promise<QuestSpec> {
+  const rawInput = await readJsonInput(args);
+  const settings = await settingsStore.readSettings();
+  if (!isRecord(rawInput)) {
+    return questSpecSchema.parse(rawInput);
+  }
+
+  const execution = isRecord(rawInput.execution) ? rawInput.execution : {};
+
+  return questSpecSchema.parse({
+    ...rawInput,
+    execution: {
+      testerSelectionStrategy: settings.planner.testerSelectionStrategy,
+      ...execution,
+    },
+  });
 }
 
 async function promptWithDefault(question: string, fallback: string): Promise<string> {
@@ -840,6 +873,8 @@ function buildSetupWizardDefaults(
   importedHermes: DetectedHermesSetup | null,
   importedOpenClaw: DetectedOpenClawSetup | null,
   importedSummary: string | undefined,
+  sinkDefaults: DetectedSinkSetup,
+  testerSelectionStrategy: "balanced" | "prefer-cheapest",
 ): Parameters<typeof runSetupWizard>[0]["defaults"] {
   return {
     backend: (backend === "hermes" || backend === "openclaw" ? backend : "codex") as
@@ -853,6 +888,16 @@ function buildSetupWizardDefaults(
     ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
     ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
     ...(importedSummary ? { importSummary: importedSummary } : {}),
+    sinkDefaults: {
+      ...(sinkDefaults.linearApiKeyEnv ? { linearApiKeyEnv: sinkDefaults.linearApiKeyEnv } : {}),
+      ...(importedOpenClaw?.agentId ? { openClawAgentId: importedOpenClaw.agentId } : {}),
+      ...(importedOpenClaw?.gatewayUrl ? { openClawGatewayUrl: importedOpenClaw.gatewayUrl } : {}),
+      ...(sinkDefaults.slackWebhookEnv ? { slackWebhookEnv: sinkDefaults.slackWebhookEnv } : {}),
+      ...(sinkDefaults.telegramBotTokenEnv
+        ? { telegramBotTokenEnv: sinkDefaults.telegramBotTokenEnv }
+        : {}),
+    },
+    testerSelectionStrategy,
   };
 }
 
@@ -1043,6 +1088,7 @@ type SetupPaths = {
   observabilityDeliveriesPath: string;
   registryPath: string;
   runsRoot: string;
+  settingsPath: string;
   stateRoot: string;
   workspacesRoot: string;
 };
@@ -1054,6 +1100,7 @@ type SetupImports = {
   importedHermes: DetectedHermesSetup | null;
   importedOpenClaw: DetectedOpenClawSetup | null;
   importedSummary: string | undefined;
+  sinkDefaults: DetectedSinkSetup;
 };
 
 type SetupWorkerState = {
@@ -1093,6 +1140,9 @@ function resolveSetupPaths(args: string[]): SetupPaths {
     runsRoot: resolveQuestRunsRoot(
       definedPathOptions(stateRoot, "explicitRunsRoot", findOptionValue(args, "--runs-root")),
     ),
+    settingsPath: resolveQuestSettingsPath(
+      definedPathOptions(stateRoot, "explicitSettingsPath", findOptionValue(args, "--settings")),
+    ),
     stateRoot,
     workspacesRoot: resolveQuestWorkspacesRoot(
       definedPathOptions(
@@ -1107,13 +1157,38 @@ function resolveSetupPaths(args: string[]): SetupPaths {
 async function detectSetupImports(args: string[]): Promise<SetupImports> {
   const backend = findOptionValue(args, "--backend") ?? "codex";
   const importedDefaults = await detectBackendDefaults(backend, args);
+  const shouldImportOpenClawDefaults =
+    shouldImportExisting(args) &&
+    (backend === "openclaw" ||
+      (stdinIsTty() && !hasFlag(args, "--yes")) ||
+      findOptionValue(args, "--agent-id") !== undefined ||
+      findOptionValue(args, "--openclaw-executable") !== undefined ||
+      findOptionValue(args, "--gateway-url") !== undefined);
+  const openClawOptions: Parameters<typeof detectOpenClawSetup>[0] = {};
+  const preferredAgentId = findOptionValue(args, "--agent-id");
+  const openClawExecutable =
+    findOptionValue(args, "--executable") ?? findOptionValue(args, "--openclaw-executable");
+  const openClawGatewayUrl = findOptionValue(args, "--gateway-url");
+  if (preferredAgentId) {
+    openClawOptions.agentId = preferredAgentId;
+  }
+  if (openClawExecutable) {
+    openClawOptions.executable = openClawExecutable;
+  }
+  if (openClawGatewayUrl) {
+    openClawOptions.gatewayUrl = openClawGatewayUrl;
+  }
+  const importedOpenClaw =
+    asOpenClawSetup(importedDefaults) ??
+    (shouldImportOpenClawDefaults ? await detectOpenClawSetup(openClawOptions) : null);
   return {
     backend,
     importedCodex: asCodexSetup(importedDefaults),
     importedDefaults,
     importedHermes: asHermesSetup(importedDefaults),
-    importedOpenClaw: asOpenClawSetup(importedDefaults),
+    importedOpenClaw,
     importedSummary: describeImportedBackendDefaults(backend, importedDefaults),
+    sinkDefaults: detectSinkSetup(),
   };
 }
 
@@ -1149,12 +1224,15 @@ async function runInteractiveSetupFlow(
   calibrator: WorkerCalibrator,
   observabilityStore: ObservabilityStore,
   registry: WorkerRegistry,
+  settingsStore: QuestSettingsStore,
   setupImports: SetupImports,
 ): Promise<{
   calibrationResults: Array<{ runId: string; status: string; workerId: string }>;
   configuredSink: Record<string, unknown> | null;
+  settings: Awaited<ReturnType<QuestSettingsStore["writeSettings"]>>;
   workerState: SetupWorkerState;
 }> {
+  const currentSettings = await settingsStore.readSettings();
   const wizardResult = await runSetupWizard({
     defaults: buildSetupWizardDefaults(
       setupImports.backend,
@@ -1162,6 +1240,8 @@ async function runInteractiveSetupFlow(
       setupImports.importedHermes,
       setupImports.importedOpenClaw,
       setupImports.importedSummary,
+      setupImports.sinkDefaults,
+      currentSettings.planner.testerSelectionStrategy,
     ),
   });
   const createdWorkers: RegisteredWorker[] = [];
@@ -1176,6 +1256,7 @@ async function runInteractiveSetupFlow(
       wizardResult.calibrateWorkerIds,
     ),
     configuredSink: await configureSetupSink(observabilityStore, wizardResult.sinkPlan),
+    settings: await settingsStore.writeSettings(wizardResult.settingsUpdate),
     workerState: {
       createdWorker: createdWorkers[0] ?? null,
       createdWorkers,
@@ -1523,28 +1604,17 @@ function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
 }
 
 async function dispatchResultEvents(value: unknown, dispatcher: EventDispatcher): Promise<void> {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return;
   }
 
-  const candidate = value as Record<string, unknown>;
-  const runCandidate = candidate.run;
-  if (
-    runCandidate &&
-    typeof runCandidate === "object" &&
-    runCandidate !== null &&
-    "events" in runCandidate
-  ) {
+  const runCandidate = value.run;
+  if (isRecord(runCandidate) && "events" in runCandidate) {
     await dispatcher.dispatchRun(runCandidate as QuestRunDocument);
   }
 
-  const resultCandidate = candidate.result;
-  if (
-    resultCandidate &&
-    typeof resultCandidate === "object" &&
-    resultCandidate !== null &&
-    "run" in resultCandidate
-  ) {
+  const resultCandidate = value.result;
+  if (isRecord(resultCandidate) && "run" in resultCandidate) {
     const calibrationResult = resultCandidate as {
       calibration?: {
         at: string;
@@ -1937,6 +2007,7 @@ function definedPathOptions<
     | "explicitRunsRoot"
     | "explicitWorkspacesRoot"
     | "explicitCalibrationsRoot"
+    | "explicitSettingsPath"
     | "explicitObservabilityConfigPath"
     | "explicitObservabilityDeliveriesPath",
 >(
@@ -1964,6 +2035,7 @@ async function runSetup(
   calibrator: WorkerCalibrator,
   observabilityStore: ObservabilityStore,
   registry: WorkerRegistry,
+  settingsStore: QuestSettingsStore,
   secretStore: SecretStore,
 ): Promise<Record<string, unknown>> {
   const paths = resolveSetupPaths(args);
@@ -2000,28 +2072,41 @@ async function runSetup(
   };
   let calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
   let configuredSink: Record<string, unknown> | null = null;
+  let settings = await settingsStore.readSettings();
 
   if (interactive) {
     const interactiveResult = await runInteractiveSetupFlow(
       calibrator,
       observabilityStore,
       registry,
+      settingsStore,
       setupImports,
     );
     calibrationResults = interactiveResult.calibrationResults;
     configuredSink = interactiveResult.configuredSink;
+    settings = interactiveResult.settings;
     workerState = interactiveResult.workerState;
-  } else if (shouldCreateWorker) {
-    workerState = await runNonInteractiveSetupFlow(
-      args,
-      setupImports.backend,
-      setupImports.importedCodex,
-      setupImports.importedDefaults,
-      setupImports.importedHermes,
-      setupImports.importedOpenClaw,
-      interactive,
-      registry,
-    );
+  } else {
+    const testerSelection = findOptionValue(args, "--tester-selection");
+    if (testerSelection === "balanced" || testerSelection === "prefer-cheapest") {
+      settings = await settingsStore.writeSettings({
+        planner: {
+          testerSelectionStrategy: testerSelection,
+        },
+      });
+    }
+    if (shouldCreateWorker) {
+      workerState = await runNonInteractiveSetupFlow(
+        args,
+        setupImports.backend,
+        setupImports.importedCodex,
+        setupImports.importedDefaults,
+        setupImports.importedHermes,
+        setupImports.importedOpenClaw,
+        interactive,
+        registry,
+      );
+    }
   }
 
   return {
@@ -2038,6 +2123,7 @@ async function runSetup(
             summary: setupImports.importedSummary ?? null,
           },
     paths,
+    settings,
     workers: await registry.listWorkers(),
   };
 }
@@ -2396,8 +2482,10 @@ function formatLogsPretty(candidate: Record<string, unknown>): string {
 function formatWorkspacePrunePretty(candidate: Record<string, unknown>, value: unknown): string {
   const result = candidate.result as
     | {
+        dryRun?: boolean;
         pruned: Array<{ runId: string; status: string }>;
         skipped: Array<{ reason: string; runId: string; status: string }>;
+        usage?: { exceedsThreshold: boolean; thresholdBytes: number; workspaceBytes: number };
         warnings: Array<{ reason: string; runId: string }>;
       }
     | undefined;
@@ -2406,10 +2494,17 @@ function formatWorkspacePrunePretty(candidate: Record<string, unknown>, value: u
   }
 
   return [
-    `Workspace prune`,
+    `Workspace prune${result.dryRun ? " (dry run)" : ""}`,
     `  pruned: ${result.pruned.length}`,
     `  skipped: ${result.skipped.length}`,
     `  warnings: ${result.warnings.length}`,
+    ...(result.usage
+      ? [
+          `  workspace bytes: ${result.usage.workspaceBytes}`,
+          `  warning threshold: ${result.usage.thresholdBytes}`,
+          `  threshold exceeded: ${result.usage.exceedsThreshold}`,
+        ]
+      : []),
     ...result.pruned.map((entry) => `  - pruned ${entry.runId} (${entry.status})`),
     ...result.skipped.map(
       (entry) => `  - skipped ${entry.runId} (${entry.status}) reason=${entry.reason}`,
@@ -2445,6 +2540,96 @@ function formatRunsListPretty(candidate: Record<string, unknown>): string {
     `${prettyLabels.questLog} (${runs.length})`,
     ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.questTitle}`),
     ...warnings.map((warning) => `  - warning ${warning.runId}: ${warning.reason}`),
+  ].join("\n");
+}
+
+function formatSetupPretty(candidate: Record<string, unknown>): string {
+  const doctor = candidate.doctor as { checks: DoctorCheck[]; ok: boolean } | undefined;
+  const createdWorker = candidate.createdWorker as RegisteredWorker | null | undefined;
+  const createdWorkers = (candidate.createdWorkers as RegisteredWorker[] | undefined) ?? [];
+  const calibrationResults =
+    (candidate.calibrationResults as
+      | Array<{ runId: string; status: string; workerId: string }>
+      | undefined) ?? [];
+  const configuredSink = candidate.configuredSink as { id?: string; type?: string } | undefined;
+  const imports = candidate.imports as { summary?: string | null } | null | undefined;
+  const settings = candidate.settings as
+    | { planner?: { testerSelectionStrategy?: string | null } }
+    | undefined;
+  const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
+  const paths = (candidate.paths as Record<string, string> | undefined) ?? {};
+
+  return [
+    "Quest Runner Setup",
+    `status: ${doctor?.ok === true ? "ok" : "fail"}`,
+    `imported defaults: ${imports?.summary ?? "none"}`,
+    createdWorker ? `created worker: ${formatWorkerLine(createdWorker)}` : "created worker: none",
+    `party members created: ${createdWorkers.length}`,
+    configuredSink
+      ? `sink: ${configuredSink.id ?? "configured"} (${configuredSink.type ?? "unknown"})`
+      : "sink: none",
+    `training grounds: ${
+      calibrationResults.length > 0
+        ? calibrationResults.map((result) => `${result.workerId}:${result.status}`).join(", ")
+        : "skipped"
+    }`,
+    `tester routing: ${settings?.planner?.testerSelectionStrategy ?? "balanced"}`,
+    `workers: ${workers.length}`,
+    "",
+    "Paths",
+    ...Object.entries(paths).map(([key, path]) => `  ${key}: ${path}`),
+    "",
+    "Checks",
+    ...(doctor?.checks ?? []).map((check) => `  ${formatDoctorCheck(check)}`),
+  ].join("\n");
+}
+
+function formatDeliveryAttemptsPretty(candidate: Record<string, unknown>): string {
+  const attempts =
+    (candidate.attempts as
+      | Array<{
+          eventType: string;
+          ok: boolean;
+          sinkId: string;
+          status: string;
+        }>
+      | undefined) ?? [];
+  return [
+    `Delivery attempts (${attempts.length})`,
+    ...attempts.map(
+      (attempt) =>
+        `  - [${attempt.ok ? "ok" : "fail"}] ${attempt.sinkId} | ${attempt.eventType} | ${attempt.status}`,
+    ),
+  ].join("\n");
+}
+
+function formatRunValidationPretty(candidate: Record<string, unknown>, value: unknown): string {
+  const validation = candidate.validation as
+    | { issues?: unknown; ok: boolean; path: string; reason: string; runId: string }
+    | undefined;
+  if (!validation) {
+    return JSON.stringify(value, null, 2);
+  }
+  return [
+    `Run validation: ${validation.runId}`,
+    `  ok: ${validation.ok}`,
+    `  reason: ${validation.reason}`,
+    `  path: ${validation.path}`,
+    ...(validation.issues ? ["", JSON.stringify(validation.issues, null, 2)] : []),
+  ].join("\n");
+}
+
+function formatRunQuarantinePretty(candidate: Record<string, unknown>, value: unknown): string {
+  const quarantine = candidate.quarantine as
+    | { originalPath: string; quarantinedPath: string; runId: string }
+    | undefined;
+  if (!quarantine) {
+    return JSON.stringify(value, null, 2);
+  }
+  return [
+    `Quarantined run: ${quarantine.runId}`,
+    `  from: ${quarantine.originalPath}`,
+    `  to: ${quarantine.quarantinedPath}`,
   ].join("\n");
 }
 
@@ -2523,8 +2708,7 @@ async function watchQuestRun(
 }
 
 function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string {
-  const candidate =
-    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+  const candidate = isRecord(value) ? value : null;
   if (!candidate) {
     return JSON.stringify(value, null, 2);
   }
@@ -2538,41 +2722,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
       );
     }
     case "setup": {
-      const doctor = candidate.doctor as { checks: DoctorCheck[]; ok: boolean } | undefined;
-      const createdWorker = candidate.createdWorker as RegisteredWorker | null | undefined;
-      const createdWorkers = (candidate.createdWorkers as RegisteredWorker[] | undefined) ?? [];
-      const calibrationResults =
-        (candidate.calibrationResults as
-          | Array<{ runId: string; status: string; workerId: string }>
-          | undefined) ?? [];
-      const configuredSink = candidate.configuredSink as { id?: string; type?: string } | undefined;
-      const imports = candidate.imports as { summary?: string | null } | null | undefined;
-      const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
-      const paths = (candidate.paths as Record<string, string> | undefined) ?? {};
-      return [
-        "Quest Runner Setup",
-        `status: ${doctor?.ok === true ? "ok" : "fail"}`,
-        `imported defaults: ${imports?.summary ?? "none"}`,
-        createdWorker
-          ? `created worker: ${formatWorkerLine(createdWorker)}`
-          : "created worker: none",
-        `party members created: ${createdWorkers.length}`,
-        configuredSink
-          ? `sink: ${configuredSink.id ?? "configured"} (${configuredSink.type ?? "unknown"})`
-          : "sink: none",
-        `training grounds: ${
-          calibrationResults.length > 0
-            ? calibrationResults.map((result) => `${result.workerId}:${result.status}`).join(", ")
-            : "skipped"
-        }`,
-        `workers: ${workers.length}`,
-        "",
-        "Paths",
-        ...Object.entries(paths).map(([key, path]) => `  ${key}: ${path}`),
-        "",
-        "Checks",
-        ...(doctor?.checks ?? []).map((check) => `  ${formatDoctorCheck(check)}`),
-      ].join("\n");
+      return formatSetupPretty(candidate);
     }
     case "workers:list": {
       const workers = (candidate.workers as RegisteredWorker[] | undefined) ?? [];
@@ -2669,22 +2819,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "observability:sinks:test":
     case "observability:deliveries:retry": {
-      const attempts =
-        (candidate.attempts as
-          | Array<{
-              eventType: string;
-              ok: boolean;
-              sinkId: string;
-              status: string;
-            }>
-          | undefined) ?? [];
-      return [
-        `Delivery attempts (${attempts.length})`,
-        ...attempts.map(
-          (attempt) =>
-            `  - [${attempt.ok ? "ok" : "fail"}] ${attempt.sinkId} | ${attempt.eventType} | ${attempt.status}`,
-        ),
-      ].join("\n");
+      return formatDeliveryAttemptsPretty(candidate);
     }
     case "observability:webhook:upsert":
     case "observability:telegram:upsert":
@@ -2731,6 +2866,12 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     }
     case "workspaces:prune": {
       return formatWorkspacePrunePretty(candidate, value);
+    }
+    case "runs:validate": {
+      return formatRunValidationPretty(candidate, value);
+    }
+    case "runs:quarantine": {
+      return formatRunQuarantinePretty(candidate, value);
     }
     case "run":
     case "runs:status":
@@ -2864,10 +3005,10 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "setup",
     matches: (args) => args.length >= 1 && args[0] === "setup",
-    run: async ({ args, calibrator, observabilityStore, registry, secretStore }) =>
-      await runSetup(args, calibrator, observabilityStore, registry, secretStore),
+    run: async ({ args, calibrator, observabilityStore, registry, settingsStore, secretStore }) =>
+      await runSetup(args, calibrator, observabilityStore, registry, settingsStore, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",
@@ -3318,8 +3459,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "plan",
     matches: (args) => args.length >= 1 && args[0] === "plan",
-    run: async ({ args, registry }) => {
-      const spec = questSpecSchema.parse(await readJsonInput(args));
+    run: async ({ args, registry, settingsStore }) => {
+      const spec = await readQuestSpecInput(args, settingsStore);
       const workerId = findOptionValue(args, "--worker-id");
       const workers = await registry.listWorkers();
       const plannedSpec = workerId
@@ -3345,8 +3486,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "run",
     matches: (args) => args.length >= 1 && args[0] === "run",
-    run: async ({ args, registry, runStore }) => {
-      const spec = questSpecSchema.parse(await readJsonInput(args));
+    run: async ({ args, registry, runStore, settingsStore }) => {
+      const spec = await readQuestSpecInput(args, settingsStore);
       return {
         run: await runStore.createRun(spec, await registry.listWorkers(), {
           forcedWorkerId: findOptionValue(args, "--worker-id") ?? undefined,
@@ -3360,27 +3501,64 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "workspaces:prune",
     matches: (args) => args.length >= 2 && args[0] === "workspaces" && args[1] === "prune",
-    run: async ({ args, runCleanup }) => ({
+    run: async ({ args, runCleanup, settingsStore }) => ({
       result: await runCleanup.pruneWorkspaces({
+        dryRun: hasFlag(args, "--dry-run"),
         olderThanMs: findOptionValue(args, "--older-than")
           ? parseDurationToMilliseconds(
               requireOptionValue(args, "--older-than", "--older-than <72h>"),
             )
           : undefined,
+        skipInvalidSchema: hasFlag(args, "--skip-invalid"),
         statuses: parsePruneStatuses(findOptionValue(args, "--status")),
+        warningThresholdBytes: findOptionValue(args, "--warning-threshold-bytes")
+          ? parsePositiveInteger(
+              requireOptionValue(
+                args,
+                "--warning-threshold-bytes",
+                "--warning-threshold-bytes <n>",
+              ),
+              "warning-threshold-bytes",
+            )
+          : (await settingsStore.readSettings()).maintenance.workspaceWarningBytes,
       }),
     }),
     usage:
-      "quest workspaces prune [--older-than <72h>] [--status <landed,completed,aborted,orphaned>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+      "quest workspaces prune [--older-than <72h>] [--status <landed,completed,aborted,orphaned>] [--dry-run] [--skip-invalid] [--warning-threshold-bytes <n>] [--runs-root <path>] [--workspaces-root <path>] [--settings <path>] [--state-root <path>]",
   },
   {
     id: "runs:list",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "list",
-    run: async ({ runStore }) => {
-      const listed = await runStore.listRunsWithWarnings();
+    run: async ({ args, runStore }) => {
+      const listed = await runStore.listRunsWithWarnings({
+        skipInvalidSchema: hasFlag(args, "--skip-invalid"),
+      });
       return { runs: listed.runs, warnings: listed.warnings };
     },
-    usage: "quest runs list [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+    usage:
+      "quest runs list [--skip-invalid] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:validate",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "validate",
+    run: async ({ args, runStore }) => ({
+      validation: await runStore.validateRunDocument(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+      ),
+    }),
+    usage:
+      "quest runs validate --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
+    id: "runs:quarantine",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "quarantine",
+    run: async ({ args, runStore }) => ({
+      quarantine: await runStore.quarantineRunDocument(
+        requireOptionValue(args, "--id", "--id <run-id>"),
+      ),
+    }),
+    usage:
+      "quest runs quarantine --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
     id: "runs:abort",
@@ -3723,9 +3901,13 @@ async function main(): Promise<number> {
       findOptionValue(args, "--observability-deliveries"),
     ),
   );
+  const settingsPath = resolveQuestSettingsPath(
+    definedPathOptions(stateRoot, "explicitSettingsPath", findOptionValue(args, "--settings")),
+  );
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const secretStore = new SecretStore();
+  const settingsStore = new QuestSettingsStore(settingsPath);
   const observabilityStore = new ObservabilityStore(
     observabilityConfigPath,
     observabilityDeliveriesPath,
@@ -3754,6 +3936,7 @@ async function main(): Promise<number> {
       runPipeline,
       runRefresher,
       runStore,
+      settingsStore,
       secretStore,
     });
     if (command.id !== "runs:watch") {

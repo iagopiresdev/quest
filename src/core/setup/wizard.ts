@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline/promises";
+import type { TesterSelectionStrategy } from "../settings";
 import type { WorkerUpdate } from "../workers/management";
 import {
   defaultSetupArchetype,
@@ -24,6 +25,11 @@ export type SetupWizardSinkPlan = {
 
 export type SetupWizardResult = {
   calibrateWorkerIds: string[];
+  settingsUpdate: {
+    planner: {
+      testerSelectionStrategy: TesterSelectionStrategy;
+    };
+  };
   sinkPlan: SetupWizardSinkPlan;
   workerPlans: SetupWizardWorkerPlan[];
 };
@@ -35,6 +41,14 @@ type SetupWizardDefaults = {
   envVar?: string;
   importSummary?: string;
   profile?: string;
+  sinkDefaults?: {
+    linearApiKeyEnv?: string;
+    openClawAgentId?: string;
+    openClawGatewayUrl?: string;
+    slackWebhookEnv?: string;
+    telegramBotTokenEnv?: string;
+  };
+  testerSelectionStrategy: TesterSelectionStrategy;
 };
 
 type SetupWizardPromptContext = {
@@ -217,6 +231,7 @@ async function promptWorkerPlan(
 
 async function promptSinkPlan(
   cli: ReturnType<typeof createInterface>,
+  defaults: SetupWizardDefaults,
 ): Promise<SetupWizardSinkPlan> {
   const sinkKind = await chooseOne(
     cli,
@@ -256,7 +271,7 @@ async function promptSinkPlan(
     const botTokenEnv = await promptWithDefault(
       cli,
       "Telegram bot token env",
-      "TELEGRAM_BOT_TOKEN",
+      defaults.sinkDefaults?.telegramBotTokenEnv ?? "TELEGRAM_BOT_TOKEN",
     );
     return { args: ["--chat-id", chatId, "--bot-token-env", botTokenEnv], kind: "telegram" };
   }
@@ -269,7 +284,11 @@ async function promptSinkPlan(
       "direct",
     );
     if (authMode === "env") {
-      const urlEnv = await promptWithDefault(cli, "Slack webhook env", "SLACK_WEBHOOK_URL");
+      const urlEnv = await promptWithDefault(
+        cli,
+        "Slack webhook env",
+        defaults.sinkDefaults?.slackWebhookEnv ?? "SLACK_WEBHOOK_URL",
+      );
       return { args: ["--url-env", urlEnv], kind: "slack" };
     }
     if (authMode === "secret-store") {
@@ -282,13 +301,21 @@ async function promptSinkPlan(
   }
 
   if (sinkKind === "openclaw") {
-    const agentId = await promptWithDefault(cli, "OpenClaw sink agent id", "main");
+    const agentId = await promptWithDefault(
+      cli,
+      "OpenClaw sink agent id",
+      defaults.sinkDefaults?.openClawAgentId ?? "main",
+    );
     const sessionId = await promptWithDefault(
       cli,
       "OpenClaw sink session id",
       "quest-observability",
     );
-    const gatewayUrl = await promptWithDefault(cli, "OpenClaw sink gateway URL", "");
+    const gatewayUrl = await promptWithDefault(
+      cli,
+      "OpenClaw sink gateway URL",
+      defaults.sinkDefaults?.openClawGatewayUrl ?? "",
+    );
     const args = ["--agent-id", agentId, "--session-id", sessionId];
     if (gatewayUrl.length > 0) {
       args.push("--gateway-url", gatewayUrl);
@@ -308,8 +335,23 @@ async function promptSinkPlan(
     return { args: ["--issue-id", issueId, "--api-key-secret-ref", secretRef], kind: "linear" };
   }
 
-  const apiKeyEnv = await promptWithDefault(cli, "Linear API key env", "LINEAR_API_KEY");
+  const apiKeyEnv = await promptWithDefault(
+    cli,
+    "Linear API key env",
+    defaults.sinkDefaults?.linearApiKeyEnv ?? "LINEAR_API_KEY",
+  );
   return { args: ["--issue-id", issueId, "--api-key-env", apiKeyEnv], kind: "linear" };
+}
+
+async function promptTesterSelectionStrategy(
+  cli: ReturnType<typeof createInterface>,
+  fallback: TesterSelectionStrategy,
+): Promise<TesterSelectionStrategy> {
+  await writeSetupSection(
+    "Trials",
+    "Choose whether the planner values the strongest tester overall or the cheapest eligible tester.",
+  );
+  return await chooseOne(cli, "Tester routing", ["balanced", "prefer-cheapest"] as const, fallback);
 }
 
 function deriveCalibrationIds(workerPlans: SetupWizardWorkerPlan[]): string[] {
@@ -346,6 +388,10 @@ export async function runSetupWizard(
       ["hybrid", "split"] as const,
       "hybrid",
     )) as SetupWizardPartyMode;
+    const testerSelectionStrategy = await promptTesterSelectionStrategy(
+      cli,
+      context.defaults.testerSelectionStrategy,
+    );
 
     const workerPlans: SetupWizardWorkerPlan[] = [];
     if (partyMode === "hybrid") {
@@ -356,7 +402,7 @@ export async function runSetupWizard(
     }
 
     await writeSetupSection("Observability", "Choose where quest events should be delivered.");
-    const sinkPlan = await promptSinkPlan(cli);
+    const sinkPlan = await promptSinkPlan(cli, context.defaults);
 
     await writeSetupSection("Training Grounds", "Decide whether to calibrate the new party now.");
     const runCalibration = await confirmWithDefault(
@@ -366,6 +412,11 @@ export async function runSetupWizard(
     );
     const result = {
       calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
+      settingsUpdate: {
+        planner: {
+          testerSelectionStrategy,
+        },
+      },
       sinkPlan,
       workerPlans,
     };

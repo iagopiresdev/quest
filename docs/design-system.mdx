@@ -79,6 +79,7 @@ Some design mistakes are bad enough that they should be called out explicitly in
 
 Current anti-patterns:
 - Do not hide lifecycle or routing policy behind a defaulted selector parameter.
+- Do not collapse unknown objects behind inline `as Record<string, unknown>` cast chains.
   Bad:
   a helper like `scoreWorker(..., phase = "builder")`
 - Builder and tester policy are different domain rules and must have different entry points.
@@ -86,6 +87,7 @@ Current anti-patterns:
 
 Why this rule exists:
 - defaulted selector parameters make distinct policies look interchangeable
+- record-cast chains hide the point where untrusted input becomes trusted shape
 - they encourage “just add another branch” growth
 - they make planner and orchestration code harder to review because the active rule is not obvious at the call site
 

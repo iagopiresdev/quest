@@ -2,6 +2,7 @@ export const QUEST_ERROR_CODES = [
   "invalid_worker_registry",
   "invalid_worker_definition",
   "invalid_observability_config",
+  "invalid_quest_settings",
   "quest_acceptance_check_failed",
   "quest_feature_doc_failed",
   "quest_integration_failed",

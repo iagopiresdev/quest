@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { testerSelectionStrategySchema } from "../settings";
 import { workerDisciplineSchema, workerRunnerSchema } from "../workers/schema";
 
 const nonEmptyString = (max: number) => z.string().trim().min(1).max(max);
@@ -33,6 +34,7 @@ export const questExecutionSchema = z
     preInstall: z.boolean().default(false),
     prepareCommands: z.array(questCommandSchema).max(8).optional(),
     shareSourceDependencies: z.boolean().default(true),
+    testerSelectionStrategy: testerSelectionStrategySchema.default("balanced"),
     timeoutMinutes: z.number().int().min(1).max(240).default(20),
   })
   .strict();
@@ -64,6 +66,7 @@ export const questSpecSchema = z
     execution: questExecutionSchema.default({
       preInstall: false,
       shareSourceDependencies: true,
+      testerSelectionStrategy: "balanced",
       timeoutMinutes: 20,
     }),
     featureDoc: questFeatureDocSchema.default({ enabled: false }),

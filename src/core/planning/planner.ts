@@ -1,4 +1,5 @@
 import { QuestDomainError } from "../errors";
+import type { TesterSelectionStrategy } from "../settings";
 import { workerSupportsBuilderRole, workerSupportsTesterRole } from "../workers/management";
 import type { RegisteredWorker, WorkerDiscipline } from "../workers/schema";
 import type { QuestSliceSpec, QuestSpec } from "./spec-schema";
@@ -248,6 +249,7 @@ export function scoreTesterWorkerForSlice(
   worker: RegisteredWorker,
   preferredWorker: boolean,
   builderWorkerId?: string | undefined,
+  strategy: TesterSelectionStrategy = "balanced",
 ): number {
   const trustScore = worker.trust.rating * 100;
   const resourcePenalty =
@@ -258,6 +260,12 @@ export function scoreTesterWorkerForSlice(
   const contextScore = worker.stats.contextEndurance * 0.2;
   const speedScore = worker.stats.speed * 0.15;
   const independenceBonus = builderWorkerId && worker.id !== builderWorkerId ? 10 : 0;
+  const cheapestBias =
+    strategy === "prefer-cheapest"
+      ? worker.resources.cpuCost * 8 +
+        worker.resources.memoryCost * 6 +
+        worker.resources.gpuCost * 10
+      : 0;
 
   return Number(
     (
@@ -268,7 +276,8 @@ export function scoreTesterWorkerForSlice(
       speedScore +
       preferredBonus +
       independenceBonus -
-      resourcePenalty
+      resourcePenalty -
+      cheapestBias
     ).toFixed(2),
   );
 }
@@ -294,16 +303,17 @@ export function rankTesterWorkersForSlice(
   slice: QuestSliceSpec,
   workers: RegisteredWorker[],
   builderWorkerId?: string | undefined,
+  strategy: TesterSelectionStrategy = "balanced",
 ): WorkerAssignment[] {
   return [...workers]
     .filter((worker) => isTesterCompatibleWithSlice(worker, slice))
     .sort(
       (left, right) =>
-        scoreTesterWorkerForSlice(right, false, builderWorkerId) -
-        scoreTesterWorkerForSlice(left, false, builderWorkerId),
+        scoreTesterWorkerForSlice(right, false, builderWorkerId, strategy) -
+        scoreTesterWorkerForSlice(left, false, builderWorkerId, strategy),
     )
     .map((worker) => ({
-      score: scoreTesterWorkerForSlice(worker, false, builderWorkerId),
+      score: scoreTesterWorkerForSlice(worker, false, builderWorkerId, strategy),
       worker,
     }));
 }
@@ -363,6 +373,7 @@ function buildTesterCandidates(
   workers: RegisteredWorker[],
   warnings: QuestPlanWarning[],
   builderWorkerId: string,
+  strategy: TesterSelectionStrategy,
 ): WorkerAssignment[] {
   const enabledWorkers = workers.filter((worker) => worker.enabled);
   const compatibleWorkers = enabledWorkers.filter((worker) =>
@@ -394,10 +405,10 @@ function buildTesterCandidates(
       );
       return [
         {
-          score: scoreTesterWorkerForSlice(preferredWorker, true, builderWorkerId),
+          score: scoreTesterWorkerForSlice(preferredWorker, true, builderWorkerId, strategy),
           worker: preferredWorker,
         },
-        ...rankTesterWorkersForSlice(slice, fallbackWorkers, builderWorkerId),
+        ...rankTesterWorkersForSlice(slice, fallbackWorkers, builderWorkerId, strategy),
       ];
     }
   }
@@ -411,7 +422,7 @@ function buildTesterCandidates(
     return [];
   }
 
-  return rankTesterWorkersForSlice(slice, compatibleWorkers, builderWorkerId);
+  return rankTesterWorkersForSlice(slice, compatibleWorkers, builderWorkerId, strategy);
 }
 
 function assertNoDependencyCycles(spec: QuestSpec): void {
@@ -559,7 +570,13 @@ function buildPlannedWaveSlice(
   assignment: WorkerAssignment,
   waveIndex: number,
 ): PlannedQuestSlice | null {
-  const testerAssignments = buildTesterCandidates(slice, workers, warnings, assignment.worker.id);
+  const testerAssignments = buildTesterCandidates(
+    slice,
+    workers,
+    warnings,
+    assignment.worker.id,
+    spec.execution.testerSelectionStrategy,
+  );
   const testerAssignment =
     testerAssignments.find((candidate) => candidate.worker.id !== assignment.worker.id) ??
     testerAssignments[0] ??

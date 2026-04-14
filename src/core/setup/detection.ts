@@ -64,6 +64,12 @@ export type DetectedOpenClawSetup = {
   profile: string | null;
 };
 
+export type DetectedSinkSetup = {
+  linearApiKeyEnv: string | null;
+  slackWebhookEnv: string | null;
+  telegramBotTokenEnv: string | null;
+};
+
 function resolveExecutableCandidate(
   explicit: string | undefined,
   envVar: string | undefined,
@@ -200,5 +206,13 @@ export async function detectOpenClawSetup(
     gatewayUrl: options.gatewayUrl?.trim() || statusPayload?.gateway?.url?.trim() || null,
     ok: statusResult.exitCode === 0 && statusPayload?.gateway?.reachable === true,
     profile: selectedAgent?.model ?? (selectedAgent ? `openclaw/${selectedAgent.id}` : null),
+  };
+}
+
+export function detectSinkSetup(): DetectedSinkSetup {
+  return {
+    linearApiKeyEnv: Bun.env.LINEAR_API_KEY?.trim() ? "LINEAR_API_KEY" : null,
+    slackWebhookEnv: Bun.env.SLACK_WEBHOOK_URL?.trim() ? "SLACK_WEBHOOK_URL" : null,
+    telegramBotTokenEnv: Bun.env.TELEGRAM_BOT_TOKEN?.trim() ? "TELEGRAM_BOT_TOKEN" : null,
   };
 }
