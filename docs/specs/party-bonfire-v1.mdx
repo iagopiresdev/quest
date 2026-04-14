@@ -39,6 +39,15 @@ Persist a single global document:
 
 The state must survive separate CLI invocations. An in-memory flag would be misleading because Quest is command-driven.
 
+## Idempotency and re-commands
+
+The two commands are intentionally asymmetric:
+
+- `quest party bonfire` is **not** idempotent. Re-running it while already resting updates the stored `reason` and appends a new `party_bonfire_lit` event. This lets operators annotate the current rest ("now waiting on the upstream outage") without forcing a resume + re-bonfire cycle.
+- `quest party resume` **is** idempotent. Re-running it while already active is a silent no-op — no new event, no state mutation.
+
+Rationale: the rest state carries operator intent (the reason) that changes over time; the active state is uniform and carries no such context, so re-emitting `party_resumed` events would just add noise to the audit log.
+
 ## Dispatch rule
 
 Only gate new dispatch boundaries:
