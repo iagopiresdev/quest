@@ -4,6 +4,7 @@ import type { RegisteredWorker, WorkerDiscipline } from "../workers/schema";
 import type { QuestSliceSpec, QuestSpec } from "./spec-schema";
 
 type QuestPlanWarningCode =
+  | "ownership_conflict"
   | "preferred_worker_missing"
   | "preferred_worker_incompatible"
   | "preferred_tester_missing"
@@ -14,6 +15,8 @@ type QuestPlanWarningCode =
 export type QuestPlanWarning = {
   code: QuestPlanWarningCode;
   message: string;
+  paths?: string[];
+  relatedSliceIds?: string[];
   sliceId: string;
 };
 
@@ -124,6 +127,56 @@ function collectConflictPaths(
   }
 
   return [...conflicts].sort();
+}
+
+function collectPairConflictPaths(left: QuestSliceSpec, right: QuestSliceSpec): string[] {
+  const conflicts = new Set<string>();
+
+  for (const leftPattern of left.owns) {
+    for (const rightPattern of right.owns) {
+      if (!patternsConflict(leftPattern, rightPattern)) {
+        continue;
+      }
+
+      conflicts.add(leftPattern);
+      conflicts.add(rightPattern);
+    }
+  }
+
+  return [...conflicts].sort();
+}
+
+function buildOwnershipConflictWarnings(spec: QuestSpec): QuestPlanWarning[] {
+  const warnings: QuestPlanWarning[] = [];
+
+  for (let index = 0; index < spec.slices.length; index += 1) {
+    const left = spec.slices[index];
+    if (!left) {
+      continue;
+    }
+
+    for (let otherIndex = index + 1; otherIndex < spec.slices.length; otherIndex += 1) {
+      const right = spec.slices[otherIndex];
+      if (!right) {
+        continue;
+      }
+
+      const conflictPaths = collectPairConflictPaths(left, right);
+      if (conflictPaths.length === 0) {
+        continue;
+      }
+
+      warnings.push({
+        code: "ownership_conflict",
+        message: `Slices ${left.id} and ${right.id} overlap on owned paths`,
+        paths: conflictPaths,
+        relatedSliceIds: [left.id, right.id],
+        sliceId: left.id,
+      });
+    }
+  }
+
+  return warnings;
 }
 
 export function isBuilderCompatibleWithSlice(
@@ -619,7 +672,7 @@ function buildWaveSlices(
 export function planQuest(spec: QuestSpec, workers: RegisteredWorker[]): QuestPlan {
   assertNoDependencyCycles(spec);
 
-  const warnings: QuestPlanWarning[] = [];
+  const warnings: QuestPlanWarning[] = buildOwnershipConflictWarnings(spec);
   const builderAssignments = new Map<string, WorkerAssignment[]>();
   const sliceMap = new Map(spec.slices.map((slice) => [slice.id, slice]));
   const unassigned = new Map<string, UnassignedQuestSlice>();

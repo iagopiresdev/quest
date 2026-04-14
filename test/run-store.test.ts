@@ -260,6 +260,7 @@ test("run store records explicit rescue status changes", async () => {
       createWorkerForRunner("ember"),
     ]);
     const updated = await store.updateIntegrationRescueStatus(run.id, "rescued", "manual merge");
+    expect(updated.integrationRescueNote).toBe("manual merge");
     expect(updated.integrationRescueStatus).toBe("rescued");
     expect(updated.events.at(-1)).toMatchObject({
       details: expect.objectContaining({ note: "manual merge", status: "rescued" }),

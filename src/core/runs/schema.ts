@@ -103,6 +103,7 @@ const questPlanWaveSchema = z
 const questPlanWarningSchema = z
   .object({
     code: z.enum([
+      "ownership_conflict",
       "preferred_worker_missing",
       "preferred_worker_incompatible",
       "preferred_tester_missing",
@@ -111,6 +112,8 @@ const questPlanWarningSchema = z
       "no_worker_available",
     ]),
     message: nonEmptyString(240),
+    paths: z.array(nonEmptyString(240)).optional(),
+    relatedSliceIds: z.array(nonEmptyString(80)).optional(),
     sliceId: nonEmptyString(80),
   })
   .strict();
@@ -210,6 +213,7 @@ export const questRunDocumentSchema = z
     featureDocPath: nonEmptyString(400).optional(),
     id: questRunIdSchema,
     integrationRescueStatus: z.enum(["abandoned", "pending", "rescued", "unset"]).optional(),
+    integrationRescueNote: nonEmptyString(QUEST_RUN_SLICE_MESSAGE_MAX_LENGTH).optional(),
     integrationBaseRevision: nonEmptyString(80).optional(),
     integrationWorkspacePath: nonEmptyString(400).optional(),
     lastIntegrationChecks: z.array(questRunCheckResultSchema).optional(),

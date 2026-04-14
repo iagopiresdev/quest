@@ -17,6 +17,7 @@ import {
   createWorkerJson,
   runCli,
   runCliAsync,
+  spawnCli,
 } from "./helpers";
 
 const activeContexts: CliTestContext[] = [];
@@ -1765,6 +1766,7 @@ test("quest cli can babysit dead runs and update rescue state", () => {
   ]);
   expect(rescued.code).toBe(0);
   const rescuedRun = JSON.parse(rescued.stdout).run;
+  expect(rescuedRun.integrationRescueNote).toBe("manual resolution");
   expect(rescuedRun.integrationRescueStatus).toBe("rescued");
 });
 
@@ -2145,10 +2147,10 @@ test("quest cli pretty prints run summaries when requested", async () => {
   const summary = await runCliAsync(context, ["runs", "summary", "--id", runId, "--pretty"]);
   expect(summary.code).toBe(0);
   expect(summary.stdout).toContain(`Quest ${runId}`);
-  expect(summary.stdout).toContain("quest status: planned");
-  expect(summary.stdout).toContain("encounters:");
-  expect(summary.stdout).toContain("boss fight:");
-  expect(summary.stdout).toContain("turn-in:");
+  expect(summary.stdout).toContain("Quest Status: planned");
+  expect(summary.stdout).toContain("Encounters:");
+  expect(summary.stdout).toContain("Boss Fight:");
+  expect(summary.stdout).toContain("Turn-in:");
   expect(summary.stdout).not.toContain('"summary"');
 });
 
@@ -2157,14 +2159,78 @@ test("quest cli pretty prints briefing and party selection when requested", () =
 
   expectWorkerUpserted(context);
   const plan = runCli(context, ["plan", "--stdin", "--explain", "--pretty"], {
-    input: JSON.stringify(createSpec({ title: "RPG briefing test" })),
+    input: JSON.stringify(
+      createSpec({
+        slices: [
+          createSlice({
+            id: "first",
+            owns: ["src/shared.ts"],
+            title: "First",
+          }),
+          createSlice({
+            id: "second",
+            owns: ["src/**"],
+            title: "Second",
+          }),
+        ],
+        title: "RPG briefing test",
+      }),
+    ),
   });
 
   expect(plan.code).toBe(0);
   expect(plan.stdout).toContain("Briefing:");
-  expect(plan.stdout).toContain("party wave 1:");
+  expect(plan.stdout).toContain("Wave 1:");
   expect(plan.stdout).toContain("Party Selection");
-  expect(plan.stdout).toContain("encounter");
+  expect(plan.stdout).toContain("Encounter");
+  expect(plan.stdout).toContain("warning [ownership_conflict]");
+});
+
+test("quest cli pretty watches run progress", async () => {
+  const context = trackContext();
+  const scriptPath = join(context.stateRoot, "worker-watch.ts");
+  writeFileSync(
+    scriptPath,
+    ["await Bun.sleep(1200);", "console.log('watch-finished');"].join("\n"),
+    "utf8",
+  );
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
+
+  const created = await runCliAsync(context, ["run", "--stdin"], {
+    input: JSON.stringify(createSpec({ title: "Watch quest run" })),
+  });
+  expect(created.code).toBe(0);
+  const runId = JSON.parse(created.stdout).run.id as string;
+
+  const executeProcess = spawnCli(context, ["runs", "execute", "--id", runId]);
+  await Bun.sleep(150);
+
+  try {
+    const watch = await runCliAsync(context, [
+      "--pretty",
+      "runs",
+      "watch",
+      "--id",
+      runId,
+      "--poll-ms",
+      "100",
+    ]);
+    expect(watch.code).toBe(0);
+    expect(watch.stdout).toContain("Quest started");
+    expect(watch.stdout).toContain("Encounter started: parser");
+    expect(watch.stdout).toContain("Heartbeat:");
+    expect(watch.stdout).toContain(`Quest ${runId}`);
+  } finally {
+    const [executeCode, executeStderr] = await Promise.all([
+      executeProcess.exited,
+      new Response(executeProcess.stderr).text(),
+    ]);
+    expect(executeCode).toBe(0);
+    expect(executeStderr).toBe("");
+  }
 });
 
 test("quest cli pretty prints roster views when requested", () => {
@@ -2225,6 +2291,6 @@ test("quest cli pretty prints trials in chronicle output when requested", async 
   const logs = await runCliAsync(context, ["runs", "logs", "--id", runId, "--pretty"]);
   expect(logs.code).toBe(0);
   expect(logs.stdout).toContain("Chronicle");
-  expect(logs.stdout).toContain("encounter=trial-slice");
-  expect(logs.stdout).toContain("trial=bun -e console.log('trial-ok')");
+  expect(logs.stdout).toContain("Encounter=trial-slice");
+  expect(logs.stdout).toContain("Trial=bun -e console.log('trial-ok')");
 });

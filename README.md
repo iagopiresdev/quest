@@ -411,7 +411,8 @@ Top-level spec `acceptanceChecks` run in that integration worktree after slices 
 `--dry-run --auto-integrate` is intentionally invalid because the dry-run adapter does not produce real slice results to land.
 `--land` without `--auto-integrate` is intentionally invalid on `runs execute`; use `runs land` for already integrated runs.
 `runs cancel` is the explicit stop command for active execution, boss fight, or turn-in phases. `runs abort` remains as a compatibility alias.
-`runs babysit` marks dead or stale in-flight runs as `orphaned`, and `runs rescue` records whether a failed boss fight or turn-in was manually recovered or abandoned.
+`runs babysit` marks dead or stale in-flight runs as `orphaned`, and `runs rescue` records whether a failed boss fight or turn-in was manually recovered or abandoned. The latest rescue note is denormalized onto the run so summaries can show it without replaying the full event log.
+Planner conflict handling is conservative on purpose: overlapping `owns` patterns are serialized into separate waves and now emit explicit plan warnings so hot ownership conflicts are visible before execution starts.
 Acceptance checks are structured argv commands, not shell strings. Example:
 
 ```json
@@ -626,6 +627,9 @@ quest runs list
 
 # inspect one persisted quest run
 quest runs status --id quest-abc12345-deadbeef
+
+# watch one run live until it settles
+quest runs watch --id quest-abc12345-deadbeef
 
 # inspect a compact run summary
 quest runs summary --id quest-abc12345-deadbeef

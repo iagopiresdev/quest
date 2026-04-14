@@ -326,6 +326,27 @@ export async function runCliAsync(
   };
 }
 
+export function spawnCli(
+  context: CliTestContext,
+  args: string[],
+  options: { env?: Record<string, string | undefined>; input?: string } = {},
+) {
+  return Bun.spawn({
+    cmd: ["bun", ...cliArgs, ...args],
+    cwd: projectRoot,
+    env: {
+      ...Bun.env,
+      ...options.env,
+      QUEST_RUNNER_STATE_ROOT: context.stateRoot,
+      QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
+      QUEST_RUNNER_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
+    },
+    stdin: options.input ? textEncoder.encode(options.input) : "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
 export function createWorker(
   overrides: Partial<RegisteredWorker> = {},
   backendOverrides: Partial<RegisteredWorker["backend"]> = {},

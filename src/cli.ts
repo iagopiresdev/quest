@@ -30,7 +30,7 @@ import { appendEvent } from "./core/runs/lifecycle";
 import { QuestRunPipeline } from "./core/runs/pipeline";
 import { runSubprocess } from "./core/runs/process";
 import { buildProcessEnv } from "./core/runs/process-env";
-import type { QuestRunDocument, QuestRunSliceState } from "./core/runs/schema";
+import type { QuestRunDocument, QuestRunEvent, QuestRunSliceState } from "./core/runs/schema";
 import { QuestRunStore } from "./core/runs/store";
 import { type RunUsageSummary, summarizeRunUsage } from "./core/runs/usage";
 import { SecretStore } from "./core/secret-store";
@@ -108,6 +108,7 @@ type QuestCliCommand =
   | "runs:status"
   | "runs:summary"
   | "runs:usage"
+  | "runs:watch"
   | "runs:chronicle"
   | "secrets:delete"
   | "secrets:set"
@@ -131,6 +132,7 @@ type QuestCliContext = {
   calibrator: WorkerCalibrator;
   dispatcher: EventDispatcher;
   observabilityStore: ObservabilityStore;
+  outputMode: OutputMode;
   runCleanup: QuestRunCleanup;
   registry: WorkerRegistry;
   runExecutor: QuestRunExecutor;
@@ -177,6 +179,7 @@ type RunDetailSummary = {
   integration: {
     checkCount: number;
     landedAt: string | null;
+    rescueNote: string | null;
     rescueStatus: string;
     status: string;
     targetRef: string | null;
@@ -549,6 +552,15 @@ function parseDurationToMilliseconds(value: string): number {
     s: 1000,
   };
   return amount * (multipliers[unit] ?? 0);
+}
+
+function parsePositiveInteger(value: string, label: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
+
+  return parsed;
 }
 
 function parsePruneStatuses(
@@ -1472,6 +1484,7 @@ function summarizeRunDetail(run: QuestRunDocument): RunDetailSummary {
     integration: {
       checkCount: run.lastIntegrationChecks?.length ?? 0,
       landedAt: run.landedAt ?? null,
+      rescueNote: run.integrationRescueNote ?? null,
       rescueStatus: run.integrationRescueStatus ?? "unset",
       status: integrationStatus,
       targetRef: run.targetRef ?? null,
@@ -1977,17 +1990,20 @@ function formatWorkerLine(worker: RegisteredWorker): string {
 const prettyLabels = {
   bossFight: "Boss Fight",
   briefing: "Briefing",
-  encounter: "encounter",
-  encounters: "encounters",
-  party: "party",
+  encounter: "Encounter",
+  encounters: "Encounters",
+  heartbeat: "Heartbeat",
+  party: "Party",
   partySelection: "Party Selection",
   quest: "Quest",
+  questStatus: "Quest Status",
   questLog: "Quest Log",
   roster: "Roster",
   trainingGrounds: "Training Grounds",
   turnIn: "Turn-in",
-  trial: "trial",
-  trials: "trials",
+  trial: "Trial",
+  trials: "Trials",
+  wave: "Wave",
 } as const;
 
 function formatDoctorCheck(check: DoctorCheck): string {
@@ -2020,23 +2036,24 @@ function formatRunSummaryBlock(summary: ReturnType<typeof summarizeRunDetail>): 
   if (summary.integration.status === "landed") {
     turnInStatus = "landed";
   } else if (summary.integration.status === "integrated") {
-    turnInStatus = "ready";
+    turnInStatus = "complete";
   }
   return [
     `${prettyLabels.quest} ${summary.id}`,
-    `  briefing: ${summary.title}`,
-    `  quest status: ${summary.status}`,
-    `  updated: ${summary.updatedAt}`,
-    `  party waves: ${summary.waves}`,
+    `  ${prettyLabels.briefing}: ${summary.title}`,
+    `  ${prettyLabels.questStatus}: ${summary.status}`,
+    `  Updated: ${summary.updatedAt}`,
+    `  ${prettyLabels.party} Waves: ${summary.waves}`,
     `  ${prettyLabels.encounters}: ${formatCountMap(summary.counts.slices)}`,
-    `  ${prettyLabels.bossFight.toLowerCase()}: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
-    `  ${prettyLabels.turnIn.toLowerCase()}: ${turnInStatus}`,
-    `  rescue: ${summary.integration.rescueStatus}`,
-    ...(summary.integration.targetRef ? [`  target ref: ${summary.integration.targetRef}`] : []),
-    ...(summary.integration.landedAt ? [`  landed at: ${summary.integration.landedAt}`] : []),
+    `  ${prettyLabels.bossFight}: ${summary.integration.status} (${formatCountMap(summary.counts.integration)})`,
+    `  ${prettyLabels.turnIn}: ${turnInStatus}`,
+    `  Rescue: ${summary.integration.rescueStatus}`,
+    ...(summary.integration.rescueNote ? [`  Rescue Note: ${summary.integration.rescueNote}`] : []),
+    ...(summary.integration.targetRef ? [`  Target Ref: ${summary.integration.targetRef}`] : []),
+    ...(summary.integration.landedAt ? [`  Landed At: ${summary.integration.landedAt}`] : []),
     ...summary.slices.map(
       (slice) =>
-        `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | builder=${slice.builderWorkerId ?? "unassigned"} | tester=${slice.testerWorkerId ?? "unassigned"} | ${prettyLabels.bossFight.toLowerCase()}=${slice.integrationStatus}`,
+        `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | Builder=${slice.builderWorkerId ?? "unassigned"} | Tester=${slice.testerWorkerId ?? "unassigned"} | ${prettyLabels.bossFight}=${slice.integrationStatus}`,
     ),
   ];
 }
@@ -2112,11 +2129,36 @@ function formatWorkerInspectPretty(worker: RegisteredWorker, status: WorkerStatu
   ].join("\n");
 }
 
+function formatPlanWarningPretty(warning: {
+  code: string;
+  message: string;
+  paths?: string[] | undefined;
+  relatedSliceIds?: string[] | undefined;
+  sliceId: string;
+}): string {
+  const details = [
+    warning.relatedSliceIds && warning.relatedSliceIds.length > 0
+      ? `slices=${warning.relatedSliceIds.join(",")}`
+      : `slice=${warning.sliceId}`,
+    warning.paths && warning.paths.length > 0 ? `paths=${warning.paths.join(",")}` : null,
+  ]
+    .filter((entry) => entry !== null)
+    .join(" | ");
+
+  return `  - warning [${warning.code}] ${warning.message}${details.length > 0 ? ` (${details})` : ""}`;
+}
+
 function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown): string {
   const plan = candidate.plan as
     | {
-        unassigned: Array<{ id: string; reason: string }>;
-        warnings: string[];
+        unassigned: Array<{ id: string; message?: string; reason?: string }>;
+        warnings: Array<{
+          code: string;
+          message: string;
+          paths?: string[];
+          relatedSliceIds?: string[];
+          sliceId: string;
+        }>;
         waves: Array<{
           index: number;
           slices: Array<{
@@ -2157,19 +2199,18 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
 
   const lines = [
     `${prettyLabels.briefing}: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
-    ...plan.waves.map(
-      (wave) =>
-        `  party wave ${wave.index}: ${wave.slices
-          .map(
-            (slice) =>
-              `${slice.id}@builder:${slice.assignedWorkerId ?? "unassigned"}/tester:${slice.assignedTesterWorkerId ?? "unassigned"}`,
-          )
-          .join(", ")}`,
-    ),
+    ...plan.waves.flatMap((wave) => [
+      `  ${prettyLabels.wave} ${wave.index}:`,
+      ...wave.slices.map(
+        (slice) =>
+          `    - ${slice.id} | Builder=${slice.assignedWorkerId ?? "unassigned"} | Tester=${slice.assignedTesterWorkerId ?? "unassigned"}`,
+      ),
+    ]),
     ...plan.unassigned.map(
-      (slice) => `  unassigned ${prettyLabels.encounter}: ${slice.id} (${slice.reason})`,
+      (slice) =>
+        `  unassigned ${prettyLabels.encounter}: ${slice.id} (${slice.message ?? slice.reason ?? "unassigned"})`,
     ),
-    ...plan.warnings.map((warning) => `  warning: ${warning}`),
+    ...plan.warnings.map((warning) => formatPlanWarningPretty(warning)),
   ];
 
   if (explanation) {
@@ -2310,6 +2351,80 @@ function formatRunsListPretty(candidate: Record<string, unknown>): string {
     ...runs.map((run) => `  - ${run.id} | ${run.status} | ${run.questTitle}`),
     ...warnings.map((warning) => `  - warning ${warning.runId}: ${warning.reason}`),
   ].join("\n");
+}
+
+function hasRunWatchSettled(run: QuestRunDocument): boolean {
+  return run.executionStage === undefined && run.status !== "running";
+}
+
+function formatWatchHeartbeat(run: QuestRunDocument): string {
+  return [
+    `${prettyLabels.heartbeat}:`,
+    `  ${prettyLabels.questStatus}: ${run.status}`,
+    `  Stage: ${run.executionStage ?? "idle"}`,
+    `  Active Processes: ${run.activeProcesses.length}`,
+  ].join("\n");
+}
+
+function formatWatchEventLine(event: QuestRunEvent): string {
+  const details = event.details;
+  switch (event.type) {
+    case "run_started":
+      return `[${event.at}] ${prettyLabels.quest} started`;
+    case "run_completed":
+      return `[${event.at}] ${prettyLabels.quest} completed`;
+    case "run_failed":
+      return `[${event.at}] ${prettyLabels.quest} failed`;
+    case "run_integrated":
+      return `[${event.at}] ${prettyLabels.bossFight} cleared`;
+    case "run_landed":
+      return `[${event.at}] ${prettyLabels.turnIn} complete`;
+    case "slice_started":
+      return `[${event.at}] ${prettyLabels.encounter} started: ${String(details.sliceId ?? "unknown")}`;
+    case "slice_testing_started":
+      return `[${event.at}] ${prettyLabels.trial} started: ${String(details.sliceId ?? "unknown")}`;
+    case "slice_completed":
+      return `[${event.at}] ${prettyLabels.encounter} cleared: ${String(details.sliceId ?? "unknown")}`;
+    case "slice_testing_completed":
+      return `[${event.at}] ${prettyLabels.trial} cleared: ${String(details.sliceId ?? "unknown")}`;
+    default:
+      return `[${event.at}] ${event.type}`;
+  }
+}
+
+async function watchQuestRun(
+  runStore: QuestRunStore,
+  runId: string,
+  options: { outputMode: OutputMode; pollMs: number },
+): Promise<QuestRunDocument> {
+  let seenEventCount = 0;
+  let heartbeatTick = 0;
+  const heartbeatEvery = Math.max(1, Math.ceil(1000 / options.pollMs));
+
+  while (true) {
+    const run = await runStore.getRun(runId);
+
+    if (options.outputMode === "pretty") {
+      const newEvents = run.events.slice(seenEventCount);
+      for (const event of newEvents) {
+        void Bun.write(Bun.stdout, `${formatWatchEventLine(event)}\n`);
+      }
+      seenEventCount = run.events.length;
+
+      if (!hasRunWatchSettled(run)) {
+        if (newEvents.length === 0 && heartbeatTick % heartbeatEvery === 0) {
+          void Bun.write(Bun.stdout, `${formatWatchHeartbeat(run)}\n`);
+        }
+        heartbeatTick += 1;
+      }
+    }
+
+    if (hasRunWatchSettled(run)) {
+      return run;
+    }
+
+    await Bun.sleep(options.pollMs);
+  }
 }
 
 function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string {
@@ -2533,6 +2648,9 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "runs:resume":
     case "runs:rescue":
     case "runs:rerun": {
+      return formatRunPretty(candidate, value);
+    }
+    case "runs:watch": {
       return formatRunPretty(candidate, value);
     }
     case "runs:slices:reassign":
@@ -3354,6 +3472,23 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest runs status --id <run-id> [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
   },
   {
+    id: "runs:watch",
+    matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "watch",
+    run: async ({ args, outputMode, runStore }) => ({
+      run: await watchQuestRun(runStore, requireOptionValue(args, "--id", "--id <run-id>"), {
+        outputMode,
+        pollMs: findOptionValue(args, "--poll-ms")
+          ? parsePositiveInteger(
+              requireOptionValue(args, "--poll-ms", "--poll-ms <1000>"),
+              "poll-ms",
+            )
+          : 1000,
+      }),
+    }),
+    usage:
+      "quest runs watch --id <run-id> [--poll-ms <1000>] [--runs-root <path>] [--workspaces-root <path>] [--state-root <path>]",
+  },
+  {
     id: "runs:summary",
     matches: (args) => args.length >= 2 && args[0] === "runs" && args[1] === "summary",
     run: async ({ args, runStore }) => {
@@ -3460,6 +3595,7 @@ async function main(): Promise<number> {
       calibrator,
       dispatcher,
       observabilityStore,
+      outputMode,
       registry,
       runCleanup,
       runExecutor,
@@ -3469,7 +3605,9 @@ async function main(): Promise<number> {
       runStore,
       secretStore,
     });
-    await dispatchResultEvents(result, dispatcher);
+    if (command.id !== "runs:watch") {
+      await dispatchResultEvents(result, dispatcher);
+    }
     writeOutput(command.id, outputMode, result);
     return 0;
   } catch (error: unknown) {

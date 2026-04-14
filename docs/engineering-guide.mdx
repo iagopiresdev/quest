@@ -107,9 +107,11 @@ The following invariants should stay true:
 - Lifecycle transitions must go through shared helpers when possible.
 - Steering must change persisted run state, not just CLI presentation. If an operator reassigns, retries, or skips a slice, the run document must reflect the new executable truth.
 - Builder and tester output must be persisted separately when both phases run, or operators lose the ability to diagnose whether the encounter or the trial caused a failure.
+- Ownership conflicts must be surfaced, not just handled silently. If overlapping `owns` patterns force slices into separate waves, the plan should also emit an explicit warning so the operator sees the contention before execution.
 - Setup-time worker shaping must compile down to the normal worker model. Archetypes, party mode, and onboarding defaults are presentation helpers, not parallel registry formats.
 - Feature-doc / chronicle writes must append the same lifecycle event whether they happen during turn-in or through a later operator command, or observability stops being replayable from events alone.
 - Turn-in must stay stricter than boss fight. An integrated run is not landed until the source checkout is clean, the target has not drifted, and the landing step succeeds.
+- Rescue state needs both history and a query surface. Keep the full rescue event trail, but denormalize the latest rescue note onto the run so summary views do not need to replay events for a basic operator answer.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.

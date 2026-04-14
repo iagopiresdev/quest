@@ -794,6 +794,11 @@ export class QuestRunStore {
   ): Promise<QuestRunDocument> {
     const run = await this.getRun(runId);
     run.integrationRescueStatus = status;
+    if (note && note.trim().length > 0) {
+      run.integrationRescueNote = note.trim();
+    } else {
+      delete run.integrationRescueNote;
+    }
     appendEvent(run, "run_rescue_status_updated", {
       note: note ?? null,
       runId,

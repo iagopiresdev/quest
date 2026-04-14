@@ -134,6 +134,16 @@ test("planner serializes overlapping ownership even when maxParallel allows more
   expect(plan.waves.length).toBe(2);
   expect(plan.waves[0]?.slices.length).toBe(1);
   expect(plan.waves[1]?.slices.length).toBe(1);
+  expect(plan.warnings).toEqual([
+    expect.objectContaining({
+      code: "ownership_conflict",
+      paths: expect.arrayContaining([
+        "src/orchestration/**",
+        "src/orchestration/grind-dispatch-batch.ts",
+      ]),
+      relatedSliceIds: ["dispatch-core", "dispatch-hotfix"],
+    }),
+  ]);
 });
 
 test("planner defers runnable slices to later waves instead of scheduling null assignments", () => {
