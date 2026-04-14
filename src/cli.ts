@@ -3,10 +3,17 @@
 import { unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-
 import { ZodError } from "zod";
 import { generateRunChronicle, writeRunChronicle } from "./core/chronicles/generator";
-import { isQuestDomainError } from "./core/errors";
+import {
+  daemonStatus,
+  type QuestDaemonPartyStatus,
+  runDaemonTickLoop,
+  startDaemon,
+  stopDaemon,
+} from "./core/daemon/lifecycle";
+import { QuestDaemonStore } from "./core/daemon/store";
+import { isQuestDomainError, QuestDomainError } from "./core/errors";
 import { EventDispatcher } from "./core/observability/event-dispatcher";
 import { createSinkProbeEvent } from "./core/observability/probe";
 import {
@@ -87,8 +94,15 @@ import {
 } from "./core/workers/schema";
 
 type QuestCliCommand =
+  | "daemon:start"
+  | "daemon:status"
+  | "daemon:stop"
+  | "daemon:tick-loop"
   | "doctor"
+  | "party:create"
   | "party:bonfire"
+  | "party:list"
+  | "party:remove"
   | "party:resume"
   | "party:status"
   | "observability:deliveries:list"
@@ -149,6 +163,7 @@ type QuestCliCommand =
 type QuestCliContext = {
   args: string[];
   calibrator: WorkerCalibrator;
+  daemonStore: QuestDaemonStore;
   dispatcher: EventDispatcher;
   observabilityStore: ObservabilityStore;
   outputMode: OutputMode;
@@ -1625,6 +1640,25 @@ function summarizePartyState(state: QuestPartyState): PartyStateView {
   };
 }
 
+async function summarizeDaemonParty(
+  daemonStore: QuestDaemonStore,
+  partyName: string,
+): Promise<QuestDaemonPartyStatus> {
+  await daemonStore.getParty(partyName);
+  const status = await daemonStatus(daemonStore);
+  const party = status.parties.find((candidate) => candidate.party.name === partyName);
+  if (!party) {
+    throw new QuestDomainError({
+      code: "quest_daemon_party_not_found",
+      details: { name: partyName },
+      message: `Quest daemon party ${partyName} was not found`,
+      statusCode: 1,
+    });
+  }
+
+  return party;
+}
+
 async function dispatchResultEvents(value: unknown, dispatcher: EventDispatcher): Promise<void> {
   if (!isRecord(value)) {
     return;
@@ -3077,6 +3111,31 @@ function writeError(error: unknown, mode: OutputMode): void {
 
 const commandDefinitions: QuestCliCommandDefinition[] = [
   {
+    id: "daemon:start",
+    matches: (args) => args.length >= 2 && args[0] === "daemon" && args[1] === "start",
+    run: async ({ daemonStore }) => await startDaemon(daemonStore),
+    usage: "quest daemon start [--state-root <path>]",
+  },
+  {
+    id: "daemon:stop",
+    matches: (args) => args.length >= 2 && args[0] === "daemon" && args[1] === "stop",
+    run: async ({ daemonStore }) => await stopDaemon(daemonStore),
+    usage: "quest daemon stop [--state-root <path>]",
+  },
+  {
+    id: "daemon:status",
+    matches: (args) => args.length >= 2 && args[0] === "daemon" && args[1] === "status",
+    run: async ({ daemonStore }) => await daemonStatus(daemonStore),
+    usage: "quest daemon status [--state-root <path>]",
+  },
+  {
+    id: "daemon:tick-loop",
+    matches: (args) => args.length >= 3 && args[0] === "daemon" && args[1] === "_tick-loop",
+    run: async ({ daemonStore, partyStateStore }) =>
+      await runDaemonTickLoop(daemonStore, { partyStateStore }),
+    usage: "quest daemon _tick-loop [--state-root <path>]",
+  },
+  {
     id: "setup",
     matches: (args) => args.length >= 1 && args[0] === "setup",
     run: async ({ args, calibrator, observabilityStore, registry, settingsStore, secretStore }) =>
@@ -3141,30 +3200,95 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       "quest doctor [--codex-executable <path>] [--openclaw-executable <path>] [--check-openclaw] [--gateway-url <url>] [--agent-id <id>] [--test-sinks] [--sink-id <id>] [--registry <path>] [--runs-root <path>] [--workspaces-root <path>] [--calibrations-root <path>] [--observability-config <path>] [--observability-deliveries <path>] [--state-root <path>]",
   },
   {
+    id: "party:create",
+    matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "create",
+    run: async ({ args, daemonStore }) => ({
+      party: await daemonStore.createParty({
+        budget: {
+          maxConcurrent: 1,
+          maxSpecsPerHour: 10,
+        },
+        enabled: true,
+        name: requireOptionValue(args, "--name", "--name <party-name>"),
+        sourceRepo: requireOptionValue(args, "--source-repo", "--source-repo <path>"),
+        targetRef: requireOptionValue(args, "--target-ref", "--target-ref <ref>"),
+      }),
+    }),
+    usage:
+      "quest party create --name <party-name> --source-repo <path> --target-ref <ref> [--state-root <path>]",
+  },
+  {
+    id: "party:remove",
+    matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "remove",
+    run: async ({ args, daemonStore }) => ({
+      party: await daemonStore.removeParty(
+        requireOptionValue(args, "--name", "--name <party-name>"),
+      ),
+    }),
+    usage: "quest party remove --name <party-name> [--state-root <path>]",
+  },
+  {
+    id: "party:list",
+    matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "list",
+    run: async ({ daemonStore }) => ({
+      parties: (await daemonStatus(daemonStore)).parties,
+    }),
+    usage: "quest party list [--state-root <path>]",
+  },
+  {
     id: "party:status",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "status",
-    run: async ({ partyStateStore }) => ({
-      partyState: summarizePartyState(await partyStateStore.readState()),
-    }),
-    usage: "quest party status [--state-root <path>]",
+    run: async ({ args, daemonStore, partyStateStore }) => {
+      const partyName = findOptionValue(args, "--name");
+      if (partyName) {
+        return {
+          party: await summarizeDaemonParty(daemonStore, partyName),
+        };
+      }
+
+      return {
+        partyState: summarizePartyState(await partyStateStore.readState()),
+      };
+    },
+    usage: "quest party status [--name <party-name>] [--state-root <path>]",
   },
   {
     id: "party:bonfire",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "bonfire",
-    run: async ({ args, partyStateStore }) => ({
-      partyState: summarizePartyState(
-        await partyStateStore.lightBonfire(findOptionValue(args, "--reason") ?? undefined),
-      ),
-    }),
-    usage: "quest party bonfire [--reason <text>] [--state-root <path>]",
+    run: async ({ args, daemonStore, partyStateStore }) => {
+      const partyName = findOptionValue(args, "--name");
+      if (partyName) {
+        await daemonStore.restParty(partyName, findOptionValue(args, "--reason") ?? undefined);
+        return {
+          party: await summarizeDaemonParty(daemonStore, partyName),
+        };
+      }
+
+      return {
+        partyState: summarizePartyState(
+          await partyStateStore.lightBonfire(findOptionValue(args, "--reason") ?? undefined),
+        ),
+      };
+    },
+    usage: "quest party bonfire [--name <party-name>] [--reason <text>] [--state-root <path>]",
   },
   {
     id: "party:resume",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "resume",
-    run: async ({ partyStateStore }) => ({
-      partyState: summarizePartyState(await partyStateStore.resumeParty()),
-    }),
-    usage: "quest party resume [--state-root <path>]",
+    run: async ({ args, daemonStore, partyStateStore }) => {
+      const partyName = findOptionValue(args, "--name");
+      if (partyName) {
+        await daemonStore.resumeParty(partyName);
+        return {
+          party: await summarizeDaemonParty(daemonStore, partyName),
+        };
+      }
+
+      return {
+        partyState: summarizePartyState(await partyStateStore.resumeParty()),
+      };
+    },
+    usage: "quest party resume [--name <party-name>] [--state-root <path>]",
   },
   {
     id: "observability:events:list",
@@ -4028,6 +4152,7 @@ async function main(): Promise<number> {
   const partyStatePath = resolveQuestPartyStatePath({
     stateRoot,
   });
+  const daemonStore = new QuestDaemonStore(stateRoot);
   const registry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, workspacesRoot);
   const secretStore = new SecretStore();
@@ -4050,6 +4175,7 @@ async function main(): Promise<number> {
     const result = await command.run({
       args,
       calibrator,
+      daemonStore,
       dispatcher,
       observabilityStore,
       outputMode,

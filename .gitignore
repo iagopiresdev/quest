@@ -7,3 +7,4 @@ node_modules/
 coverage/
 skills/
 FEEDBACK.md
+docs/internals/

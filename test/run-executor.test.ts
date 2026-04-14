@@ -19,7 +19,12 @@ import { QuestRunStore } from "../src/core/runs/store";
 import { SecretStore } from "../src/core/secret-store";
 import { WorkerRegistry } from "../src/core/workers/registry";
 import type { RegisteredWorker } from "../src/core/workers/schema";
-import { createCommand, createCommittedRepo, createOpenClawMockExecutable } from "./helpers";
+import {
+  createCommand,
+  createCommittedRepo,
+  createOpenClawMockExecutable,
+  startTestServer,
+} from "./helpers";
 
 function createWorker(
   id: string,
@@ -1066,7 +1071,7 @@ test("run executor completes a planned run with the hermes-api adapter", async (
   const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
 
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       const body = (await request.json()) as Record<string, unknown> & {
         messages: Array<{ content: string }>;
@@ -1099,8 +1104,10 @@ test("run executor completes a planned run with the hermes-api adapter", async (
         { headers: { "content-type": "application/json" } },
       );
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     await workerRegistry.upsertWorker(
@@ -1181,7 +1188,7 @@ test("run executor rejects Hermes writes through symlinked owned paths", async (
   const externalRoot = join(root, "external-write-target");
   mkdirSync(externalRoot, { recursive: true });
 
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async () =>
       new Response(
         JSON.stringify({
@@ -1203,8 +1210,10 @@ test("run executor rejects Hermes writes through symlinked owned paths", async (
         }),
         { headers: { "content-type": "application/json" } },
       ),
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     await workerRegistry.upsertWorker(

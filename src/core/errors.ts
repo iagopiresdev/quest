@@ -31,6 +31,13 @@ export const QUEST_ERROR_CODES = [
   "quest_workspace_prepare_failed",
   "quest_worker_not_found",
   "quest_slice_not_steerable",
+  "quest_daemon_already_running",
+  "quest_daemon_not_running",
+  "quest_daemon_party_exists",
+  "quest_daemon_party_not_found",
+  "quest_daemon_party_resting",
+  "invalid_quest_daemon_config",
+  "invalid_quest_daemon_state",
   "quest_observability_sink_not_found",
   "quest_storage_failure",
 ] as const;

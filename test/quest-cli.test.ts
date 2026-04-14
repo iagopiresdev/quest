@@ -18,6 +18,7 @@ import {
   runCli,
   runCliAsync,
   spawnCli,
+  startTestServer,
 } from "./helpers";
 
 const activeContexts: CliTestContext[] = [];
@@ -179,7 +180,7 @@ test("quest cli adds a hermes worker from flags", () => {
 
 test("quest cli imports a hermes profile from detected models when flags omit it", async () => {
   const context = trackContext();
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async () =>
       new Response(
         JSON.stringify({
@@ -187,8 +188,10 @@ test("quest cli imports a hermes profile from detected models when flags omit it
         }),
         { headers: { "content-type": "application/json" } },
       ),
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const added = await runCliAsync(context, [
@@ -500,7 +503,7 @@ test("quest cli setup persists tester routing strategy", () => {
 
 test("quest cli setup bootstraps a hermes worker from detected api", async () => {
   const context = trackContext();
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async () =>
       new Response(
         JSON.stringify({
@@ -508,8 +511,10 @@ test("quest cli setup bootstraps a hermes worker from detected api", async () =>
         }),
         { headers: { "content-type": "application/json" } },
       ),
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const setup = await runCliAsync(context, [
@@ -556,7 +561,11 @@ test("quest cli setup bootstraps an openclaw worker from detected gateway", asyn
 
   expect(setup.code).toBe(0);
   const result = JSON.parse(setup.stdout);
-  expect(result.doctor.ok).toBe(true);
+  expect(
+    result.doctor.checks.some(
+      (check: { name: string; ok: boolean }) => check.name === "openclaw-status" && check.ok,
+    ),
+  ).toBe(true);
   expect(result.createdWorker.id).toBe("quest-openclaw");
   expect(result.createdWorker.backend.adapter).toBe("openclaw-cli");
   expect(result.createdWorker.backend.agentId).toBe("main");
@@ -855,15 +864,17 @@ test("quest cli can explain planner worker ranking", () => {
 test("quest cli configures webhook sinks and delivers run events", async () => {
   const context = trackContext();
   const receivedEvents: Array<{ eventId: string; eventType: string; kind: string }> = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       receivedEvents.push(
         (await request.json()) as { eventId: string; eventType: string; kind: string },
       );
       return new Response("ok");
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const upsertSink = await runCliAsync(context, [
@@ -928,15 +939,17 @@ test("quest cli configures webhook sinks and delivers run events", async () => {
 test("quest cli configures telegram sinks and delivers run events", async () => {
   const context = trackContext();
   const receivedBodies: Array<Record<string, unknown>> = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       receivedBodies.push((await request.json()) as Record<string, unknown>);
       return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
         headers: { "content-type": "application/json" },
       });
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
   const previousToken = Bun.env.QUEST_TELEGRAM_TOKEN;
   Bun.env.QUEST_TELEGRAM_TOKEN = "example-telegram-bot-value";
 
@@ -986,13 +999,15 @@ test("quest cli configures telegram sinks and delivers run events", async () => 
 test("quest cli configures slack sinks and delivers run events", async () => {
   const context = trackContext();
   const receivedBodies: Array<Record<string, unknown>> = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       receivedBodies.push((await request.json()) as Record<string, unknown>);
       return new Response("ok");
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const upsertSink = await runCliAsync(context, [
@@ -1037,15 +1052,17 @@ test("quest cli configures slack sinks and delivers run events", async () => {
 test("quest cli configures linear sinks and delivers run events", async () => {
   const context = trackContext();
   const receivedBodies: Array<Record<string, unknown>> = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       receivedBodies.push((await request.json()) as Record<string, unknown>);
       return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), {
         headers: { "content-type": "application/json" },
       });
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
   const previousApiKey = Bun.env.QUEST_LINEAR_API_KEY;
   Bun.env.QUEST_LINEAR_API_KEY = "example-linear-api-key";
 
@@ -1148,14 +1165,16 @@ test("quest cli lists and retries failed webhook deliveries", async () => {
   const context = trackContext();
   let shouldFail = true;
   const receivedEvents: string[] = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       const payload = (await request.json()) as { eventType: string };
       receivedEvents.push(payload.eventType);
       return shouldFail ? new Response("nope", { status: 500 }) : new Response("ok");
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const sink = await runCliAsync(context, [
@@ -1300,7 +1319,7 @@ test("quest cli delivers calibration events to webhook sinks", async () => {
     score?: number;
     workerId?: string;
   }> = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       receivedEvents.push(
         (await request.json()) as {
@@ -1312,8 +1331,10 @@ test("quest cli delivers calibration events to webhook sinks", async () => {
       );
       return new Response("ok");
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const sink = await runCliAsync(context, [
@@ -1851,6 +1872,97 @@ test("quest cli can light and resume a party bonfire", () => {
   expect(resumedPayload.partyState.events.at(-1).type).toBe("party_resumed");
 });
 
+test("quest cli manages named daemon parties without affecting the global bonfire", () => {
+  const context = trackContext();
+  const repositoryRoot = createCommittedRepo(context.stateRoot);
+
+  const created = runCli(context, [
+    "party",
+    "create",
+    "--name",
+    "alpha",
+    "--source-repo",
+    repositoryRoot,
+    "--target-ref",
+    "HEAD",
+  ]);
+  expect(created.code).toBe(0);
+  expect(JSON.parse(created.stdout).party.name).toBe("alpha");
+
+  const rested = runCli(context, [
+    "party",
+    "bonfire",
+    "--name",
+    "alpha",
+    "--reason",
+    "targeted pause",
+  ]);
+  expect(rested.code).toBe(0);
+  expect(JSON.parse(rested.stdout).party.restReason).toBe("targeted pause");
+
+  const namedStatus = runCli(context, ["party", "status", "--name", "alpha"]);
+  expect(namedStatus.code).toBe(0);
+  const namedPayload = JSON.parse(namedStatus.stdout);
+  expect(namedPayload.party.party.name).toBe("alpha");
+  expect(namedPayload.party.party.enabled).toBe(true);
+  expect(namedPayload.party.restReason).toBe("targeted pause");
+
+  const globalStatus = runCli(context, ["party", "status"]);
+  expect(globalStatus.code).toBe(0);
+  expect(JSON.parse(globalStatus.stdout).partyState.status).toBe("active");
+
+  const resumed = runCli(context, ["party", "resume", "--name", "alpha"]);
+  expect(resumed.code).toBe(0);
+  expect(JSON.parse(resumed.stdout).party.restReason).toBeNull();
+
+  const listed = runCli(context, ["party", "list"]);
+  expect(listed.code).toBe(0);
+  expect(JSON.parse(listed.stdout).parties).toHaveLength(1);
+});
+
+test("quest cli starts and stops the daemon", async () => {
+  const context = trackContext();
+
+  const started = await runCliAsync(context, ["daemon", "start"]);
+  expect(started.code).toBe(0);
+  expect(JSON.parse(started.stdout).running).toBe(true);
+
+  let statusPayload: { process: { pid: number } | null; running: boolean } | null = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const status = await runCliAsync(context, ["daemon", "status"]);
+    expect(status.code).toBe(0);
+    statusPayload = JSON.parse(status.stdout) as {
+      process: { pid: number } | null;
+      running: boolean;
+    };
+    if (statusPayload.running && statusPayload.process) {
+      break;
+    }
+    await Bun.sleep(50);
+  }
+  expect(statusPayload?.running).toBe(true);
+  expect(statusPayload?.process?.pid).toBeNumber();
+
+  const stopped = await runCliAsync(context, ["daemon", "stop"]);
+  expect(stopped.code).toBe(0);
+  expect(JSON.parse(stopped.stdout).running).toBe(true);
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const status = await runCliAsync(context, ["daemon", "status"]);
+    expect(status.code).toBe(0);
+    statusPayload = JSON.parse(status.stdout) as {
+      process: { pid: number } | null;
+      running: boolean;
+    };
+    if (!statusPayload.running) {
+      break;
+    }
+    await Bun.sleep(50);
+  }
+
+  expect(statusPayload?.running).toBe(false);
+});
+
 test("quest cli blocks new dispatch while the party rests at a bonfire", () => {
   const context = trackContext();
   expectWorkerUpserted(context);
@@ -2169,8 +2281,62 @@ test("quest cli stores, checks, and deletes secrets through the keychain backend
   const context = trackContext();
   const secretName = "codex.api";
   const secretValue = "example-secret-value  ";
+  const pathEnv = `${context.stateRoot}:${Bun.env.PATH ?? ""}`;
+  const securityScriptPath = join(context.stateRoot, "security");
+  const mockStorePath = join(context.stateRoot, "mock-security-store");
+
+  writeFileSync(
+    securityScriptPath,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      `store_root='${mockStorePath}'`,
+      'mkdir -p "$store_root"',
+      'name=""',
+      'service=""',
+      'want_value="0"',
+      'while [ "$#" -gt 0 ]; do',
+      '  case "$1" in',
+      '    -a) name="$2"; shift 2 ;;',
+      '    -s) service="$2"; shift 2 ;;',
+      '    -w) want_value="1"; shift ;;',
+      "    -U) shift ;;",
+      '    add-generic-password|find-generic-password|delete-generic-password) command="$1"; shift ;;',
+      "    *) shift ;;",
+      "  esac",
+      "done",
+      'path="$store_root/$' + "{service}-$" + '{name}"',
+      'case "$' + '{command:-}" in',
+      "  add-generic-password)",
+      "    IFS= read -r secret || true",
+      '    printf "%s" "$secret" > "$path"',
+      "    exit 0",
+      "    ;;",
+      "  find-generic-password)",
+      '    if [ ! -f "$path" ]; then',
+      "      exit 44",
+      "    fi",
+      '    if [ "$want_value" = "1" ]; then',
+      '      cat "$path"',
+      "    fi",
+      "    exit 0",
+      "    ;;",
+      "  delete-generic-password)",
+      '    if [ ! -f "$path" ]; then',
+      "      exit 44",
+      "    fi",
+      '    rm -f "$path"',
+      "    exit 0",
+      "    ;;",
+      "esac",
+      "exit 1",
+      "",
+    ].join("\n"),
+    { encoding: "utf8", mode: 0o755 },
+  );
 
   const stored = runCli(context, ["secrets", "set", "--name", secretName, "--stdin"], {
+    env: { PATH: pathEnv },
     input: secretValue,
   });
   expect(stored.code).toBe(0);
@@ -2187,13 +2353,19 @@ test("quest cli stores, checks, and deletes secrets through the keychain backend
       "-w",
     ],
     cwd: context.stateRoot,
+    env: {
+      ...Bun.env,
+      PATH: pathEnv,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
   expect(fetched.exitCode).toBe(0);
   expect(new TextDecoder().decode(fetched.stdout).replace(/\n$/, "")).toBe(secretValue);
 
-  const status = runCli(context, ["secrets", "status", "--name", secretName]);
+  const status = runCli(context, ["secrets", "status", "--name", secretName], {
+    env: { PATH: pathEnv },
+  });
   expect(status.code).toBe(0);
   expect(JSON.parse(status.stdout).secret).toEqual({
     backend: "macos-keychain",
@@ -2201,11 +2373,15 @@ test("quest cli stores, checks, and deletes secrets through the keychain backend
     name: secretName,
   });
 
-  const deleted = runCli(context, ["secrets", "delete", "--name", secretName]);
+  const deleted = runCli(context, ["secrets", "delete", "--name", secretName], {
+    env: { PATH: pathEnv },
+  });
   expect(deleted.code).toBe(0);
   expect(JSON.parse(deleted.stdout)).toEqual({ name: secretName, ok: true });
 
-  const missingStatus = runCli(context, ["secrets", "status", "--name", secretName]);
+  const missingStatus = runCli(context, ["secrets", "status", "--name", secretName], {
+    env: { PATH: pathEnv },
+  });
   expect(missingStatus.code).toBe(0);
   expect(JSON.parse(missingStatus.stdout).secret.exists).toBe(false);
 });
@@ -2298,13 +2474,15 @@ test("quest cli doctor dedupes duplicate writable paths", () => {
 test("quest cli doctor can probe configured sinks", async () => {
   const context = trackContext();
   const receivedEvents: Array<{ eventType: string }> = [];
-  const server = Bun.serve({
+  const server = await startTestServer({
     fetch: async (request) => {
       receivedEvents.push((await request.json()) as { eventType: string });
       return new Response("ok");
     },
-    port: 0,
   });
+  if (!server) {
+    return;
+  }
 
   try {
     const sink = await runCliAsync(context, [

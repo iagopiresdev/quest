@@ -152,6 +152,8 @@ export async function readJsonFileOrDefault<T>(
   fallback: T,
   options: {
     invalidJsonCode?:
+      | "invalid_quest_daemon_config"
+      | "invalid_quest_daemon_state"
       | "invalid_quest_run"
       | "invalid_quest_party_state"
       | "invalid_quest_settings"

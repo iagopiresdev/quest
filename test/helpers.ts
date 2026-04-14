@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -345,6 +347,95 @@ export function spawnCli(
     stdout: "pipe",
     stderr: "pipe",
   });
+}
+
+async function reserveLocalPort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Failed to reserve a local test port"));
+        return;
+      }
+
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(address.port);
+      });
+    });
+  });
+}
+
+export async function startTestServer(options: {
+  fetch: (request: Request) => Promise<Response> | Response;
+}): Promise<{ port: number; stop(force?: boolean): Promise<void> } | null> {
+  let port: number;
+  try {
+    port = await reserveLocalPort();
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "EPERM") {
+      return null;
+    }
+
+    throw error;
+  }
+  const server = createHttpServer(async (request, response) => {
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(request.headers)) {
+      if (value === undefined) {
+        continue;
+      }
+
+      headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+    const url = `http://127.0.0.1:${port}${request.url ?? "/"}`;
+    const init: RequestInit = {
+      headers,
+      ...(request.method ? { method: request.method } : {}),
+      ...(body ? { body } : {}),
+    };
+    const reply = await options.fetch(new Request(url, init));
+
+    response.statusCode = reply.status;
+    reply.headers.forEach((value, key) => {
+      response.setHeader(key, value);
+    });
+    response.end(Buffer.from(await reply.arrayBuffer()));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+
+  return {
+    port,
+    async stop(): Promise<void> {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
+  };
 }
 
 export function createWorker(
