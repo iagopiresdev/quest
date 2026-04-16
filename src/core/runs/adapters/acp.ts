@@ -12,6 +12,7 @@ import { dirname, resolve } from "node:path";
 
 import { QuestDomainError } from "../../errors";
 import type { SecretStore } from "../../secret-store";
+import { isRecord } from "../../shared/type-guards";
 import { buildProcessEnv } from "../process-env";
 import { buildRunnerPrompt, resolveAuthEnv } from "./shared";
 import type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
@@ -73,15 +74,21 @@ function parseIncomingLine(line: string): IncomingMessage | null {
     return null;
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    if ("id" in parsed && (typeof parsed.id === "number" || typeof parsed.id === "string")) {
-      return { kind: "response", value: parsed as unknown as JsonRpcResponse };
-    }
-    return { kind: "notification", value: parsed as unknown as JsonRpcNotification };
+    parsed = JSON.parse(trimmed);
   } catch {
     return null;
   }
+
+  if (!isRecord(parsed)) {
+    return null;
+  }
+
+  if ("id" in parsed && (typeof parsed.id === "number" || typeof parsed.id === "string")) {
+    return { kind: "response", value: parsed as unknown as JsonRpcResponse };
+  }
+  return { kind: "notification", value: parsed as unknown as JsonRpcNotification };
 }
 
 export function parseExecutableCommand(command: string): string[] {
@@ -245,44 +252,115 @@ function startStderrCapture(
   })();
 }
 
-async function* readStdoutMessages(
-  proc: ReturnType<typeof Bun.spawn>,
-): AsyncGenerator<IncomingMessage> {
-  const stdoutStream = proc.stdout instanceof ReadableStream ? proc.stdout : null;
-  if (!stdoutStream) {
+type MessageQueue = {
+  drain: () => IncomingMessage | null;
+  waitNext: () => Promise<IncomingMessage | null>;
+};
+
+function resolveQueuedMessage(
+  queue: IncomingMessage[],
+  resolverRef: { current: ((value: IncomingMessage | null) => void) | null },
+): void {
+  const r = resolverRef.current;
+  if (!r || queue.length === 0) {
     return;
   }
+  resolverRef.current = null;
+  const item = queue.shift();
+  if (item) {
+    r(item);
+  }
+}
 
-  const reader = stdoutStream.getReader();
+// Bun's ReadableStreamDefaultReader omits readMany from the type, so we
+// accept a broad generic and only call read() which both Node and Bun share.
+type StdoutReader = {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+  releaseLock(): void;
+};
+
+function readLinesIntoQueue(
+  reader: StdoutReader,
+  queue: IncomingMessage[],
+  resolverRef: { current: ((value: IncomingMessage | null) => void) | null },
+  doneRef: { current: boolean },
+): Promise<void> {
   const dec = new TextDecoder();
   let buffer = "";
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        for (const line of buffer.split("\n")) {
+  return (async () => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          for (const line of buffer.split("\n")) {
+            const msg = parseIncomingLine(line);
+            if (msg) {
+              queue.push(msg);
+            }
+          }
+          break;
+        }
+
+        buffer += dec.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
           const msg = parseIncomingLine(line);
           if (msg) {
-            yield msg;
+            queue.push(msg);
           }
         }
-        return;
-      }
 
-      buffer += dec.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const msg = parseIncomingLine(line);
-        if (msg) {
-          yield msg;
-        }
+        resolveQueuedMessage(queue, resolverRef);
+      }
+    } finally {
+      reader.releaseLock();
+      doneRef.current = true;
+      if (resolverRef.current) {
+        const r = resolverRef.current;
+        resolverRef.current = null;
+        r(null);
       }
     }
-  } finally {
-    reader.releaseLock();
+  })();
+}
+
+function startStdoutReader(proc: ReturnType<typeof Bun.spawn>): MessageQueue {
+  const queue: IncomingMessage[] = [];
+  const resolverRef: { current: ((value: IncomingMessage | null) => void) | null } = {
+    current: null,
+  };
+  const doneRef: { current: boolean } = { current: false };
+
+  const stdoutStream = proc.stdout instanceof ReadableStream ? proc.stdout : null;
+  if (stdoutStream) {
+    const reader = stdoutStream.getReader() as unknown as StdoutReader;
+    readLinesIntoQueue(reader, queue, resolverRef, doneRef).catch(() => {
+      doneRef.current = true;
+      if (resolverRef.current) {
+        resolverRef.current(null);
+        resolverRef.current = null;
+      }
+    });
+  } else {
+    doneRef.current = true;
   }
+
+  return {
+    drain: (): IncomingMessage | null => queue.shift() ?? null,
+    waitNext: (): Promise<IncomingMessage | null> => {
+      if (queue.length > 0) {
+        return Promise.resolve(queue.shift() as IncomingMessage);
+      }
+      if (doneRef.current) {
+        return Promise.resolve(null);
+      }
+      return new Promise<IncomingMessage | null>((resolve) => {
+        resolverRef.current = resolve;
+      });
+    },
+  };
 }
 
 function createMessageSender(stdinSink: Bun.FileSink | number | null): {
@@ -320,11 +398,16 @@ function updateAgentSummaryFromNotification(
 
 async function waitForResponse(
   expectedId: JsonRpcId,
-  iter: AsyncGenerator<IncomingMessage>,
+  queue: MessageQueue,
   workerId: string,
   state: AcpExecutionState,
 ): Promise<JsonRpcResponse> {
-  for await (const incoming of iter) {
+  while (true) {
+    const incoming = await queue.waitNext();
+    if (incoming === null) {
+      break;
+    }
+
     if (incoming.kind === "response" && incoming.value.id === expectedId) {
       return incoming.value;
     }
@@ -345,7 +428,7 @@ async function waitForResponse(
 
 async function driveAcpSession(
   context: RunnerExecutionContext,
-  stdoutIter: AsyncGenerator<IncomingMessage>,
+  queue: MessageQueue,
   sender: ReturnType<typeof createMessageSender>,
   state: AcpExecutionState,
   prompt: string,
@@ -353,7 +436,7 @@ async function driveAcpSession(
   try {
     const initReq = buildInitializeRequest();
     sender.send(initReq);
-    const initResp = await waitForResponse(initReq.id, stdoutIter, context.worker.id, state);
+    const initResp = await waitForResponse(initReq.id, queue, context.worker.id, state);
     if (initResp.error) {
       throw new QuestDomainError({
         code: "quest_runner_unavailable",
@@ -370,7 +453,7 @@ async function driveAcpSession(
       context.worker.backend.profile || undefined,
     );
     sender.send(newSessReq);
-    const newSessResp = await waitForResponse(newSessReq.id, stdoutIter, context.worker.id, state);
+    const newSessResp = await waitForResponse(newSessReq.id, queue, context.worker.id, state);
     if (newSessResp.error) {
       throw new QuestDomainError({
         code: "quest_runner_unavailable",
@@ -380,8 +463,9 @@ async function driveAcpSession(
       });
     }
 
-    const sessResult = newSessResp.result as Record<string, unknown> | undefined;
-    state.sessionId = (sessResult?.sessionId ?? sessResult?.session_id ?? "") as string;
+    const sessResult = isRecord(newSessResp.result) ? newSessResp.result : undefined;
+    const rawSessionId = sessResult?.sessionId ?? sessResult?.session_id;
+    state.sessionId = typeof rawSessionId === "string" ? rawSessionId : "";
     if (!state.sessionId) {
       throw new QuestDomainError({
         code: "quest_runner_unavailable",
@@ -393,7 +477,7 @@ async function driveAcpSession(
 
     const promptReq = buildPromptRequest(state.sessionId, prompt);
     sender.send(promptReq);
-    const promptResp = await waitForResponse(promptReq.id, stdoutIter, context.worker.id, state);
+    const promptResp = await waitForResponse(promptReq.id, queue, context.worker.id, state);
     if (promptResp.error) {
       throw new QuestDomainError({
         code: "quest_runner_command_failed",
@@ -403,9 +487,8 @@ async function driveAcpSession(
       });
     }
 
-    const respResult = promptResp.result as Record<string, unknown> | undefined;
-    if (respResult) {
-      const text = extractResponseText(respResult);
+    if (isRecord(promptResp.result)) {
+      const text = extractResponseText(promptResp.result);
       if (text) {
         state.agentSummary = text;
       }
@@ -552,9 +635,9 @@ export class AcpRunnerAdapter implements RunnerAdapter {
     try {
       stderrPromise = startStderrCapture(proc, capturedStderr);
       stdinSink = proc.stdin ?? null;
-      const stdoutIter = readStdoutMessages(proc);
+      const queue = startStdoutReader(proc);
       const sender = createMessageSender(stdinSink);
-      await driveAcpSession(context, stdoutIter, sender, state, prompt);
+      await driveAcpSession(context, queue, sender, state, prompt);
     } catch (error: unknown) {
       executionError = error;
     } finally {
@@ -614,46 +697,48 @@ export class AcpRunnerAdapter implements RunnerAdapter {
   }
 }
 
+const NOTIFICATION_METHODS_WITH_TEXT = new Set(["session/update", "agent/message", "message"]);
+
+function collectTextBlocks(content: unknown): string[] {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const texts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block)) {
+      continue;
+    }
+    if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+      texts.push(block.text);
+    }
+  }
+  return texts;
+}
+
 function extractNotificationSummary(
   notification: JsonRpcNotification,
   onText: (text: string) => void,
 ): void {
-  const params = notification.params;
-  if (!params || typeof params !== "object") {
+  const { method, params } = notification;
+  if (!method || !NOTIFICATION_METHODS_WITH_TEXT.has(method)) {
+    return;
+  }
+  if (!isRecord(params)) {
     return;
   }
 
-  if (
-    notification.method === "session/update" ||
-    notification.method === "agent/message" ||
-    notification.method === "message"
-  ) {
-    const update = params.update as Record<string, unknown> | undefined;
-    const content = (update?.content ?? params.content) as
-      | Array<Record<string, unknown>>
-      | undefined;
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
-          onText(block.text);
-        }
-      }
-    }
+  const updateContent = isRecord(params.update) ? params.update.content : undefined;
+  const content = updateContent ?? params.content;
+  for (const text of collectTextBlocks(content)) {
+    onText(text);
   }
 }
 
 function extractResponseText(result: Record<string, unknown>): string | null {
-  const content = result.content as Array<Record<string, unknown>> | undefined;
-  if (Array.isArray(content)) {
-    const texts: string[] = [];
-    for (const block of content) {
-      if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
-        texts.push(block.text);
-      }
-    }
-    if (texts.length > 0) {
-      return texts.join("\n");
-    }
+  const texts = collectTextBlocks(result.content);
+  if (texts.length > 0) {
+    return texts.join("\n");
   }
 
   if (typeof result.message === "string" && result.message.trim()) {

@@ -4,7 +4,7 @@
 // Input: NDJSON on stdin (JSON-RPC requests)
 // Output: NDJSON on stdout (JSON-RPC responses + notifications)
 
-import { spawn } from "child_process";
+import { spawn } from "node:child_process";
 
 const agentProc = spawn(process.argv[2], process.argv.slice(3), {
   stdio: ["pipe", "pipe", "pipe"],
