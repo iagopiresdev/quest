@@ -2,8 +2,10 @@ import { z } from "zod";
 
 import type { QuestRunDocument, QuestRunEvent } from "../runs/schema";
 import {
+  type ObservableDaemonEventType,
   type ObservableRunEventType,
   observableCalibrationEventTypeSchema,
+  observableDaemonEventTypeSchema,
   observableRunEventTypeSchema,
 } from "./event-types";
 import { nonEmptyString } from "./sinks/schema-helpers";
@@ -41,9 +43,25 @@ export const observableCalibrationEventSchema = z
   .strict();
 export type ObservableCalibrationEvent = z.infer<typeof observableCalibrationEventSchema>;
 
+export const observableDaemonEventSchema = z
+  .object({
+    error: nonEmptyString(1000).nullable(),
+    eventId: nonEmptyString(240),
+    eventType: observableDaemonEventTypeSchema,
+    kind: z.literal("daemon"),
+    occurredAt: nonEmptyString(80),
+    partyName: nonEmptyString(120),
+    reason: nonEmptyString(240).nullable(),
+    runId: nonEmptyString(80).nullable(),
+    specFile: nonEmptyString(240),
+  })
+  .strict();
+export type ObservableDaemonEvent = z.infer<typeof observableDaemonEventSchema>;
+
 export const observableEventSchema = z.discriminatedUnion("kind", [
   observableRunEventSchema,
   observableCalibrationEventSchema,
+  observableDaemonEventSchema,
 ]);
 export type ObservableEvent = z.infer<typeof observableEventSchema>;
 
@@ -88,5 +106,27 @@ export function createObservableCalibrationEvent(input: {
     workerId: input.workerId,
     workerName: input.workerName,
     xpAwarded: input.xpAwarded,
+  };
+}
+
+export function createObservableDaemonEvent(input: {
+  at: string;
+  error?: string | undefined;
+  eventType: ObservableDaemonEventType;
+  partyName: string;
+  reason?: string | undefined;
+  runId?: string | undefined;
+  specFile: string;
+}): ObservableDaemonEvent {
+  return {
+    error: input.error ?? null,
+    eventId: `daemon:${input.eventType}:${input.partyName}:${input.specFile}:${input.at}`,
+    eventType: input.eventType,
+    kind: "daemon",
+    occurredAt: input.at,
+    partyName: input.partyName,
+    reason: input.reason ?? null,
+    runId: input.runId ?? null,
+    specFile: input.specFile,
   };
 }

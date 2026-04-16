@@ -10,19 +10,24 @@ import {
 } from "./delivery-schema";
 import {
   type ObservableCalibrationEventType,
+  type ObservableDaemonEventType,
   type ObservableEventType,
   type ObservableRunEventType,
   observableCalibrationEventTypeSchema,
+  observableDaemonEventTypeSchema,
   observableEventTypeSchema,
   observableRunEventTypeSchema,
 } from "./event-types";
 import {
   createObservableCalibrationEvent,
+  createObservableDaemonEvent,
   createObservableRunEvent,
   type ObservableCalibrationEvent,
+  type ObservableDaemonEvent,
   type ObservableEvent,
   type ObservableRunEvent,
   observableCalibrationEventSchema,
+  observableDaemonEventSchema,
   observableEventSchema,
   observableRunEventSchema,
 } from "./observable-events";
@@ -47,6 +52,8 @@ export type {
   ObservabilityDeliveriesDocument,
   ObservableCalibrationEvent,
   ObservableCalibrationEventType,
+  ObservableDaemonEvent,
+  ObservableDaemonEventType,
   ObservableEvent,
   ObservableEventType,
   ObservableRunEvent,
@@ -58,6 +65,7 @@ export type {
 };
 export {
   createObservableCalibrationEvent,
+  createObservableDaemonEvent,
   createObservableRunEvent,
   deliveryRecordSchema,
   deliveryStatusSchema,
@@ -65,6 +73,8 @@ export {
   observabilityDeliveriesSchema,
   observableCalibrationEventSchema,
   observableCalibrationEventTypeSchema,
+  observableDaemonEventSchema,
+  observableDaemonEventTypeSchema,
   observableEventSchema,
   observableEventTypeSchema,
   observableRunEventSchema,

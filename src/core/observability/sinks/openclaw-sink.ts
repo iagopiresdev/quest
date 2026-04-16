@@ -41,15 +41,23 @@ function createFailureDelivery(
   };
 }
 
+function defaultSessionIdFor(event: ObservableEvent): string {
+  // Session id keeps event delivery grouped on the OpenClaw side, so daemon events without
+  // a run id fall back to the party name to stay readable instead of collapsing to "unknown".
+  if (event.kind === "daemon") {
+    const key = event.runId ?? event.partyName;
+    return `quest-observability-${key.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+  }
+  return `quest-observability-${event.runId.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+}
+
 export class OpenClawSinkHandler implements EventSinkHandler<OpenClawSink> {
   readonly type = "openclaw" as const;
 
   async deliver(sink: OpenClawSink, context: EventSinkDeliveryContext): Promise<DeliveryRecord> {
     try {
       const executable = sink.executable ?? "openclaw";
-      const sessionId =
-        sink.sessionId ??
-        `quest-observability-${context.event.runId.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+      const sessionId = sink.sessionId ?? defaultSessionIdFor(context.event);
       const message = sink.promptPrefix
         ? `${sink.promptPrefix}\n\n${formatSinkTextMessage(context.event)}`
         : formatSinkTextMessage(context.event);

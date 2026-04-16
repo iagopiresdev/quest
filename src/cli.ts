@@ -3131,8 +3131,18 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "daemon:tick-loop",
     matches: (args) => args.length >= 3 && args[0] === "daemon" && args[1] === "_tick-loop",
-    run: async ({ daemonStore, partyStateStore }) =>
-      await runDaemonTickLoop(daemonStore, { partyStateStore }),
+    run: async ({ daemonStore, dispatcher, partyStateStore }) =>
+      await runDaemonTickLoop(daemonStore, {
+        onTickEvents: async (events) => {
+          // Emission is best-effort so a flaky sink never blocks daemon dispatch.
+          try {
+            await dispatcher.dispatchDaemonEvents(events);
+          } catch {
+            // Sink failures are persisted into delivery records; the loop keeps going.
+          }
+        },
+        partyStateStore,
+      }),
     usage: "quest daemon _tick-loop [--state-root <path>]",
   },
   {

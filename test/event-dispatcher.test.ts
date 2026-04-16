@@ -90,6 +90,59 @@ test("event dispatcher uses injected sink handlers instead of hardcoded delivery
   }
 });
 
+test("event dispatcher delivers daemon events through the shared sink pipeline", async () => {
+  const harness = createObservabilityHarness();
+  const seen: Array<{ eventType: string; payload: unknown; sinkId: string }> = [];
+  const handler: EventSinkHandler<WebhookSink> = {
+    async deliver(sink, context): Promise<DeliveryRecord> {
+      seen.push({ eventType: context.event.eventType, payload: context.event, sinkId: sink.id });
+      return {
+        attempts: context.attempts,
+        deliveredAt: "2026-04-16T00:00:00.000Z",
+        eventId: context.event.eventId,
+        eventType: context.event.eventType,
+        lastAttemptAt: "2026-04-16T00:00:00.000Z",
+        payload: context.event,
+        sinkId: sink.id,
+        status: "delivered",
+      };
+    },
+    type: "webhook",
+  };
+
+  try {
+    await harness.store.upsertWebhookSink({
+      enabled: true,
+      eventTypes: ["daemon_dispatched", "daemon_failed"],
+      headers: {},
+      id: "daemon-webhook",
+      type: "webhook",
+      url: "https://example.com/daemon",
+    });
+    const dispatcher = new EventDispatcher(harness.store, harness.secretStore, [handler]);
+
+    const attempts = await dispatcher.dispatchDaemon({
+      at: "2026-04-16T00:00:00.000Z",
+      eventType: "daemon_dispatched",
+      partyName: "alpha",
+      specFile: "fast.json",
+    });
+
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        eventType: "daemon_dispatched",
+        ok: true,
+        sinkId: "daemon-webhook",
+        status: "delivered",
+      }),
+    ]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.eventType).toBe("daemon_dispatched");
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("event dispatcher records failed deliveries when a sink has no registered handler", async () => {
   const harness = createObservabilityHarness();
 

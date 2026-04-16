@@ -454,9 +454,11 @@ The `openclaw` sink delivers quest events into a dedicated OpenClaw agent/sessio
 Internally, sinks already live behind a typed sink model instead of a webhook-only config shape. That keeps the current webhook path simple while leaving room for future Telegram, Linear, Slack, or metrics sinks without rewriting delivery storage.
 
 The core model is:
-- run or calibration emits an event
+- run, calibration, or daemon tick emits an event
 - observability dedupes and records delivery attempts
 - sinks react to the event
+
+Daemon tick emits its own lifecycle events: `daemon_dispatched`, `daemon_landed`, `daemon_failed`, `daemon_budget_exhausted`, and `daemon_recovered`. Configure them through the same sink upsert commands; unfiltered sinks receive them by default, and narrow sinks can opt in through the `--events` flag.
 
 This matters because webhook delivery is only the first consumer. The same event stream should support future sinks such as Telegram, Linear, Slack, or metrics without changing the run model itself.
 
@@ -846,6 +848,7 @@ Do not commit runtime state, tokens, or local config.
 - Slack sink delivery through the same eventing model
 - Linear sink delivery through the same eventing model
 - OpenClaw session-delivery sink through the same eventing model
+- daemon lifecycle events (`daemon_dispatched`, `daemon_landed`, `daemon_failed`, `daemon_budget_exhausted`, `daemon_recovered`) dispatched through the same sink pipeline
 - sink probe/test-send support from `quest observability sinks test` and `quest doctor --test-sinks`
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 - best-effort run usage summaries via `runs usage`

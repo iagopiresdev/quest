@@ -299,6 +299,179 @@ test("daemon tick persists active run ids before execute starts", async () => {
   }
 });
 
+test("daemon tick emits dispatched and landed events for a successful run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
+  const capturePath = join(root, "commands.log");
+  const daemonStore = new QuestDaemonStore(root);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+  const questExecutable = createFakeQuestExecutable(root, { capturePath });
+
+  try {
+    await daemonStore.createParty({
+      budget: { maxConcurrent: 1, maxSpecsPerHour: 10 },
+      enabled: true,
+      name: "alpha",
+      sourceRepo: join(root, "repo"),
+      targetRef: "main",
+    });
+
+    const directories = await daemonStore.ensurePartyDirectories("alpha");
+    writeFileSync(
+      join(directories.inbox, "fast.json"),
+      JSON.stringify({ priority: 1, retry_count: 0, retry_limit: 0, ...baseDaemonSpec("fast") }),
+      "utf8",
+    );
+
+    const result = await runDaemonTick(
+      await daemonStore.readState(),
+      await daemonStore.readConfig(),
+      {
+        daemonStore,
+        partyStateStore,
+        questCommand: [questExecutable],
+      },
+    );
+
+    const eventTypes = result.events.map((event) => event.eventType);
+    expect(eventTypes).toContain("daemon_dispatched");
+    expect(eventTypes).toContain("daemon_landed");
+    const landed = result.events.find((event) => event.eventType === "daemon_landed");
+    expect(landed?.partyName).toBe("alpha");
+    expect(landed?.specFile).toBe("fast.json");
+    expect(landed?.runId).toBe("quest-00000000-aaaaaaaa");
+    const dispatched = result.events.find((event) => event.eventType === "daemon_dispatched");
+    expect(dispatched?.partyName).toBe("alpha");
+    expect(dispatched?.runId).toBeNull();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("daemon tick emits a failed event when execute blows up", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
+  const capturePath = join(root, "commands.log");
+  const daemonStore = new QuestDaemonStore(root);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+  const questExecutable = createFakeQuestExecutable(root, { capturePath, failStage: "execute" });
+
+  try {
+    await daemonStore.createParty({
+      budget: { maxConcurrent: 1, maxSpecsPerHour: 10 },
+      enabled: true,
+      name: "alpha",
+      sourceRepo: join(root, "repo"),
+      targetRef: "main",
+    });
+
+    const directories = await daemonStore.ensurePartyDirectories("alpha");
+    writeFileSync(
+      join(directories.inbox, "boom.json"),
+      JSON.stringify({ priority: 1, retry_count: 0, retry_limit: 0, ...baseDaemonSpec("boom") }),
+      "utf8",
+    );
+
+    const result = await runDaemonTick(
+      await daemonStore.readState(),
+      await daemonStore.readConfig(),
+      {
+        daemonStore,
+        partyStateStore,
+        questCommand: [questExecutable],
+      },
+    );
+
+    const failed = result.events.find((event) => event.eventType === "daemon_failed");
+    expect(failed).toBeDefined();
+    expect(failed?.specFile).toBe("boom.json");
+    expect(failed?.error).toContain("execute blew up");
+    expect(failed?.runId).toBe("quest-00000000-aaaaaaaa");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("daemon tick emits a failed event for unreadable specs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
+  const capturePath = join(root, "commands.log");
+  const daemonStore = new QuestDaemonStore(root);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+  const questExecutable = createFakeQuestExecutable(root, { capturePath });
+
+  try {
+    await daemonStore.createParty({
+      budget: { maxConcurrent: 1, maxSpecsPerHour: 10 },
+      enabled: true,
+      name: "alpha",
+      sourceRepo: join(root, "repo"),
+      targetRef: "main",
+    });
+
+    const directories = await daemonStore.ensurePartyDirectories("alpha");
+    writeFileSync(join(directories.inbox, "broken.json"), "{\n", "utf8");
+
+    const result = await runDaemonTick(
+      await daemonStore.readState(),
+      await daemonStore.readConfig(),
+      {
+        daemonStore,
+        partyStateStore,
+        questCommand: [questExecutable],
+      },
+    );
+
+    const failed = result.events.filter((event) => event.eventType === "daemon_failed");
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed[0]?.specFile).toBe("broken.json");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("daemon tick emits a budget_exhausted event when the hourly window is full", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
+  const daemonStore = new QuestDaemonStore(root);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+
+  try {
+    await daemonStore.createParty({
+      budget: { maxConcurrent: 1, maxSpecsPerHour: 1 },
+      enabled: true,
+      name: "alpha",
+      sourceRepo: join(root, "repo"),
+      targetRef: "main",
+    });
+
+    const saturatedState = await daemonStore.readState();
+    saturatedState.completedSpecTimestamps.alpha = [new Date().toISOString()];
+    await daemonStore.writeState(saturatedState);
+
+    const directories = await daemonStore.ensurePartyDirectories("alpha");
+    writeFileSync(
+      join(directories.inbox, "queued.json"),
+      JSON.stringify({ priority: 1, retry_count: 0, retry_limit: 0, ...baseDaemonSpec("queued") }),
+      "utf8",
+    );
+
+    const result = await runDaemonTick(
+      await daemonStore.readState(),
+      await daemonStore.readConfig(),
+      {
+        daemonStore,
+        partyStateStore,
+      },
+    );
+
+    const budgetEvent = result.events.find(
+      (event) => event.eventType === "daemon_budget_exhausted",
+    );
+    expect(budgetEvent).toBeDefined();
+    expect(budgetEvent?.partyName).toBe("alpha");
+    expect(budgetEvent?.reason).toBe("hourly_limit:1");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 function baseDaemonSpec(id: string) {
   return {
     acceptanceChecks: [],

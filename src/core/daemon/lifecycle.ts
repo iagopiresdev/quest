@@ -2,6 +2,7 @@ import { readdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { QuestDomainError } from "../errors";
+import { createObservableDaemonEvent, type ObservableDaemonEvent } from "../observability/schema";
 import { QuestPartyStateStore } from "../party-state";
 import { isPidAlive } from "../runs/process-monitor";
 import { ensureDirectory, writeJsonFileAtomically } from "../storage";
@@ -35,6 +36,7 @@ export type QuestDaemonStatus = {
 };
 
 export type RunDaemonTickLoopResult = {
+  events: ObservableDaemonEvent[];
   outcomes: QuestDaemonTickOutcome[];
   stopped: boolean;
 };
@@ -42,6 +44,7 @@ export type RunDaemonTickLoopResult = {
 type TickLoopOptions = {
   cwd?: string | undefined;
   env?: Record<string, string | undefined> | undefined;
+  onTickEvents?: ((events: ObservableDaemonEvent[]) => Promise<void>) | undefined;
   partyStateStore?: QuestPartyStateStore | undefined;
   questCommand?: string[] | undefined;
   sleep?: ((ms: number) => Promise<void>) | undefined;
@@ -119,6 +122,7 @@ async function recoverPartyRunningSpecs(
   store: QuestDaemonStore,
   state: QuestDaemonState,
   partyName: string,
+  events: ObservableDaemonEvent[],
 ): Promise<void> {
   const directories = await store.ensurePartyDirectories(partyName);
   const runningFiles = (await readdir(directories.running).catch(() => []))
@@ -131,17 +135,28 @@ async function recoverPartyRunningSpecs(
     const raw = await readSpecInput(runningPath).catch(() => null);
     await writeSpecInput(runningPath, buildRecoveredSpecPayload(raw));
     await moveSpecFile(runningPath, inboxPath);
+    events.push(
+      createObservableDaemonEvent({
+        at: new Date().toISOString(),
+        eventType: "daemon_recovered",
+        partyName,
+        reason: "running_queue_recovered",
+        specFile: fileName,
+      }),
+    );
   }
 
   state.activeRunIds[partyName] = [];
 }
 
-async function recoverRunningSpecs(store: QuestDaemonStore): Promise<void> {
+async function recoverRunningSpecs(store: QuestDaemonStore): Promise<ObservableDaemonEvent[]> {
   const state = await store.readState();
+  const events: ObservableDaemonEvent[] = [];
   for (const party of state.parties) {
-    await recoverPartyRunningSpecs(store, state, party.name);
+    await recoverPartyRunningSpecs(store, state, party.name, events);
   }
   await store.writeState(state);
+  return events;
 }
 
 function buildTickDependencies(
@@ -261,28 +276,37 @@ export async function runDaemonTickLoop(
   const sleep = options.sleep ?? Bun.sleep;
   const deps = buildTickDependencies(store, options);
   const outcomes: QuestDaemonTickOutcome[] = [];
+  const events: ObservableDaemonEvent[] = [];
 
-  await recoverRunningSpecs(store);
+  const recoveryEvents = await recoverRunningSpecs(store);
+  events.push(...recoveryEvents);
+  if (recoveryEvents.length > 0) {
+    await options.onTickEvents?.(recoveryEvents);
+  }
 
   try {
     while (true) {
       const currentState = await store.readState();
       if (currentState.process?.stopRequested) {
-        return { outcomes, stopped: true };
+        return { events, outcomes, stopped: true };
       }
 
       const config = await store.readConfig();
       const tickResult = await tick(currentState, config, deps);
       outcomes.push(...tickResult.outcomes);
+      events.push(...tickResult.events);
       const latestState = await store.readState();
       await store.writeState(mergeTickState(latestState, tickResult.state));
+      if (tickResult.events.length > 0) {
+        await options.onTickEvents?.(tickResult.events);
+      }
 
       if ((await store.readState()).process?.stopRequested) {
-        return { outcomes, stopped: true };
+        return { events, outcomes, stopped: true };
       }
 
       if (await waitForNextTick(store, config.tickIntervalMs, sleep)) {
-        return { outcomes, stopped: true };
+        return { events, outcomes, stopped: true };
       }
     }
   } finally {

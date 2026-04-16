@@ -1,5 +1,6 @@
 import type {
   ObservableCalibrationEvent,
+  ObservableDaemonEvent,
   ObservableEvent,
   ObservableRunEvent,
 } from "../observable-events";
@@ -28,6 +29,32 @@ function formatCalibrationMessage(event: ObservableCalibrationEvent): string {
   ].join("\n");
 }
 
+function formatDaemonMessage(event: ObservableDaemonEvent): string {
+  const lines = [
+    "quest-runner daemon",
+    `event: ${event.eventType}`,
+    `party: ${event.partyName}`,
+    `spec: ${event.specFile}`,
+  ];
+  if (event.runId) {
+    lines.push(`run: ${event.runId}`);
+  }
+  if (event.reason) {
+    lines.push(`reason: ${event.reason}`);
+  }
+  if (event.error) {
+    lines.push(`error: ${event.error}`);
+  }
+  return lines.join("\n");
+}
+
 export function formatSinkTextMessage(event: ObservableEvent): string {
-  return event.kind === "run" ? formatRunMessage(event) : formatCalibrationMessage(event);
+  switch (event.kind) {
+    case "run":
+      return formatRunMessage(event);
+    case "worker_calibration":
+      return formatCalibrationMessage(event);
+    case "daemon":
+      return formatDaemonMessage(event);
+  }
 }

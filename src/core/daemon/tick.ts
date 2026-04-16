@@ -1,6 +1,11 @@
 import { readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
+import {
+  createObservableDaemonEvent,
+  type ObservableDaemonEvent,
+  type ObservableDaemonEventType,
+} from "../observability/schema";
 import type { QuestPartyStateStore } from "../party-state";
 import { questSpecSchema } from "../planning/spec-schema";
 import { runSubprocess, type SubprocessResult } from "../runs/process";
@@ -33,6 +38,33 @@ export type QuestDaemonTickDependencies = {
   partyStateStore: QuestPartyStateStore;
   questCommand?: string[] | undefined;
 };
+
+// Daemon emits its own lifecycle events so observability sinks see dispatch, landing, failure,
+// budget, and recovery transitions without having to infer them from run-level events alone.
+function recordDaemonEvent(
+  events: ObservableDaemonEvent[],
+  input: {
+    error?: string | undefined;
+    eventType: ObservableDaemonEventType;
+    now: Date;
+    partyName: string;
+    reason?: string | undefined;
+    runId?: string | undefined;
+    specFile: string;
+  },
+): void {
+  events.push(
+    createObservableDaemonEvent({
+      at: input.now.toISOString(),
+      error: input.error,
+      eventType: input.eventType,
+      partyName: input.partyName,
+      reason: input.reason,
+      runId: input.runId,
+      specFile: input.specFile,
+    }),
+  );
+}
 
 type SpecCandidate = {
   document: QuestDaemonSpecDocument;
@@ -418,6 +450,7 @@ async function processCandidateSpec(
   party: QuestParty,
   directories: QuestPartyDirectories,
   candidate: SpecCandidate,
+  events: ObservableDaemonEvent[],
 ): Promise<QuestDaemonTickOutcome> {
   const startedAt = readNow(deps).toISOString();
   const stateRoot = deps.daemonStore.getStateRoot();
@@ -432,6 +465,12 @@ async function processCandidateSpec(
 
   await moveSpecFile(candidate.inboxPath, runningPath);
   await writeSpecInput(runningPath, runningDocument);
+  recordDaemonEvent(events, {
+    eventType: "daemon_dispatched",
+    now: readNow(deps),
+    partyName: party.name,
+    specFile: candidate.fileName,
+  });
 
   try {
     await planDaemonSpec(deps, stateRoot, runningPath, runningDocument);
@@ -447,6 +486,13 @@ async function processCandidateSpec(
       readNow(deps),
     );
     state.lastErrorByParty[party.name] = null;
+    recordDaemonEvent(events, {
+      eventType: "daemon_landed",
+      now: readNow(deps),
+      partyName: party.name,
+      runId,
+      specFile: candidate.fileName,
+    });
     return {
       party: party.name,
       runId,
@@ -458,6 +504,14 @@ async function processCandidateSpec(
     removeActiveRunId(state, party.name, runId);
     await completeSpecFailure(runningPath, failedPath, runningDocument, message, runId);
     markPartyFailure(state, config, party.name, message, readNow(deps));
+    recordDaemonEvent(events, {
+      error: message,
+      eventType: "daemon_failed",
+      now: readNow(deps),
+      partyName: party.name,
+      runId,
+      specFile: candidate.fileName,
+    });
     return {
       error: message.slice(0, 2_000),
       party: party.name,
@@ -498,14 +552,20 @@ export async function runDaemonTick(
   state: QuestDaemonState,
   config: QuestDaemonConfig,
   deps: QuestDaemonTickDependencies,
-): Promise<{ outcomes: QuestDaemonTickOutcome[]; state: QuestDaemonState }> {
+): Promise<{
+  events: ObservableDaemonEvent[];
+  outcomes: QuestDaemonTickOutcome[];
+  state: QuestDaemonState;
+}> {
   const now = readNow(deps);
   const outcomes: QuestDaemonTickOutcome[] = [];
+  const events: ObservableDaemonEvent[] = [];
   const globalPartyState = await deps.partyStateStore.readState();
 
   state.lastTickTime = now.toISOString();
   if (globalPartyState.status === "resting") {
     return {
+      events,
       outcomes: [{ reason: globalPartyState.reason ?? "global_bonfire", type: "tick_complete" }],
       state,
     };
@@ -521,6 +581,15 @@ export async function runDaemonTick(
 
     const skipReason = canDispatchForParty(state, party, now);
     if (skipReason) {
+      if (skipReason === "hourly_budget") {
+        recordDaemonEvent(events, {
+          eventType: "daemon_budget_exhausted",
+          now,
+          partyName: party.name,
+          reason: `hourly_limit:${party.budget.maxSpecsPerHour}`,
+          specFile: "",
+        });
+      }
       outcomes.push({ party: party.name, reason: skipReason, type: "party_skipped" });
       continue;
     }
@@ -543,6 +612,13 @@ export async function runDaemonTick(
           invalidSpec.error,
         );
         state.lastErrorByParty[party.name] = failure.error;
+        recordDaemonEvent(events, {
+          error: failure.error,
+          eventType: "daemon_failed",
+          now: readNow(deps),
+          partyName: party.name,
+          specFile: invalidSpec.fileName,
+        });
         outcomes.push({
           error: failure.error,
           party: party.name,
@@ -561,10 +637,19 @@ export async function runDaemonTick(
         continue;
       }
 
-      outcomes.push(await processCandidateSpec(state, config, deps, party, directories, candidate));
+      outcomes.push(
+        await processCandidateSpec(state, config, deps, party, directories, candidate, events),
+      );
     } catch (error: unknown) {
       const failure = await failUnreadableSpec(directories, inboxFiles[0] ?? "", error);
       markPartyFailure(state, config, party.name, failure.error, now);
+      recordDaemonEvent(events, {
+        error: failure.error,
+        eventType: "daemon_failed",
+        now: readNow(deps),
+        partyName: party.name,
+        specFile: inboxFiles[0] ?? "unknown",
+      });
       outcomes.push({
         error: failure.error,
         party: party.name,
@@ -575,5 +660,5 @@ export async function runDaemonTick(
   }
 
   outcomes.push({ reason: "complete", type: "tick_complete" });
-  return { outcomes, state };
+  return { events, outcomes, state };
 }

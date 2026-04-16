@@ -44,7 +44,13 @@ test("daemon tick loop recovers specs stranded in the running queue before exiti
       "utf8",
     );
 
+    const emittedEvents: string[] = [];
     const result = await runDaemonTickLoop(daemonStore, {
+      onTickEvents: async (events) => {
+        for (const event of events) {
+          emittedEvents.push(event.eventType);
+        }
+      },
       sleep: async () => {},
     });
 
@@ -55,6 +61,8 @@ test("daemon tick loop recovers specs stranded in the running queue before exiti
     const recovered = JSON.parse(readFileSync(join(directories.inbox, "stuck.json"), "utf8"));
     expect(recovered.daemon_result.status).toBe("retrying");
     expect((await daemonStore.readState()).process).toBeUndefined();
+    expect(emittedEvents).toContain("daemon_recovered");
+    expect(result.events.some((event) => event.eventType === "daemon_recovered")).toBe(true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

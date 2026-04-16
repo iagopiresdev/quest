@@ -2,9 +2,12 @@ import type { QuestRunDocument } from "../runs/schema";
 import type { SecretStore } from "../secret-store";
 import {
   createObservableCalibrationEvent,
+  createObservableDaemonEvent,
   type DeliveryRecord,
   type DeliveryStatus,
   type ObservabilitySink,
+  type ObservableDaemonEvent,
+  type ObservableDaemonEventType,
   type ObservableEvent,
   type ObservableEventType,
   shouldDeliverEvent,
@@ -57,6 +60,22 @@ export class EventDispatcher {
     xpAwarded: number;
   }): Promise<DeliveryAttempt[]> {
     return await this.dispatchEvents([createObservableCalibrationEvent(input)]);
+  }
+
+  async dispatchDaemon(input: {
+    at: string;
+    error?: string | undefined;
+    eventType: ObservableDaemonEventType;
+    partyName: string;
+    reason?: string | undefined;
+    runId?: string | undefined;
+    specFile: string;
+  }): Promise<DeliveryAttempt[]> {
+    return await this.dispatchEvents([createObservableDaemonEvent(input)]);
+  }
+
+  async dispatchDaemonEvents(events: ObservableDaemonEvent[]): Promise<DeliveryAttempt[]> {
+    return await this.dispatchEvents(events);
   }
 
   async dispatchProbe(
