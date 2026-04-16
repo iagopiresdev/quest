@@ -1,7 +1,16 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 import { parseOpenClawJsonOutput } from "../runs/adapters/openclaw-shared";
 import { runSubprocess } from "../runs/process";
 import { buildProcessEnv } from "../runs/process-env";
+
+function resolveHomeDirectory(): string {
+  // Prefer the HOME env var so tests can point detection at a throwaway directory. Production
+  // code-paths still fall back to `os.homedir()` when HOME is unset.
+  return Bun.env.HOME?.trim() || homedir();
+}
 
 const hermesModelsResponseSchema = z.union([
   z.object({
@@ -66,6 +75,12 @@ export type DetectedOpenClawSetup = {
 
 export type DetectedSinkSetup = {
   linearApiKeyEnv: string | null;
+  // When the local OpenClaw config exposes a Telegram bot token, setup can offer to import it into
+  // the quest secret store so operators avoid double-configuring the same credential. We only
+  // surface the fact that a token exists; the raw value stays in memory until the wizard prompt
+  // accepts the import.
+  openClawTelegramBotToken: string | null;
+  openClawTelegramChatId: string | null;
   slackWebhookEnv: string | null;
   telegramBotTokenEnv: string | null;
 };
@@ -209,9 +224,48 @@ export async function detectOpenClawSetup(
   };
 }
 
-export function detectSinkSetup(): DetectedSinkSetup {
+const openClawConfigTelegramSchema = z.object({
+  channels: z
+    .object({
+      telegram: z
+        .object({
+          allowFrom: z.array(z.union([z.number(), z.string()])).optional(),
+          botToken: z.string().trim().min(1).optional(),
+        })
+        .passthrough()
+        .optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+
+async function detectOpenClawTelegramImport(): Promise<{
+  botToken: string | null;
+  chatId: string | null;
+}> {
+  const configPath = join(resolveHomeDirectory(), ".openclaw", "openclaw.json");
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = openClawConfigTelegramSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      return { botToken: null, chatId: null };
+    }
+    const telegram = parsed.data.channels?.telegram;
+    const botToken = telegram?.botToken?.trim() || null;
+    const rawChatId = telegram?.allowFrom?.[0];
+    const chatId = rawChatId !== undefined ? String(rawChatId) : null;
+    return { botToken, chatId };
+  } catch {
+    return { botToken: null, chatId: null };
+  }
+}
+
+export async function detectSinkSetup(): Promise<DetectedSinkSetup> {
+  const openClawTelegram = await detectOpenClawTelegramImport();
   return {
     linearApiKeyEnv: Bun.env.LINEAR_API_KEY?.trim() ? "LINEAR_API_KEY" : null,
+    openClawTelegramBotToken: openClawTelegram.botToken,
+    openClawTelegramChatId: openClawTelegram.chatId,
     slackWebhookEnv: Bun.env.SLACK_WEBHOOK_URL?.trim() ? "SLACK_WEBHOOK_URL" : null,
     telegramBotTokenEnv: Bun.env.TELEGRAM_BOT_TOKEN?.trim() ? "TELEGRAM_BOT_TOKEN" : null,
   };

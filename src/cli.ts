@@ -57,6 +57,7 @@ import {
   detectOpenClawSetup,
   detectSinkSetup,
 } from "./core/setup/detection";
+import { parseTelegramSinkPlan } from "./core/setup/telegram-sink-plan";
 import { runSetupWizard } from "./core/setup/wizard";
 import { isRecord } from "./core/shared/type-guards";
 import {
@@ -937,6 +938,12 @@ function buildSetupWizardDefaults(
       ...(sinkDefaults.linearApiKeyEnv ? { linearApiKeyEnv: sinkDefaults.linearApiKeyEnv } : {}),
       ...(importedOpenClaw?.agentId ? { openClawAgentId: importedOpenClaw.agentId } : {}),
       ...(importedOpenClaw?.gatewayUrl ? { openClawGatewayUrl: importedOpenClaw.gatewayUrl } : {}),
+      ...(sinkDefaults.openClawTelegramBotToken
+        ? { openClawTelegramBotToken: sinkDefaults.openClawTelegramBotToken }
+        : {}),
+      ...(sinkDefaults.openClawTelegramChatId
+        ? { openClawTelegramChatId: sinkDefaults.openClawTelegramChatId }
+        : {}),
       ...(sinkDefaults.slackWebhookEnv ? { slackWebhookEnv: sinkDefaults.slackWebhookEnv } : {}),
       ...(sinkDefaults.telegramBotTokenEnv
         ? { telegramBotTokenEnv: sinkDefaults.telegramBotTokenEnv }
@@ -960,6 +967,7 @@ async function buildWorkersFromSetupPlans(
 
 async function configureSetupSink(
   observabilityStore: ObservabilityStore,
+  secretStore: SecretStore,
   sinkPlan: Awaited<ReturnType<typeof runSetupWizard>>["sinkPlan"],
 ): Promise<Record<string, unknown> | null> {
   if (!sinkPlan) {
@@ -979,14 +987,22 @@ async function configureSetupSink(
   }
 
   if (sinkPlan.kind === "telegram") {
+    // Wizard asked whether to render RPG flavor cards and whether to import the bot token from
+    // ~/.openclaw/openclaw.json. Translation from the wizard args is pure and tested in
+    // `telegram-sink-plan.test.ts`; here we just bind it to side effects.
+    const plan = parseTelegramSinkPlan(sinkPlan.args);
+    if (plan.importOpenClawBotToken && plan.botTokenSecretRef) {
+      await secretStore.setSecret(plan.botTokenSecretRef, plan.importOpenClawBotToken);
+    }
     return await observabilityStore.upsertTelegramSink(
       telegramSinkSchema.parse({
-        botTokenSecretRef: findOptionValue(sinkPlan.args, "--bot-token-secret-ref"),
-        botTokenEnv: findOptionValue(sinkPlan.args, "--bot-token-env"),
-        chatId: requireOptionValue(sinkPlan.args, "--chat-id", "--chat-id <id>"),
+        botTokenEnv: plan.botTokenEnv,
+        botTokenSecretRef: plan.botTokenSecretRef,
+        chatId: plan.chatId,
         enabled: true,
         eventTypes: [],
         id: "setup-telegram",
+        ...(plan.parseMode ? { parseMode: plan.parseMode } : {}),
         type: "telegram",
       }),
     );
@@ -1233,7 +1249,7 @@ async function detectSetupImports(args: string[]): Promise<SetupImports> {
     importedHermes: asHermesSetup(importedDefaults),
     importedOpenClaw,
     importedSummary: describeImportedBackendDefaults(backend, importedDefaults),
-    sinkDefaults: detectSinkSetup(),
+    sinkDefaults: await detectSinkSetup(),
   };
 }
 
@@ -1269,6 +1285,7 @@ async function runInteractiveSetupFlow(
   calibrator: WorkerCalibrator,
   observabilityStore: ObservabilityStore,
   registry: WorkerRegistry,
+  secretStore: SecretStore,
   settingsStore: QuestSettingsStore,
   setupImports: SetupImports,
 ): Promise<{
@@ -1300,7 +1317,11 @@ async function runInteractiveSetupFlow(
       createdWorkers,
       wizardResult.calibrateWorkerIds,
     ),
-    configuredSink: await configureSetupSink(observabilityStore, wizardResult.sinkPlan),
+    configuredSink: await configureSetupSink(
+      observabilityStore,
+      secretStore,
+      wizardResult.sinkPlan,
+    ),
     settings: await settingsStore.writeSettings(wizardResult.settingsUpdate),
     workerState: {
       createdWorker: createdWorkers[0] ?? null,
@@ -2175,6 +2196,7 @@ async function runSetup(
       calibrator,
       observabilityStore,
       registry,
+      secretStore,
       settingsStore,
       setupImports,
     );

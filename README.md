@@ -505,6 +505,12 @@ quest setup --yes --backend openclaw --openclaw-executable /path/to/openclaw
 # - first reachable Hermes model from /models
 # - preferred OpenClaw agent (codex first, then first listed agent)
 # - sink auth defaults from TELEGRAM_BOT_TOKEN, SLACK_WEBHOOK_URL, and LINEAR_API_KEY when present
+# - Telegram bot token + default chat id imported from ~/.openclaw/openclaw.json when available
+#   (interactive setup offers an `openclaw-import` auth mode that copies the token into the quest
+#    secret store and wires the sink to use it)
+# - interactive setup also asks whether to render observability events as RPG flavor cards
+#   (HTML parse mode) so Telegram notifications arrive as "⚔️ Quest Accepted" cards instead of
+#   plain text
 
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin

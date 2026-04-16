@@ -45,6 +45,12 @@ type SetupWizardDefaults = {
     linearApiKeyEnv?: string;
     openClawAgentId?: string;
     openClawGatewayUrl?: string;
+    // Set when `~/.openclaw/openclaw.json` exposes a Telegram bot token. The wizard surfaces an
+    // "import from OpenClaw" auth mode that copies the token into the quest secret store so the
+    // operator does not have to re-enter it. The raw token value is kept local to the wizard and
+    // never echoed back to the terminal.
+    openClawTelegramBotToken?: string;
+    openClawTelegramChatId?: string;
     slackWebhookEnv?: string;
     telegramBotTokenEnv?: string;
   };
@@ -229,6 +235,71 @@ async function promptWorkerPlan(
   };
 }
 
+async function promptTelegramSinkPlan(
+  cli: ReturnType<typeof createInterface>,
+  defaults: SetupWizardDefaults,
+): Promise<SetupWizardSinkPlan> {
+  const detectedToken = defaults.sinkDefaults?.openClawTelegramBotToken;
+  const detectedChatId = defaults.sinkDefaults?.openClawTelegramChatId;
+  const chatId = await promptWithDefault(cli, "Telegram chat id", detectedChatId ?? "");
+  const authModes = detectedToken
+    ? (["openclaw-import", "env", "secret-store"] as const)
+    : (["env", "secret-store"] as const);
+  const authMode = await chooseOne(
+    cli,
+    detectedToken
+      ? "Telegram bot token source (openclaw-import pulls from ~/.openclaw/openclaw.json)"
+      : "Telegram bot token source",
+    authModes,
+    detectedToken ? "openclaw-import" : "env",
+  );
+  const useRpgCards = await confirmWithDefault(
+    cli,
+    "Render events as RPG flavor cards (HTML parse mode)?",
+    true,
+  );
+  const parseModeArgs = useRpgCards ? ["--parse-mode", "HTML"] : [];
+
+  if (authMode === "openclaw-import" && detectedToken) {
+    // The actual secret write happens in cli.ts::configureSetupSink so the wizard stays pure; we
+    // thread the detected token through as a private sentinel arg.
+    return {
+      args: [
+        "--chat-id",
+        chatId,
+        "--bot-token-secret-ref",
+        "quest-telegram-bot-token",
+        "--import-openclaw-bot-token",
+        detectedToken,
+        ...parseModeArgs,
+      ],
+      kind: "telegram",
+    };
+  }
+
+  if (authMode === "secret-store") {
+    const secretRef = await promptWithDefault(
+      cli,
+      "Telegram bot token secret ref",
+      "telegram.bot-token",
+    );
+    return {
+      args: ["--chat-id", chatId, "--bot-token-secret-ref", secretRef, ...parseModeArgs],
+      kind: "telegram",
+    };
+  }
+
+  const botTokenEnv = await promptWithDefault(
+    cli,
+    "Telegram bot token env",
+    defaults.sinkDefaults?.telegramBotTokenEnv ?? "TELEGRAM_BOT_TOKEN",
+  );
+  return {
+    args: ["--chat-id", chatId, "--bot-token-env", botTokenEnv, ...parseModeArgs],
+    kind: "telegram",
+  };
+}
+
 async function promptSinkPlan(
   cli: ReturnType<typeof createInterface>,
   defaults: SetupWizardDefaults,
@@ -249,31 +320,7 @@ async function promptSinkPlan(
   }
 
   if (sinkKind === "telegram") {
-    const chatId = await promptWithDefault(cli, "Telegram chat id", "");
-    const authMode = await chooseOne(
-      cli,
-      "Telegram bot token source",
-      ["env", "secret-store"] as const,
-      "env",
-    );
-    if (authMode === "secret-store") {
-      const secretRef = await promptWithDefault(
-        cli,
-        "Telegram bot token secret ref",
-        "telegram.bot-token",
-      );
-      return {
-        args: ["--chat-id", chatId, "--bot-token-secret-ref", secretRef],
-        kind: "telegram",
-      };
-    }
-
-    const botTokenEnv = await promptWithDefault(
-      cli,
-      "Telegram bot token env",
-      defaults.sinkDefaults?.telegramBotTokenEnv ?? "TELEGRAM_BOT_TOKEN",
-    );
-    return { args: ["--chat-id", chatId, "--bot-token-env", botTokenEnv], kind: "telegram" };
+    return await promptTelegramSinkPlan(cli, defaults);
   }
 
   if (sinkKind === "slack") {
