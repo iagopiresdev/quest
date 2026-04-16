@@ -1676,6 +1676,29 @@ async function summarizeDaemonParty(
   return party;
 }
 
+// Party-admin CLI handlers emit a best-effort daemon event so observability sinks see party
+// create/bonfire/resume transitions even though they happen outside the tick loop. Sink failures
+// must never bubble up from an operator command; delivery failures are already persisted.
+async function safeDispatchPartyAdminEvent(
+  dispatcher: EventDispatcher,
+  input: {
+    eventType: "daemon_party_created" | "daemon_party_resting" | "daemon_party_resumed";
+    partyName: string;
+    reason?: string | null | undefined;
+  },
+): Promise<void> {
+  try {
+    await dispatcher.dispatchDaemon({
+      at: new Date().toISOString(),
+      eventType: input.eventType,
+      partyName: input.partyName,
+      reason: input.reason ?? undefined,
+    });
+  } catch {
+    // Sink errors are recorded in delivery records; the operator command still succeeds.
+  }
+}
+
 async function dispatchResultEvents(value: unknown, dispatcher: EventDispatcher): Promise<void> {
   if (!isRecord(value)) {
     return;
@@ -3311,8 +3334,8 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "party:create",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "create",
-    run: async ({ args, daemonStore }) => ({
-      party: await daemonStore.createParty({
+    run: async ({ args, daemonStore, dispatcher }) => {
+      const party = await daemonStore.createParty({
         budget: {
           maxConcurrent: 1,
           maxSpecsPerHour: 10,
@@ -3321,8 +3344,14 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         name: requireOptionValue(args, "--name", "--name <party-name>"),
         sourceRepo: requireOptionValue(args, "--source-repo", "--source-repo <path>"),
         targetRef: requireOptionValue(args, "--target-ref", "--target-ref <ref>"),
-      }),
-    }),
+      });
+      await safeDispatchPartyAdminEvent(dispatcher, {
+        eventType: "daemon_party_created",
+        partyName: party.name,
+        reason: `target_ref:${party.targetRef}`,
+      });
+      return { party };
+    },
     usage:
       "quest party create --name <party-name> --source-repo <path> --target-ref <ref> [--state-root <path>]",
   },
@@ -3364,38 +3393,53 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
   {
     id: "party:bonfire",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "bonfire",
-    run: async ({ args, daemonStore, partyStateStore }) => {
+    run: async ({ args, daemonStore, dispatcher, partyStateStore }) => {
       const partyName = findOptionValue(args, "--name");
+      const reason = findOptionValue(args, "--reason") ?? undefined;
       if (partyName) {
-        await daemonStore.restParty(partyName, findOptionValue(args, "--reason") ?? undefined);
+        await daemonStore.restParty(partyName, reason);
+        await safeDispatchPartyAdminEvent(dispatcher, {
+          eventType: "daemon_party_resting",
+          partyName,
+          reason: reason ?? null,
+        });
         return {
           party: await summarizeDaemonParty(daemonStore, partyName),
         };
       }
 
-      return {
-        partyState: summarizePartyState(
-          await partyStateStore.lightBonfire(findOptionValue(args, "--reason") ?? undefined),
-        ),
-      };
+      const nextState = await partyStateStore.lightBonfire(reason);
+      await safeDispatchPartyAdminEvent(dispatcher, {
+        eventType: "daemon_party_resting",
+        partyName: "*",
+        reason: nextState.reason ?? null,
+      });
+      return { partyState: summarizePartyState(nextState) };
     },
     usage: "quest party bonfire [--name <party-name>] [--reason <text>] [--state-root <path>]",
   },
   {
     id: "party:resume",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "resume",
-    run: async ({ args, daemonStore, partyStateStore }) => {
+    run: async ({ args, daemonStore, dispatcher, partyStateStore }) => {
       const partyName = findOptionValue(args, "--name");
       if (partyName) {
         await daemonStore.resumeParty(partyName);
+        await safeDispatchPartyAdminEvent(dispatcher, {
+          eventType: "daemon_party_resumed",
+          partyName,
+        });
         return {
           party: await summarizeDaemonParty(daemonStore, partyName),
         };
       }
 
-      return {
-        partyState: summarizePartyState(await partyStateStore.resumeParty()),
-      };
+      const nextState = await partyStateStore.resumeParty();
+      await safeDispatchPartyAdminEvent(dispatcher, {
+        eventType: "daemon_party_resumed",
+        partyName: "*",
+      });
+      return { partyState: summarizePartyState(nextState) };
     },
     usage: "quest party resume [--name <party-name>] [--state-root <path>]",
   },

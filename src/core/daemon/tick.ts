@@ -50,7 +50,7 @@ function recordDaemonEvent(
     partyName: string;
     reason?: string | undefined;
     runId?: string | undefined;
-    specFile: string;
+    specFile?: string | null | undefined;
   },
 ): void {
   events.push(
@@ -587,7 +587,6 @@ export async function runDaemonTick(
           now,
           partyName: party.name,
           reason: `hourly_limit:${party.budget.maxSpecsPerHour}`,
-          specFile: "",
         });
       }
       outcomes.push({ party: party.name, reason: skipReason, type: "party_skipped" });

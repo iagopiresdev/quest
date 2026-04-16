@@ -69,7 +69,7 @@ export class EventDispatcher {
     partyName: string;
     reason?: string | undefined;
     runId?: string | undefined;
-    specFile: string;
+    specFile?: string | null | undefined;
   }): Promise<DeliveryAttempt[]> {
     return await this.dispatchEvents([createObservableDaemonEvent(input)]);
   }

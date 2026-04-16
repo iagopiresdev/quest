@@ -34,6 +34,9 @@ export const observableDaemonEventTypeSchema = z.enum([
   "daemon_failed",
   "daemon_budget_exhausted",
   "daemon_recovered",
+  "daemon_party_created",
+  "daemon_party_resting",
+  "daemon_party_resumed",
 ]);
 export type ObservableDaemonEventType = z.infer<typeof observableDaemonEventTypeSchema>;
 

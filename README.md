@@ -464,7 +464,7 @@ The core model is:
 - observability dedupes and records delivery attempts
 - sinks react to the event
 
-Daemon tick emits its own lifecycle events: `daemon_dispatched`, `daemon_landed`, `daemon_failed`, `daemon_budget_exhausted`, and `daemon_recovered`. Configure them through the same sink upsert commands; unfiltered sinks receive them by default, and narrow sinks can opt in through the `--events` flag.
+Daemon tick emits its own lifecycle events: `daemon_dispatched`, `daemon_landed`, `daemon_failed`, `daemon_budget_exhausted`, and `daemon_recovered`. Party-admin CLI commands emit `daemon_party_created`, `daemon_party_resting`, and `daemon_party_resumed` (including the global `party bonfire` / `party resume` forms, which use `*` as the party name). Configure them through the same sink upsert commands; unfiltered sinks receive them by default, and narrow sinks can opt in through the `--events` flag.
 
 This matters because webhook delivery is only the first consumer. The same event stream should support future sinks such as Telegram, Linear, Slack, or metrics without changing the run model itself.
 
@@ -854,7 +854,7 @@ Do not commit runtime state, tokens, or local config.
 - Slack sink delivery through the same eventing model
 - Linear sink delivery through the same eventing model
 - OpenClaw session-delivery sink through the same eventing model
-- daemon lifecycle events (`daemon_dispatched`, `daemon_landed`, `daemon_failed`, `daemon_budget_exhausted`, `daemon_recovered`) dispatched through the same sink pipeline
+- daemon lifecycle events (`daemon_dispatched`, `daemon_landed`, `daemon_failed`, `daemon_budget_exhausted`, `daemon_recovered`) and party-admin events (`daemon_party_created`, `daemon_party_resting`, `daemon_party_resumed`) dispatched through the same sink pipeline
 - sink probe/test-send support from `quest observability sinks test` and `quest doctor --test-sinks`
 - persisted webhook delivery records with payload snapshots for dedupe, audit, and retries
 - best-effort run usage summaries via `runs usage`

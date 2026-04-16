@@ -53,7 +53,9 @@ export const observableDaemonEventSchema = z
     partyName: nonEmptyString(120),
     reason: nonEmptyString(240).nullable(),
     runId: nonEmptyString(80).nullable(),
-    specFile: nonEmptyString(240),
+    // Party-admin and global-state events (party_created/resting/resumed, budget_exhausted) are not
+    // tied to a specific spec file; nullable keeps the schema honest instead of coercing "".
+    specFile: nonEmptyString(240).nullable(),
   })
   .strict();
 export type ObservableDaemonEvent = z.infer<typeof observableDaemonEventSchema>;
@@ -116,17 +118,18 @@ export function createObservableDaemonEvent(input: {
   partyName: string;
   reason?: string | undefined;
   runId?: string | undefined;
-  specFile: string;
+  specFile?: string | null | undefined;
 }): ObservableDaemonEvent {
+  const specFile = input.specFile && input.specFile.length > 0 ? input.specFile : null;
   return {
     error: input.error ?? null,
-    eventId: `daemon:${input.eventType}:${input.partyName}:${input.specFile}:${input.at}`,
+    eventId: `daemon:${input.eventType}:${input.partyName}:${specFile ?? "-"}:${input.at}`,
     eventType: input.eventType,
     kind: "daemon",
     occurredAt: input.at,
     partyName: input.partyName,
     reason: input.reason ?? null,
     runId: input.runId ?? null,
-    specFile: input.specFile,
+    specFile,
   };
 }

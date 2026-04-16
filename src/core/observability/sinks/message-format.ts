@@ -30,12 +30,10 @@ function formatCalibrationMessage(event: ObservableCalibrationEvent): string {
 }
 
 function formatDaemonMessage(event: ObservableDaemonEvent): string {
-  const lines = [
-    "quest-runner daemon",
-    `event: ${event.eventType}`,
-    `party: ${event.partyName}`,
-    `spec: ${event.specFile}`,
-  ];
+  const lines = ["quest-runner daemon", `event: ${event.eventType}`, `party: ${event.partyName}`];
+  if (event.specFile) {
+    lines.push(`spec: ${event.specFile}`);
+  }
   if (event.runId) {
     lines.push(`run: ${event.runId}`);
   }
