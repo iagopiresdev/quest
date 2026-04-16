@@ -71,7 +71,7 @@ import {
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
-import { colorize, formatPrettyStatus } from "./core/ui/terminal";
+import { formatPrettyStatus } from "./core/ui/terminal";
 import { listCalibrationSuites, WorkerCalibrator } from "./core/workers/calibration";
 import {
   applyWorkerUpdate,
@@ -696,6 +696,21 @@ async function readTextInput(args: string[]): Promise<string> {
   throw new Error("Expected --file <path> or --stdin");
 }
 
+// Parse a text blob as JSON first, then retry as YAML when JSON rejects the first token.
+// YAML is a superset of JSON for most operator-written specs, so this preserves the JSON
+// fast path while giving YAML specs on --stdin the same ergonomics as --file spec.yaml.
+function parseStructuredText(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (jsonError: unknown) {
+    try {
+      return Bun.YAML.parse(raw) as unknown;
+    } catch {
+      throw jsonError;
+    }
+  }
+}
+
 async function readJsonInput(args: string[]): Promise<unknown> {
   const filePath = findOptionValue(args, "--file");
   const useStdin = hasFlag(args, "--stdin");
@@ -705,12 +720,12 @@ async function readJsonInput(args: string[]): Promise<unknown> {
     if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) {
       return Bun.YAML.parse(raw) as unknown;
     }
-    return JSON.parse(raw) as unknown;
+    return parseStructuredText(raw);
   }
 
   if (useStdin || !stdinIsTty()) {
     const raw = await readStdin();
-    return JSON.parse(raw) as unknown;
+    return parseStructuredText(raw);
   }
 
   throw new Error("Expected --file <path> or --stdin");
@@ -2285,11 +2300,26 @@ function formatRunSummaryBlock(
   summary: ReturnType<typeof summarizeRunDetail>,
   partyState?: PartyStateView | undefined,
 ): string[] {
-  let turnInStatus = "pending";
-  if (summary.integration.status === "landed") {
-    turnInStatus = "landed";
-  } else if (summary.integration.status === "integrated") {
-    turnInStatus = "complete";
+  // Turn-in status reflects whether landing finished, not whether boss-fight integration
+  // succeeded. Keep the boss-fight value visible through bossFightStatus instead of collapsing
+  // both into this single line.
+  let turnInStatus: "pending" | "in_progress" | "ready_to_land" | "landed" | "failed" = "pending";
+  switch (summary.integration.status) {
+    case "landed":
+      turnInStatus = "landed";
+      break;
+    case "integrated":
+      turnInStatus = "ready_to_land";
+      break;
+    case "started":
+      turnInStatus = "in_progress";
+      break;
+    case "failed":
+      turnInStatus = "failed";
+      break;
+    case "not_started":
+      turnInStatus = "pending";
+      break;
   }
   let questStatus: "fail" | "info" | "ok" = "info";
   if (summary.status === "completed") {
@@ -3058,6 +3088,42 @@ function writeOutput(commandId: QuestCliCommand, mode: OutputMode, value: unknow
   void Bun.write(Bun.stdout, `${formatPrettyOutput(commandId, value)}\n`);
 }
 
+function formatDomainErrorDetailsPretty(details: unknown): string[] {
+  if (!isRecord(details)) {
+    // Keep non-record details visible as a one-line literal so operators still see the value.
+    return [`  details: ${JSON.stringify(details)}`];
+  }
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(details)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      lines.push(`  ${key}: ${value}`);
+      continue;
+    }
+    if (Array.isArray(value)) {
+      const preview = value.slice(0, 5).map((entry) => String(entry));
+      const remainder = value.length - preview.length;
+      const suffix = remainder > 0 ? `, +${remainder} more` : "";
+      lines.push(`  ${key}: [${preview.join(", ")}${suffix}]`);
+      continue;
+    }
+    // Nested objects stay as compact JSON so the message never hides internal state completely.
+    lines.push(`  ${key}: ${JSON.stringify(value)}`);
+  }
+  return lines;
+}
+
+function formatZodIssuesPretty(error: ZodError): string {
+  const lines: string[] = [];
+  for (const issue of error.issues) {
+    const fieldPath = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+    lines.push(`  • ${fieldPath}: ${issue.message}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : "  (no field-level details)";
+}
+
 function writeError(error: unknown, mode: OutputMode): void {
   if (error instanceof ZodError) {
     const payload = {
@@ -3070,7 +3136,7 @@ function writeError(error: unknown, mode: OutputMode): void {
     } else {
       void Bun.write(
         Bun.stderr,
-        `${formatPrettyStatus("fail")} Validation failed\n${JSON.stringify(payload.details, null, 2)}\n`,
+        `${formatPrettyStatus("fail")} validation_failed: ${payload.message}\n${formatZodIssuesPretty(error)}\n`,
       );
     }
     return;
@@ -3086,12 +3152,10 @@ function writeError(error: unknown, mode: OutputMode): void {
       void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
     } else {
       const details =
-        payload.details === undefined
-          ? []
-          : ["", colorize("Details", "dim"), JSON.stringify(payload.details, null, 2)];
+        payload.details === undefined ? [] : formatDomainErrorDetailsPretty(payload.details);
       void Bun.write(
         Bun.stderr,
-        `${[`${formatPrettyStatus("fail")} ${payload.error}`, payload.message, ...details].join("\n")}\n`,
+        `${[`${formatPrettyStatus("fail")} ${payload.error}: ${payload.message}`, ...details].join("\n")}\n`,
       );
     }
     return;

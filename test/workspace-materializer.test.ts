@@ -1,9 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runWorkspacePreInstall } from "../src/core/runs/workspace-materializer";
+import { QuestDomainError } from "../src/core/errors";
+import {
+  ensureGitRepositoryIsClean,
+  runWorkspacePreInstall,
+} from "../src/core/runs/workspace-materializer";
 
 const tempRoots: string[] = [];
 
@@ -43,4 +48,77 @@ test("workspace preInstall infers requirements install commands", async () => {
       Bun.env.PATH = previousPath;
     }
   }
+});
+
+test("ensureGitRepositoryIsClean surfaces changed paths inline in the error message", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-clean-repo-"));
+  tempRoots.push(root);
+
+  const git = (...argv: string[]) => {
+    const result = spawnSync("git", argv, { cwd: root, stdio: "pipe" });
+    if (result.status !== 0) {
+      throw new Error(`git ${argv.join(" ")} failed: ${result.stderr?.toString()}`);
+    }
+  };
+
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  writeFileSync(join(root, "seed.txt"), "seed\n", "utf8");
+  git("add", "seed.txt");
+  git("commit", "-qm", "seed");
+  writeFileSync(join(root, "extra-one.txt"), "one\n", "utf8");
+  writeFileSync(join(root, "extra-two.txt"), "two\n", "utf8");
+
+  let caught: unknown = null;
+  try {
+    await ensureGitRepositoryIsClean(root);
+  } catch (error: unknown) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(QuestDomainError);
+  const domain = caught as QuestDomainError;
+  expect(domain.code).toBe("quest_source_repo_dirty");
+  expect(domain.message).toContain("2 uncommitted path(s)");
+  expect(domain.message).toContain("extra-one.txt");
+  expect(domain.message).toContain("extra-two.txt");
+  expect(domain.message).toContain("Commit or stash before dispatch");
+  const details = domain.details as { changedPaths: string[]; changedPathCount: number };
+  expect(details.changedPathCount).toBe(2);
+  expect(details.changedPaths).toHaveLength(2);
+});
+
+test("ensureGitRepositoryIsClean caps long path lists with a remainder summary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-clean-repo-long-"));
+  tempRoots.push(root);
+
+  const git = (...argv: string[]) => {
+    const result = spawnSync("git", argv, { cwd: root, stdio: "pipe" });
+    if (result.status !== 0) {
+      throw new Error(`git ${argv.join(" ")} failed: ${result.stderr?.toString()}`);
+    }
+  };
+
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  writeFileSync(join(root, "seed.txt"), "seed\n", "utf8");
+  git("add", "seed.txt");
+  git("commit", "-qm", "seed");
+  for (let i = 0; i < 8; i += 1) {
+    writeFileSync(join(root, `f${i}.txt`), "x\n", "utf8");
+  }
+
+  let caught: unknown = null;
+  try {
+    await ensureGitRepositoryIsClean(root);
+  } catch (error: unknown) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(QuestDomainError);
+  const domain = caught as QuestDomainError;
+  expect(domain.message).toContain("8 uncommitted path(s)");
+  expect(domain.message).toContain("and 3 more");
 });
