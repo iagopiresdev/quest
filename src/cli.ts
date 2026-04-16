@@ -2296,6 +2296,19 @@ function formatSinkLine(sink: {
   return `${sink.id} | ${sink.type} | ${sink.enabled ? "enabled" : "disabled"} | events=${events}`;
 }
 
+function sliceStatusToPrettyKind(status: string): "fail" | "info" | "ok" | "warn" {
+  if (status === "completed") {
+    return "ok";
+  }
+  if (status === "failed") {
+    return "fail";
+  }
+  if (status === "blocked" || status === "aborted") {
+    return "warn";
+  }
+  return "info";
+}
+
 function formatRunSummaryBlock(
   summary: ReturnType<typeof summarizeRunDetail>,
   partyState?: PartyStateView | undefined,
@@ -2351,10 +2364,10 @@ function formatRunSummaryBlock(
     ...(summary.integration.rescueNote ? [`  Rescue Note: ${summary.integration.rescueNote}`] : []),
     ...(summary.integration.targetRef ? [`  Target Ref: ${summary.integration.targetRef}`] : []),
     ...(summary.integration.landedAt ? [`  Landed At: ${summary.integration.landedAt}`] : []),
-    ...summary.slices.map(
-      (slice) =>
-        `  - [${slice.status}] ${prettyLabels.encounter}=${slice.id} | Builder=${slice.builderWorkerId ?? "unassigned"} | Tester=${slice.testerWorkerId ?? "unassigned"} | ${prettyLabels.bossFight}=${slice.integrationStatus}`,
-    ),
+    ...summary.slices.map((slice) => {
+      const sliceStatus = sliceStatusToPrettyKind(slice.status);
+      return `  ${formatPrettyStatus(sliceStatus)} ${prettyLabels.encounter}=${slice.id} [${slice.status}] | Builder=${slice.builderWorkerId ?? "unassigned"} | Tester=${slice.testerWorkerId ?? "unassigned"} | ${prettyLabels.bossFight}=${slice.integrationStatus}`;
+    }),
   ];
 }
 
@@ -2501,10 +2514,12 @@ function formatPlanPretty(candidate: Record<string, unknown>, fallback: unknown)
     `${prettyLabels.briefing}: ${plan.waves.length} wave(s), ${plan.unassigned.length} unassigned, ${plan.warnings.length} warning(s)`,
     ...plan.waves.flatMap((wave) => [
       `  ${prettyLabels.wave} ${wave.index}:`,
-      ...wave.slices.map((slice) => `    • ${slice.id}`),
+      // Group each slice with its builder/tester so the assignment is visible at the point
+      // where the slice id is introduced, not two levels deeper.
       ...wave.slices.flatMap((slice) => [
-        `      Builder: ${slice.assignedWorkerId ?? "unassigned"}`,
-        `      Tester: ${slice.assignedTesterWorkerId ?? "unassigned"}`,
+        `    • ${slice.id}`,
+        `        Builder: ${slice.assignedWorkerId ?? "unassigned"}`,
+        `        Tester:  ${slice.assignedTesterWorkerId ?? "unassigned"}`,
       ]),
     ]),
     ...plan.unassigned.map(
