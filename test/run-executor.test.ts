@@ -1178,6 +1178,87 @@ test("run executor completes a planned run with the hermes-api adapter", async (
   }
 });
 
+test("run executor surfaces ACP initialize failures", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const scriptPath = join(root, "fake-acp-agent.mjs");
+
+  try {
+    writeFileSync(
+      scriptPath,
+      [
+        "import readline from 'node:readline';",
+        "const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });",
+        "rl.on('line', (line) => {",
+        "  const message = JSON.parse(line);",
+        "  if (message.method === 'initialize') {",
+        "    process.stdout.write(JSON.stringify({",
+        "      jsonrpc: '2.0',",
+        "      id: message.id,",
+        "      error: { code: -32000, message: 'init failed' }",
+        "    }) + '\\n');",
+        "    return;",
+        "  }",
+        "  if (message.method === 'session/close') {",
+        "    process.exit(0);",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "acp", undefined, {
+        executable: `node ${scriptPath}`,
+        profile: "acp-test",
+        runner: "custom",
+      }),
+    );
+
+    const run = await runStore.createRun(
+      {
+        acceptanceChecks: [],
+        execution: {
+          preInstall: false,
+          shareSourceDependencies: true,
+          testerSelectionStrategy: "balanced",
+          timeoutMinutes: 20,
+        },
+        featureDoc: { enabled: false },
+        hotspots: [],
+        maxParallel: 1,
+        slices: [
+          {
+            acceptanceChecks: [],
+            contextHints: [],
+            dependsOn: [],
+            discipline: "coding",
+            goal: "Do ACP work",
+            id: "acp-init-failure",
+            owns: ["tracked.txt"],
+            title: "ACP init failure",
+          },
+        ],
+        title: "ACP init failure",
+        version: 1,
+        workspace: "command-center",
+      },
+      await workerRegistry.listWorkers(),
+    );
+
+    await expect(executor.executeRun(run.id)).rejects.toMatchObject({
+      code: "quest_runner_unavailable",
+      message: "ACP initialize failed for ember: init failed",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor rejects Hermes writes through symlinked owned paths", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");

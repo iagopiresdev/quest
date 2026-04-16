@@ -146,6 +146,14 @@ export const workerBackendSchema = z
         });
       }
 
+      if (value.adapter === "acp" && !value.executable) {
+        ctx.addIssue({
+          code: "custom",
+          message: "acp adapter requires backend.executable",
+          path: ["executable"],
+        });
+      }
+
       if (value.adapter === "openclaw-cli" && !value.agentId && !value.sessionId) {
         ctx.addIssue({
           code: "custom",

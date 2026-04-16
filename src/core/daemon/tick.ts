@@ -1,4 +1,4 @@
-import { readdir, rename } from "node:fs/promises";
+import { readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { QuestPartyStateStore } from "../party-state";
@@ -127,7 +127,7 @@ function stripDaemonFields(document: QuestDaemonSpecDocument): Record<string, un
 
 function serializeQuestSpecInput(document: QuestDaemonSpecDocument): string {
   const clean = stripDaemonFields(document);
-  return JSON.stringify(questSpecSchema.parse(clean));
+  return JSON.stringify(questSpecSchema.parse(clean), null, 2);
 }
 
 function updateDaemonResult(
@@ -292,38 +292,61 @@ function extractRunId(result: SubprocessResult): string {
   return parsed.run.id;
 }
 
+async function withPreparedQuestSpecFile<T>(
+  specPath: string,
+  document: QuestDaemonSpecDocument,
+  work: (preparedPath: string) => Promise<T>,
+): Promise<T> {
+  const preparedPath = `${specPath}.prepared.json`;
+  await writeSpecInput(preparedPath, JSON.parse(serializeQuestSpecInput(document)) as unknown);
+
+  try {
+    return await work(preparedPath);
+  } finally {
+    await unlink(preparedPath).catch(() => undefined);
+  }
+}
+
 async function planDaemonSpec(
   deps: QuestDaemonTickDependencies,
   stateRoot: string,
+  specPath: string,
   document: QuestDaemonSpecDocument,
 ): Promise<void> {
-  const cleanInput = serializeQuestSpecInput(document);
-  const planResult = await runQuestCommand(
-    deps,
-    ["plan", "--stdin", "--state-root", stateRoot],
-    cleanInput,
-  );
-  if (planResult.exitCode !== 0) {
-    throw new Error(buildFailureMessage(planResult, "quest plan"));
-  }
+  await withPreparedQuestSpecFile(specPath, document, async (preparedPath) => {
+    const planResult = await runQuestCommand(deps, [
+      "plan",
+      "--file",
+      preparedPath,
+      "--state-root",
+      stateRoot,
+    ]);
+    if (planResult.exitCode !== 0) {
+      throw new Error(buildFailureMessage(planResult, "quest plan"));
+    }
+  });
 }
 
 async function createRunFromSpec(
   deps: QuestDaemonTickDependencies,
   stateRoot: string,
+  specPath: string,
   document: QuestDaemonSpecDocument,
 ): Promise<string> {
-  const cleanInput = serializeQuestSpecInput(document);
-  const runResult = await runQuestCommand(
-    deps,
-    ["run", "--stdin", "--state-root", stateRoot],
-    cleanInput,
-  );
-  if (runResult.exitCode !== 0) {
-    throw new Error(buildFailureMessage(runResult, "quest run"));
-  }
+  return await withPreparedQuestSpecFile(specPath, document, async (preparedPath) => {
+    const runResult = await runQuestCommand(deps, [
+      "run",
+      "--file",
+      preparedPath,
+      "--state-root",
+      stateRoot,
+    ]);
+    if (runResult.exitCode !== 0) {
+      throw new Error(buildFailureMessage(runResult, "quest run"));
+    }
 
-  return extractRunId(runResult);
+    return extractRunId(runResult);
+  });
 }
 
 async function executeRunForParty(
@@ -411,8 +434,8 @@ async function processCandidateSpec(
   await writeSpecInput(runningPath, runningDocument);
 
   try {
-    await planDaemonSpec(deps, stateRoot, runningDocument);
-    runId = await createRunFromSpec(deps, stateRoot, runningDocument);
+    await planDaemonSpec(deps, stateRoot, runningPath, runningDocument);
+    runId = await createRunFromSpec(deps, stateRoot, runningPath, runningDocument);
     state.activeRunIds[party.name] = [...(state.activeRunIds[party.name] ?? []), runId];
     // Status and crash recovery depend on active runs being durable before long-lived execution starts.
     await deps.daemonStore.writeState(state);

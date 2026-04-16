@@ -1,0 +1,259 @@
+# ACP Runner Adapter — Spec v1
+
+**Status:** Draft
+**Date:** 2026-04-15
+**Author:** Quest Contributors
+
+## Problem
+
+Quest-runner supports `codex-cli`, `openclaw-cli`, `local-command`, and a broken `hermes-api` adapter. Each CLI-specific adapter duplicates subprocess management and prompt plumbing. The Agent Client Protocol (ACP) is an emerging standard for agent communication over JSON-RPC/stdio. A generic ACP adapter lets Quest use **any** ACP-compatible agent as a worker: Claude Code, Codex, Hermes, or future agents.
+
+## Goals
+
+- Generic ACP adapter that works with any ACP server
+- Full agent capabilities (tool use, file read/write, multi-turn iteration)
+- Subprocess lifecycle management (spawn, timeout, cancel, idle detection)
+- Collect workspace changes + summary from the agent session
+- Replace the current `hermes-api` adapter (which hits a non-existent REST endpoint)
+
+## Non-Goals
+
+- ACP server implementation (Quest is always the client)
+- GUI or interactive sessions (headless only)
+- ACP feature parity beyond what Quest needs (no resource subscriptions, no audio, no MCP passthrough)
+- Per-agent customization (the adapter is protocol-level; agent specifics go in worker config)
+
+## Background: ACP Protocol
+
+ACP is a JSON-RPC protocol over stdio. Key flow:
+
+1. **Client spawns** agent process (e.g. `hermes acp`, `claude --acp`)
+2. **`initialize`** — client and agent exchange capabilities
+3. **`newSession`** — create a session with the working directory
+4. **`prompt`** — send the task message
+5. **Agent iterates** — makes tool calls, reads/writes files, runs commands
+6. Agent streams events back: `AgentThought`, `AgentMessage`, `ToolCall`, `ToolResult`
+7. **Client collects** final message and workspace state
+8. **`endSession`** — clean up
+
+Transport: newline-delimited JSON-RPC over stdin/stdout.
+
+## Adapter Design
+
+### Schema Changes
+
+#### `workerBackendSchema` — new adapter value
+
+Add `"acp"` to the adapter union (alongside existing `codex-cli`, `hermes-api`, `openclaw-cli`, `local-command`).
+
+Validation rules for `acp` adapter:
+- `backend.executable` is **required** (the command to spawn the ACP server)
+- `backend.command` is **forbidden** (ACP uses its own protocol, not raw commands)
+- `backend.baseUrl` is optional (for future HTTP transport, not used in v1)
+
+#### `workerRunnerSchema` — no change needed
+
+`runner` is already an open enum including `hermes`. The runner field is informational; `adapter` drives behavior.
+
+### New File: `src/core/runs/adapters/acp.ts`
+
+```
+ACP Runner Adapter
+├── ACP_PROTOCOL_VERSION: "0.9.0" (or whatever acp supports)
+├── ACP_MESSAGES: JSON-RPC message builders
+│   ├── initialize(clientCapabilities)
+│   ├── newSession(cwd, model?)
+│   ├── prompt(sessionId, message)
+│   └── endSession(sessionId)
+├── ACP_RESPONSE_PARSER: reads NDJSON lines from stdout
+│   ├── parseNotification() → AgentMessage | AgentThought | ToolCall | etc.
+│   └── parseResponse() → result/error from RPC
+└── AcpRunnerAdapter implements RunnerAdapter
+    ├── name = "acp"
+    ├── supports(worker) → worker.backend.adapter === "acp"
+    └── execute(context) → RunnerExecutionResult
+```
+
+### Execution Flow
+
+```
+1. Spawn process: context.worker.backend.executable
+   - cwd: context.cwd
+   - env: auth + worker.env + QUEST_* vars (same as codex-cli)
+   - stdin/stdout piped, stderr captured
+
+2. Initialize (JSON-RPC)
+   → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}
+   ← capabilities response
+
+3. Create session
+   → {"jsonrpc":"2.0","id":2,"method":"newSession","params":{"cwd":"..."}}
+   ← sessionId
+
+4. Send prompt
+   Build the runner prompt (same as codex-cli: task, slice, owns, acceptance)
+   → {"jsonrpc":"2.0","id":3,"method":"prompt","params":{"sessionId":"...","messages":[...]}}
+
+5. Event loop (read stdout, line by line)
+   For each JSON-RPC notification:
+   - AgentThought → log (verbose), track for summary
+   - AgentMessage → capture as output
+   - ToolCall → log, no action needed (agent handles its own tools)
+   
+   Continue until:
+   - Agent sends final message (no more tool calls)
+   - Timeout expires (context.timeoutMs)
+   - Idle timeout (context.idleTimeoutMs — no event for N seconds)
+   - AbortSignal fires (context.signal)
+
+6. End session
+   → {"jsonrpc":"2.0","id":4,"method":"endSession","params":{"sessionId":"..."}}
+
+7. Collect workspace changes
+   After agent finishes, scan context.cwd for file changes (git diff or timestamp).
+   Only consider files matching context.slice.owns patterns.
+
+8. Return RunnerExecutionResult
+   - exitCode: 0 (success) or 1 (if agent errored/timeout)
+   - stdout: agent's final message text
+   - stderr: captured stderr from the process
+   - summary: extracted from agent's last message (first line or first 200 chars)
+```
+
+### Prompt Construction
+
+Reuse `buildRunnerPrompt(context)` from `./shared.ts`. Same prompt as codex-cli. The ACP adapter doesn't need to constrain the output format (no "return JSON only") because the agent has full tool use and writes files directly.
+
+### Timeout & Cancellation
+
+- **Process timeout**: `AbortSignal.timeout(context.timeoutMs)` kills the process
+- **Idle detection**: track time of last stdout event. If no event for `context.idleTimeoutMs`, send `endSession` and collect what we have
+- **Abort**: on `context.signal` abort, send `endSession`, wait 5s, then SIGKILL
+
+### Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| Process fails to spawn | `exitCode: 1`, stderr with spawn error |
+| Initialize fails | `exitCode: 1`, RPC error in stderr |
+| Agent crashes mid-run | Process exits, collect partial workspace, `exitCode: 1` |
+| Timeout | End session, collect partial, `exitCode: 1`, summary notes timeout |
+| Invalid JSON-RPC from agent | Log warning, skip line, continue (resilient to debug output on stdout) |
+
+### Subprocess Lifecycle Hooks
+
+Same as codex-cli: fire `context.onSubprocessSpawn` and `context.onSubprocessExit` for the daemon's process tracking.
+
+## Adapter Registry Update
+
+In `src/core/runs/adapters/index.ts`:
+- Add `AcpRunnerAdapter` to exports
+- Register it in the adapter list alongside existing adapters
+- Keep `HermesApiRunnerAdapter` for backward compat but mark `@deprecated` with migration note
+
+## Migration: `hermes-api` → `acp`
+
+Worker configs using `adapter: "hermes-api"` should migrate to:
+```json
+{
+  "backend": {
+    "adapter": "acp",
+    "executable": "hermes acp",
+    "profile": "qwen3-27b-instruct-q4",
+    "runner": "hermes"
+  }
+}
+```
+
+The old `hermes-api` adapter can be removed in a future release.
+
+## Example Worker Registrations
+
+```jsonc
+// Hermes (local 3090)
+{
+  "id": "hermes-local",
+  "name": "Hermes",
+  "role": "hybrid",
+  "backend": {
+    "adapter": "acp",
+    "executable": "hermes acp",
+    "profile": "qwen3-27b-instruct-q4",
+    "runner": "hermes",
+    "runtime": {
+      "contextWindow": 262144,
+      "maxOutputTokens": 8192,
+      "temperature": 0.1
+    }
+  }
+}
+
+// Claude Code (via ACP)
+{
+  "id": "claude-code",
+  "name": "Claude Code",
+  "role": "hybrid",
+  "backend": {
+    "adapter": "acp",
+    "executable": "claude --acp",
+    "profile": "claude-sonnet-4-6",
+    "runner": "claude",
+    "runtime": {
+      "contextWindow": 200000,
+      "maxOutputTokens": 16384
+    }
+  }
+}
+
+// Any future ACP agent
+{
+  "id": "custom-agent",
+  "name": "My Agent",
+  "role": "builder",
+  "backend": {
+    "adapter": "acp",
+    "executable": "my-agent --acp-mode",
+    "profile": "default",
+    "runner": "custom"
+  }
+}
+```
+
+## Testing Plan
+
+### Unit Tests
+- JSON-RPC message construction (initialize, newSession, prompt, endSession)
+- Response parsing: valid notifications, invalid JSON lines, partial lines
+- Timeout logic: process timeout, idle timeout, abort signal
+- Workspace change collection: only files matching `slice.owns`
+
+### Integration Test (Canary)
+- `scripts/canaries/acp-adapter.ts`
+- Spawns a minimal ACP echo agent (test fixture that responds to prompts with file writes)
+- Verifies full lifecycle: spawn → initialize → session → prompt → events → end → result
+- Tests timeout and cancellation paths
+
+### Manual Test
+- Register Hermes worker
+- Create a simple spec (single slice, one file edit)
+- `quest runs execute --id <id>` with `--force-adapter acp`
+- Verify Hermes picks up the task, writes files, Quest collects results
+
+## Open Questions
+
+1. **ACP version**: Pin to 0.9.0 or negotiate? Recommendation: advertise 0.9.0, accept whatever the server responds with.
+2. **Streaming vs batch**: Read events line-by-line (streaming) or wait for process exit then parse everything? Recommendation: streaming for idle detection and cancellation.
+3. **Workspace diff strategy**: After agent finishes, diff against git index or compare timestamps? Git diff is cleaner but requires a git repo. Recommendation: git diff with timestamp fallback.
+4. **acpx dependency**: Import `acpx` npm package for protocol types, or re-implement the JSON-RPC messages (they're simple)? Recommendation: re-implement. ACP messages are ~5 JSON-RPC calls. Adding a dependency for that is overkill and keeps quest-runner dependency-light.
+
+## File Manifest
+
+| File | Action |
+|------|--------|
+| `src/core/runs/adapters/acp.ts` | **New** — ACP adapter implementation |
+| `src/core/runs/adapters/index.ts` | **Edit** — register ACP adapter |
+| `src/core/workers/schema.ts` | **Edit** — add `"acp"` to adapter validation |
+| `src/core/runs/adapters/hermes-api.ts` | **Edit** — add `@deprecated` JSDoc |
+| `test/acp-adapter.test.ts` | **New** — unit tests |
+| `scripts/canaries/acp-adapter.ts` | **New** — integration canary |
+| `docs/specs/acp-adapter-v1.mdx` | **This file** |

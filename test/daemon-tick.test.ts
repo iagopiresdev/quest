@@ -21,12 +21,12 @@ function createFakeQuestExecutable(
       "set -eu",
       `printf '%s\\n' "$*" >> '${options.capturePath}'`,
       'if [ "$1" = "plan" ]; then',
-      `  cat > '${planInputPath}'`,
+      `  cat "$3" > '${planInputPath}'`,
       '  printf \'{"plan":{"ok":true}}\\n\'',
       "  exit 0",
       "fi",
       'if [ "$1" = "run" ]; then',
-      `  cat > '${runInputPath}'`,
+      `  cat "$3" > '${runInputPath}'`,
       '  printf \'{"run":{"id":"quest-00000000-aaaaaaaa"}}\\n\'',
       "  exit 0",
       "fi",
@@ -94,9 +94,10 @@ test("daemon tick dispatches the highest-priority inbox spec through quest subpr
     expect(doneDocument.daemon_result.runId).toBe("quest-00000000-aaaaaaaa");
 
     const commands = readFileSync(capturePath, "utf8").trim().split("\n");
+    const preparedPath = join(directories.running, "fast.json.prepared.json");
     expect(commands).toEqual([
-      `plan --stdin --state-root ${root}`,
-      `run --stdin --state-root ${root}`,
+      `plan --file ${preparedPath} --state-root ${root}`,
+      `run --file ${preparedPath} --state-root ${root}`,
       `runs execute --id quest-00000000-aaaaaaaa --auto-integrate --land --source-repo ${join(root, "repo")} --target-ref main --state-root ${root}`,
     ]);
     const plannedInput = JSON.parse(readFileSync(join(root, "stdin-plan.json"), "utf8"));

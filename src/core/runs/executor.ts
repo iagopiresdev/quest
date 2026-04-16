@@ -6,6 +6,7 @@ import { ensureDirectory } from "../storage";
 import type { WorkerRegistry } from "../workers/registry";
 import type { RegisteredWorker } from "../workers/schema";
 import {
+  AcpRunnerAdapter,
   CodexCliRunnerAdapter,
   DryRunRunnerAdapter,
   HermesApiRunnerAdapter,
@@ -258,6 +259,7 @@ export class QuestRunExecutor {
       new LocalCommandRunnerAdapter(),
       new CodexCliRunnerAdapter(secretStore),
       new HermesApiRunnerAdapter(secretStore),
+      new AcpRunnerAdapter(secretStore),
       new OpenClawCliRunnerAdapter(secretStore),
     ]);
   }

@@ -1,5 +1,6 @@
 import { QuestDomainError } from "../../errors";
 import type { RegisteredWorker } from "../../workers/schema";
+import { AcpRunnerAdapter } from "./acp";
 import { CodexCliRunnerAdapter } from "./codex-cli";
 import { DryRunRunnerAdapter } from "./dry-run";
 import { HermesApiRunnerAdapter } from "./hermes-api";
@@ -9,6 +10,7 @@ import type { RunnerAdapter } from "./types";
 
 export type { RunnerAdapter, RunnerExecutionContext, RunnerExecutionResult } from "./types";
 export {
+  AcpRunnerAdapter,
   CodexCliRunnerAdapter,
   DryRunRunnerAdapter,
   HermesApiRunnerAdapter,

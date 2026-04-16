@@ -283,6 +283,12 @@ function buildHermesRequestBody(
   return body;
 }
 
+/**
+ * @deprecated Use {@link AcpRunnerAdapter} instead.
+ * The hermes-api adapter assumes an OpenAI-compatible REST endpoint that Hermes
+ * does not expose. Migrate workers to use `adapter: "acp"` with
+ * `executable: "hermes acp"` for full agent capabilities.
+ */
 export class HermesApiRunnerAdapter implements RunnerAdapter {
   readonly name = "hermes-api";
 
