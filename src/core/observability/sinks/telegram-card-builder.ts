@@ -30,112 +30,142 @@ function formatClock(tz = "America/Sao_Paulo"): string {
   });
 }
 
-function daemonHeader(eventType: ObservableDaemonEvent["eventType"]): string {
+type DaemonFlavor = { header: string; flavor: string };
+
+function daemonFlavor(eventType: ObservableDaemonEvent["eventType"]): DaemonFlavor {
   switch (eventType) {
     case "daemon_dispatched":
-      return "🎯 <b>Quest Dispatched</b>";
+      return {
+        flavor: "The party sets forth.",
+        header: "⚔️ <b>Quest Accepted</b>",
+      };
     case "daemon_landed":
-      return "✅ <b>Quest Landed</b>";
+      return {
+        flavor: "Victory. The spoils are claimed.",
+        header: "🏆 <b>Quest Cleared</b>",
+      };
     case "daemon_failed":
-      return "❌ <b>Quest Failed</b>";
+      return {
+        flavor: "You died.",
+        header: "💀 <b>Party Wiped</b>",
+      };
     case "daemon_budget_exhausted":
-      return "⏸️ <b>Budget Exhausted</b>";
+      return {
+        flavor: "Mana runs dry. Rest before pressing on.",
+        header: "🌙 <b>Out of Stamina</b>",
+      };
     case "daemon_recovered":
-      return "🩹 <b>Daemon Recovered</b>";
+      return {
+        flavor: "Saved at the last moment by the keeper's hand.",
+        header: "✨ <b>Party Revived</b>",
+      };
     case "daemon_party_created":
-      return "🎉 <b>Party Created</b>";
+      return {
+        flavor: "A new fellowship forms.",
+        header: "🛡️ <b>Party Assembled</b>",
+      };
     case "daemon_party_resting":
-      return "🔥 <b>Party Resting</b>";
+      return {
+        flavor: "Embers crackle. The world pauses.",
+        header: "🔥 <b>Resting at Bonfire</b>",
+      };
     case "daemon_party_resumed":
-      return "⚡ <b>Party Resumed</b>";
+      return {
+        flavor: "Steel sharpened. The quest continues.",
+        header: "⚔️ <b>Bonfire Departed</b>",
+      };
   }
 }
 
 function runHeader(eventType: ObservableRunEvent["eventType"]): string {
   switch (eventType) {
     case "run_created":
-      return "📝 <b>Run Created</b>";
+      return "📜 <b>Quest Scribed</b>";
     case "run_blocked":
-      return "🚧 <b>Run Blocked</b>";
+      return "🚫 <b>Quest Halted</b>";
     case "run_started":
-      return "🏗️ <b>Run Started</b>";
+      return "⚔️ <b>Quest Begun</b>";
     case "run_completed":
-      return "✅ <b>Run Completed</b>";
+      return "🏆 <b>Quest Cleared</b>";
     case "run_failed":
-      return "❌ <b>Run Failed</b>";
+      return "💀 <b>Quest Lost</b>";
     case "run_aborted":
-      return "🛑 <b>Run Aborted</b>";
+      return "🏳️ <b>Quest Abandoned</b>";
     case "run_integration_started":
-      return "🔗 <b>Integration Started</b>";
+      return "🧵 <b>Weaving the Branches</b>";
     case "run_integration_checks_started":
-      return "🧪 <b>Integration Checks</b>";
+      return "🔮 <b>Trials Begin</b>";
     case "run_integration_checks_completed":
-      return "✅ <b>Integration Checks Passed</b>";
+      return "✨ <b>Trials Endured</b>";
     case "run_integration_checks_failed":
-      return "❌ <b>Integration Checks Failed</b>";
+      return "💥 <b>Trials Broke You</b>";
     case "run_integrated":
-      return "🔀 <b>Run Integrated</b>";
+      return "🔀 <b>Quest Sealed</b>";
     case "run_feature_doc_written":
-      return "📚 <b>Feature Doc Written</b>";
+      return "📚 <b>Lore Inscribed</b>";
     case "run_workspace_cleaned":
-      return "🧹 <b>Workspace Cleaned</b>";
+      return "🧹 <b>Camp Struck</b>";
     case "slice_started":
-      return "▶️ <b>Slice Started</b>";
+      return "⚔️ <b>Encounter Engaged</b>";
     case "slice_integrated":
-      return "🔀 <b>Slice Integrated</b>";
+      return "🔀 <b>Encounter Sealed</b>";
     case "slice_testing_started":
-      return "🧪 <b>Slice Testing</b>";
+      return "🔮 <b>Trial by Fire</b>";
     case "slice_testing_completed":
-      return "✅ <b>Slice Tests Passed</b>";
+      return "✨ <b>Trial Endured</b>";
     case "slice_testing_failed":
-      return "❌ <b>Slice Tests Failed</b>";
+      return "💥 <b>Trial Failed</b>";
     case "slice_completed":
-      return "✅ <b>Slice Completed</b>";
+      return "🏹 <b>Encounter Cleared</b>";
     case "slice_failed":
-      return "❌ <b>Slice Failed</b>";
+      return "🗡️ <b>Encounter Lost</b>";
     case "slice_aborted":
-      return "🛑 <b>Slice Aborted</b>";
+      return "🏳️ <b>Encounter Abandoned</b>";
   }
 }
 
 function formatDaemonCard(event: ObservableDaemonEvent): string {
-  const lines = [daemonHeader(event.eventType), SEPARATOR];
-  const partyLabel = event.partyName === "*" ? "(all parties)" : escapeHtml(event.partyName);
-  lines.push(`🎭 ${partyLabel}`);
+  const { flavor, header } = daemonFlavor(event.eventType);
+  const partyLabel = event.partyName === "*" ? "all parties" : escapeHtml(event.partyName);
+  const lines = [header, `<i>${flavor}</i>`, SEPARATOR, `🛡️ ${partyLabel}`];
   if (event.specFile) {
-    lines.push(`📋 <code>${escapeHtml(event.specFile)}</code>`);
+    lines.push(`📜 <code>${escapeHtml(event.specFile)}</code>`);
   }
   if (event.runId) {
-    lines.push(`🧵 <code>${escapeHtml(event.runId)}</code>`);
+    lines.push(`🧭 <code>${escapeHtml(event.runId)}</code>`);
   }
   if (event.reason) {
-    lines.push(`💬 ${escapeHtml(event.reason)}`);
+    lines.push(`📝 ${escapeHtml(event.reason)}`);
   }
   if (event.error) {
     lines.push(`<blockquote>${escapeHtml(event.error.slice(0, 300))}</blockquote>`);
   }
-  lines.push(`🕐 ${formatClock()}`);
+  lines.push(`⌛ ${formatClock()}`);
   return lines.join("\n");
 }
 
 function formatRunCard(event: ObservableRunEvent): string {
-  const lines = [runHeader(event.eventType), SEPARATOR];
-  lines.push(`📦 ${escapeHtml(event.title)}`);
-  lines.push(`🧵 <code>${escapeHtml(event.runId)}</code>`);
-  lines.push(`📊 ${escapeHtml(event.runStatus)} · ${escapeHtml(event.workspace)}`);
-  lines.push(`🕐 ${formatClock()}`);
+  const lines = [
+    runHeader(event.eventType),
+    SEPARATOR,
+    `📖 ${escapeHtml(event.title)}`,
+    `🧭 <code>${escapeHtml(event.runId)}</code>`,
+    `📍 ${escapeHtml(event.runStatus)} · ${escapeHtml(event.workspace)}`,
+    `⌛ ${formatClock()}`,
+  ];
   return lines.join("\n");
 }
 
 function formatCalibrationCard(event: ObservableCalibrationEvent): string {
-  const statusIcon = event.status === "passed" ? "✅" : "❌";
+  const header =
+    event.status === "passed" ? "🌟 <b>Training Mastered</b>" : "🛡️ <b>Training Failed</b>";
   const lines = [
-    `${statusIcon} <b>Calibration ${event.status}</b>`,
+    header,
     SEPARATOR,
-    `👤 ${escapeHtml(event.workerName)} · <code>${escapeHtml(event.workerId)}</code>`,
-    `📚 ${escapeHtml(event.suiteId)}`,
-    `💯 ${event.score} · +${event.xpAwarded} XP`,
-    `🕐 ${formatClock()}`,
+    `🧙 ${escapeHtml(event.workerName)} · <code>${escapeHtml(event.workerId)}</code>`,
+    `📜 ${escapeHtml(event.suiteId)}`,
+    `💯 ${event.score} · ⭐ +${event.xpAwarded} XP`,
+    `⌛ ${formatClock()}`,
   ];
   return lines.join("\n");
 }
