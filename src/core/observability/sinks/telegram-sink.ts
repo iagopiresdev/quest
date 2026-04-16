@@ -5,6 +5,7 @@ import type { ObservableEvent } from "../observable-events";
 import type { EventSinkDeliveryContext, EventSinkHandler } from "./handler";
 import { formatSinkTextMessage } from "./message-format";
 import { nonEmptyString, secretRefSchema, urlSchema } from "./schema-helpers";
+import { formatTelegramCard } from "./telegram-card-builder";
 
 export const telegramSinkSchema = z
   .object({
@@ -73,13 +74,19 @@ export class TelegramSinkHandler implements EventSinkHandler<TelegramSink> {
       }
 
       const baseUrl = sink.apiBaseUrl ?? "https://api.telegram.org";
+      // Render an HTML card when the sink opts into HTML parse mode; otherwise fall back to the
+      // shared plain-text formatter so Markdown / no-parse-mode sinks keep working unchanged.
+      const text =
+        sink.parseMode === "HTML"
+          ? formatTelegramCard(context.event)
+          : formatSinkTextMessage(context.event);
       const response = await fetch(`${baseUrl}/bot${botToken}/sendMessage`, {
         body: JSON.stringify({
           chat_id: sink.chatId,
           disable_notification: sink.disableNotification,
           message_thread_id: sink.messageThreadId,
           parse_mode: sink.parseMode,
-          text: formatSinkTextMessage(context.event),
+          text,
         }),
         headers: {
           "content-type": "application/json",
