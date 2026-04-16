@@ -268,6 +268,39 @@ export async function daemonStatus(store: QuestDaemonStore): Promise<QuestDaemon
   };
 }
 
+// Single-shot tick used by canaries and scripted operator checks that want one dispatch pass
+// without spinning up the long-running supervisor. The loop version remains the production path.
+export async function runSingleDaemonTick(
+  store: QuestDaemonStore,
+  options: Omit<TickLoopOptions, "sleep"> = {},
+): Promise<{
+  events: ObservableDaemonEvent[];
+  outcomes: QuestDaemonTickOutcome[];
+  recoveredEvents: ObservableDaemonEvent[];
+}> {
+  const tick = options.tick ?? runDaemonTick;
+  const deps = buildTickDependencies(store, options);
+  const recoveredEvents = await recoverRunningSpecs(store);
+  if (recoveredEvents.length > 0) {
+    await options.onTickEvents?.(recoveredEvents);
+  }
+
+  const config = await store.readConfig();
+  const currentState = await store.readState();
+  const tickResult = await tick(currentState, config, deps);
+  const latestState = await store.readState();
+  await store.writeState(mergeTickState(latestState, tickResult.state));
+  if (tickResult.events.length > 0) {
+    await options.onTickEvents?.(tickResult.events);
+  }
+
+  return {
+    events: tickResult.events,
+    outcomes: tickResult.outcomes,
+    recoveredEvents,
+  };
+}
+
 export async function runDaemonTickLoop(
   store: QuestDaemonStore,
   options: TickLoopOptions = {},

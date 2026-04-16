@@ -9,6 +9,7 @@ import {
   daemonStatus,
   type QuestDaemonPartyStatus,
   runDaemonTickLoop,
+  runSingleDaemonTick,
   startDaemon,
   stopDaemon,
 } from "./core/daemon/lifecycle";
@@ -97,6 +98,7 @@ type QuestCliCommand =
   | "daemon:start"
   | "daemon:status"
   | "daemon:stop"
+  | "daemon:tick"
   | "daemon:tick-loop"
   | "doctor"
   | "party:create"
@@ -3144,6 +3146,24 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         partyStateStore,
       }),
     usage: "quest daemon _tick-loop [--state-root <path>]",
+  },
+  {
+    id: "daemon:tick",
+    matches: (args) => args.length >= 2 && args[0] === "daemon" && args[1] === "tick",
+    // One-shot tick for canaries and scripted operator checks; the long-running supervisor uses
+    // _tick-loop in production.
+    run: async ({ daemonStore, dispatcher, partyStateStore }) =>
+      await runSingleDaemonTick(daemonStore, {
+        onTickEvents: async (events) => {
+          try {
+            await dispatcher.dispatchDaemonEvents(events);
+          } catch {
+            // Sink failures are persisted into delivery records; the one-shot tick still returns.
+          }
+        },
+        partyStateStore,
+      }),
+    usage: "quest daemon tick [--state-root <path>]",
   },
   {
     id: "setup",

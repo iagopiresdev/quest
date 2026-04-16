@@ -77,6 +77,12 @@ bun ./scripts/canaries/repo-edit.ts --backend openclaw
 bun ./scripts/canaries/repo-edit.ts --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
 ```
 
+Daemon observability canary (proves daemon lifecycle events reach a live webhook):
+
+```sh
+bun ./scripts/canaries/daemon-events.ts
+```
+
 ## Open Source Readiness
 
 This repository is intended to be publishable on GitHub as source code, not as a dump of local state.
