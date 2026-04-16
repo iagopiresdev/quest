@@ -10,7 +10,7 @@
     },
     {
       "group": "Specs",
-      "pages": ["docs/specs/training-grounds-v2"]
+      "pages": ["docs/specs/training-grounds-v2", "docs/specs/observability-cards-v1"]
     }
   ]
 }
