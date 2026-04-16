@@ -53,7 +53,13 @@ export const questDaemonStateSchema = z
     lastTickTime: isoDateStringSchema.optional(),
     parties: z.array(questPartySchema).default([]),
     partyRestReasons: z.record(partyNameSchema, z.string().trim().min(1).max(400)).default({}),
-    process: questDaemonProcessSchema.optional(),
+    // Some legacy daemon-state.json files serialized `"process": null` after shutdown instead
+    // of omitting the field. Preprocess null to undefined so the optional check passes and the
+    // runtime keeps treating the field as absent.
+    process: z.preprocess(
+      (value) => (value === null ? undefined : value),
+      questDaemonProcessSchema.optional(),
+    ),
     version: z.literal(1),
   })
   .strict();
