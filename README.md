@@ -483,6 +483,49 @@ Calibration results are written back onto the worker record:
 
 ## Commands
 
+### Agent-driven install
+
+A canonical non-interactive flow an AI assistant can follow to install Quest Runner on a machine that already runs OpenClaw or Hermes:
+
+```sh
+# 1. Build + install the binary.
+bun run install:local
+
+# 2. Sanity check the binary and state root.
+quest doctor --json
+
+# 3. Create the first worker. `--yes` skips the TUI; pass `--backend` explicitly so the agent
+#    doesn't have to parse interactive prompts.
+quest setup --yes --backend codex
+
+# 4. (Optional) Wire Telegram observability cards. Import the bot token from OpenClaw's config
+#    into the secret store so the token never sits in an env var.
+jq -r '.channels.telegram.botToken' "$HOME/.openclaw/openclaw.json" \
+  | quest secrets set --name quest-telegram-bot-token --stdin
+
+CHAT_ID=$(jq -r '.channels.telegram.allowFrom[0]' "$HOME/.openclaw/openclaw.json")
+
+quest observability telegram upsert \
+  --id quest-telegram \
+  --chat-id "$CHAT_ID" \
+  --bot-token-secret-ref quest-telegram-bot-token \
+  --parse-mode HTML \
+  --events daemon_dispatched,daemon_landed,daemon_failed,daemon_party_created,daemon_party_resting,daemon_party_resumed,daemon_recovered,daemon_budget_exhausted
+
+# 5. Verify the pipeline end-to-end. Creates a throwaway party, waits for the resulting
+#    daemon_party_created event to land, then removes it. Exits non-zero if the card did not
+#    reach the fake Telegram server.
+bun ./scripts/canaries/agent-driven-install.ts
+```
+
+Same flow with the interactive TUI (the wizard auto-detects the OpenClaw bot token and pre-fills the chat id from `allowFrom[0]`, then asks whether to render RPG flavor cards):
+
+```sh
+quest setup
+```
+
+### Other commands
+
 ```sh
 # install a stable local quest command
 bun run install:local
