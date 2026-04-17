@@ -1,5 +1,6 @@
 import { cancel, confirm, intro, isCancel, note, outro, select, text } from "@clack/prompts";
 import type { TesterSelectionStrategy } from "../settings";
+import { renderQuestBannerBlock } from "../ui/help";
 import type { WorkerUpdate } from "../workers/management";
 import {
   defaultSetupArchetype,
@@ -453,7 +454,12 @@ function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardR
 export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
-  intro("Quest Runner Setup");
+  // Stamp the QUEST wordmark above the clack pipeline so `quest setup` opens with the same
+  // banner as `quest help`. We call the banner with forceInteractive=true because the wizard
+  // itself is always interactive (clack wouldn't have been invoked otherwise), and the ambient
+  // isTTY check is unreliable under compiled binaries + ttyd emulation.
+  process.stdout.write(renderQuestBannerBlock(72, true));
+  intro("Setup");
   if (context.defaults.importSummary) {
     note(context.defaults.importSummary, "Imported defaults");
   }

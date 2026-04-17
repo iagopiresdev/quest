@@ -265,34 +265,39 @@ function renderLogoBlock(): string[] {
   return LOGO_ROWS.map((row, index) => colorizeRgb(row, gradientForRow(index, LOGO_ROWS.length)));
 }
 
+// Exported so interactive entry points (setup wizard, doctor, party create) can open with the
+// same QUEST wordmark + tagline block that `quest help` renders. Non-TTY callers get a plain
+// one-liner so CI logs and pipes stay clean. Interactive entry points that know they are in a
+// TTY (because clack would not otherwise be invoked) can pass `forceInteractive=true` to bypass
+// the ambient `isTTY` check, which is unreliable under compiled binaries + VHS ttyd emulation.
+export function renderQuestBannerBlock(width = 72, forceInteractive = false): string {
+  const lines: string[] = [];
+  if (!forceInteractive && !isInteractiveOutput()) {
+    return `${colorize("quest", "bold")}  ${colorize(TAGLINE, "dim")}\n`;
+  }
+  const logoRows = renderLogoBlock();
+  const leftPad = Math.max(0, Math.floor((width - LOGO_WIDTH) / 2));
+  const logoPad = " ".repeat(leftPad);
+  const rule = colorize(
+    "╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼",
+    "dim",
+  );
+  lines.push(rule, "");
+  for (const row of logoRows) {
+    lines.push(`${logoPad}${row}`);
+  }
+  lines.push("");
+  const bullet = colorize("•", "yellow");
+  const taglinePad = " ".repeat(Math.max(0, Math.floor((width - (TAGLINE.length + 2)) / 2)));
+  lines.push(`${taglinePad}${bullet} ${colorize(TAGLINE, "dim")}`);
+  lines.push("", rule, "");
+  return `${lines.join("\n")}\n`;
+}
+
 export function renderCategorizedHelp(): string {
   const width = 72;
   const lines: string[] = [];
-  if (isInteractiveOutput()) {
-    // Centered, padded logo block. The wordmark lands in the optical center of the sections
-    // below (headers are `width` columns wide). Generous top/bottom blank lines keep the banner
-    // from crowding the decorative rules.
-    const logoRows = renderLogoBlock();
-    const leftPad = Math.max(0, Math.floor((width - LOGO_WIDTH) / 2));
-    const logoPad = " ".repeat(leftPad);
-    const rule = colorize(
-      "╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼",
-      "dim",
-    );
-    lines.push(rule, "");
-    for (const row of logoRows) {
-      lines.push(`${logoPad}${row}`);
-    }
-    lines.push("");
-    // Single tagline centered below the logo with a yellow bullet anchor. One strong line reads
-    // better than stacking generic engineering descriptors under it.
-    const bullet = colorize("•", "yellow");
-    const taglinePad = " ".repeat(Math.max(0, Math.floor((width - (TAGLINE.length + 2)) / 2)));
-    lines.push(`${taglinePad}${bullet} ${colorize(TAGLINE, "dim")}`);
-    lines.push("", rule, "");
-  } else {
-    lines.push(`${colorize("quest", "bold")}  ${colorize(TAGLINE, "dim")}`, "");
-  }
+  lines.push(renderQuestBannerBlock(width).trimEnd(), "");
 
   for (const section of HELP_SECTIONS) {
     lines.push(sectionHeader(section.title, width));
