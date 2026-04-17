@@ -12,11 +12,7 @@ import {
 import type { TesterSelectionStrategy } from "../settings";
 import { renderQuestBannerBlock } from "../ui/help";
 import type { WorkerUpdate } from "../workers/management";
-import {
-  defaultSetupArchetype,
-  listSetupArchetypesForRole,
-  type SetupWizardPartyMode,
-} from "./presets";
+import { defaultSetupArchetype, type SetupWizardPartyMode } from "./presets";
 
 // Harness = the runtime CLI/agent that actually executes a worker. The wizard treats this as a
 // presentation concept; the existing worker schema and adapter registry already model it via
@@ -451,16 +447,10 @@ async function promptWorkerForModel(
   const defaultName = `${roleClass} (${model})`;
   const name = await askText("Name", defaultName);
 
-  const archetypes = listSetupArchetypesForRole(role);
-  const defaultArchetype = defaultSetupArchetype(role);
-  page(progress, sectionTitle);
-  const archetypeId = await askSelect(
-    "Archetype",
-    archetypes.map((archetype) => archetype.id),
-    defaultArchetype.id,
-  );
-  const archetype =
-    archetypes.find((candidate) => candidate.id === archetypeId) ?? defaultArchetype;
+  // Archetype is derived from role to keep the wizard short. Power users can edit the worker
+  // JSON post-setup to swap to a different archetype within the same role bucket
+  // (`listSetupArchetypesForRole(role)` enumerates the alternatives).
+  const archetype = defaultSetupArchetype(role);
 
   const args: string[] = ["--name", name, "--profile", model, "--role", role, ...importedArgs];
 
