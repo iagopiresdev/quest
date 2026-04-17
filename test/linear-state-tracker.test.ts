@@ -442,3 +442,40 @@ test("linear sink: run_created (no lifecycle meaning) does NOT move the card", a
   expect(captured).toHaveLength(1);
   expect(captured[0]?.query).toContain("commentCreate");
 });
+
+// ── Party-level tracker default fallback ─────────────────────────────────────
+//
+// Schema-level tests. The full dispatch path is covered by daemon-tick tests and the live
+// smoke. Here we assert the party schema accepts the new tracker block and the spec-level
+// override precedence is encoded correctly in types.
+
+import { questPartySchema } from "../src/core/daemon/schema";
+
+test("questPartySchema: tracker block is optional", () => {
+  const party = questPartySchema.parse({
+    name: "alpha",
+    sourceRepo: "/tmp/repo",
+    targetRef: "main",
+  });
+  expect(party.tracker).toBeUndefined();
+});
+
+test("questPartySchema: tracker.linear.defaultIssueId parses when present", () => {
+  const party = questPartySchema.parse({
+    name: "alpha",
+    sourceRepo: "/tmp/repo",
+    targetRef: "main",
+    tracker: { linear: { defaultIssueId: "TEAM-500" } },
+  });
+  expect(party.tracker?.linear?.defaultIssueId).toBe("TEAM-500");
+});
+
+test("questPartySchema: rejects unknown tracker types (strict)", () => {
+  const result = questPartySchema.safeParse({
+    name: "alpha",
+    sourceRepo: "/tmp/repo",
+    targetRef: "main",
+    tracker: { github: { defaultIssueId: "X" } },
+  });
+  expect(result.success).toBe(false);
+});

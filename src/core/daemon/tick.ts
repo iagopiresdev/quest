@@ -460,17 +460,29 @@ async function processCandidateSpec(
   const donePath = join(directories.done, candidate.fileName);
   const failedPath = join(directories.failed, candidate.fileName);
   let runId: string | undefined;
-  const runningDocument = updateDaemonResult(candidate.document, {
+  // Resolve the effective tracker issue id: spec-level wins, party-level fallback fills in, null
+  // otherwise. Stamp it onto the running document so run-level events (which get their tracker
+  // id from `run.spec.tracker.linear.issueId`) inherit the fallback without re-reading party
+  // config during run execution.
+  const trackerIssueId =
+    candidate.document.tracker?.linear?.issueId ?? party.tracker?.linear?.defaultIssueId ?? null;
+  const trackerStampedDocument =
+    trackerIssueId && !candidate.document.tracker?.linear?.issueId
+      ? {
+          ...candidate.document,
+          tracker: {
+            ...(candidate.document.tracker ?? {}),
+            linear: { issueId: trackerIssueId },
+          },
+        }
+      : candidate.document;
+  const runningDocument = updateDaemonResult(trackerStampedDocument, {
     startedAt,
     status: "running",
   });
 
   await moveSpecFile(candidate.inboxPath, runningPath);
   await writeSpecInput(runningPath, runningDocument);
-  // `tracker.linear.issueId` is the opt-in per-spec hook for external issue trackers. When
-  // present, every daemon event for this spec carries the issue id so sinks can update the
-  // issue state (e.g. move the Linear card) alongside posting observability comments.
-  const trackerIssueId = candidate.document.tracker?.linear?.issueId ?? null;
   recordDaemonEvent(events, {
     eventType: "daemon_dispatched",
     now: readNow(deps),

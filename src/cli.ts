@@ -3392,6 +3392,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     id: "party:create",
     matches: (args) => args.length >= 2 && args[0] === "party" && args[1] === "create",
     run: async ({ args, daemonStore, dispatcher }) => {
+      const linearDefaultIssueId = findOptionValue(args, "--linear-default-issue-id");
       const party = await daemonStore.createParty({
         budget: {
           maxConcurrent: 1,
@@ -3401,6 +3402,9 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         name: requireOptionValue(args, "--name", "--name <party-name>"),
         sourceRepo: requireOptionValue(args, "--source-repo", "--source-repo <path>"),
         targetRef: requireOptionValue(args, "--target-ref", "--target-ref <ref>"),
+        ...(linearDefaultIssueId
+          ? { tracker: { linear: { defaultIssueId: linearDefaultIssueId } } }
+          : {}),
       });
       await safeDispatchPartyAdminEvent(dispatcher, {
         eventType: "daemon_party_created",
@@ -3410,7 +3414,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { party };
     },
     usage:
-      "quest party create --name <party-name> --source-repo <path> --target-ref <ref> [--state-root <path>]",
+      "quest party create --name <party-name> --source-repo <path> --target-ref <ref> [--linear-default-issue-id <id>] [--state-root <path>]",
   },
   {
     id: "party:remove",

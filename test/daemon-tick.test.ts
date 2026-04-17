@@ -427,6 +427,102 @@ test("daemon tick emits a failed event for unreadable specs", async () => {
   }
 });
 
+test("daemon tick inherits party tracker default when spec has no tracker block", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
+  const capturePath = join(root, "commands.log");
+  const daemonStore = new QuestDaemonStore(root);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+  const questExecutable = createFakeQuestExecutable(root, { capturePath });
+
+  try {
+    await daemonStore.createParty({
+      budget: { maxConcurrent: 1, maxSpecsPerHour: 10 },
+      enabled: true,
+      name: "alpha",
+      sourceRepo: join(root, "repo"),
+      targetRef: "main",
+      tracker: { linear: { defaultIssueId: "FRI-FALLBACK" } },
+    });
+
+    const directories = await daemonStore.ensurePartyDirectories("alpha");
+    // Spec intentionally omits tracker block — should inherit FRI-FALLBACK from the party.
+    writeFileSync(
+      join(directories.inbox, "inherit.json"),
+      JSON.stringify({
+        priority: 1,
+        retry_count: 0,
+        retry_limit: 0,
+        ...baseDaemonSpec("inherit"),
+      }),
+      "utf8",
+    );
+
+    const result = await runDaemonTick(
+      await daemonStore.readState(),
+      await daemonStore.readConfig(),
+      {
+        daemonStore,
+        partyStateStore,
+        questCommand: [questExecutable],
+      },
+    );
+
+    const dispatched = result.events.find((e) => e.eventType === "daemon_dispatched");
+    const landed = result.events.find((e) => e.eventType === "daemon_landed");
+    expect(dispatched?.trackerIssueId).toBe("FRI-FALLBACK");
+    expect(landed?.trackerIssueId).toBe("FRI-FALLBACK");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("daemon tick: spec-level tracker overrides party default", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
+  const capturePath = join(root, "commands.log");
+  const daemonStore = new QuestDaemonStore(root);
+  const partyStateStore = new QuestPartyStateStore(join(root, "party-state.json"));
+  const questExecutable = createFakeQuestExecutable(root, { capturePath });
+
+  try {
+    await daemonStore.createParty({
+      budget: { maxConcurrent: 1, maxSpecsPerHour: 10 },
+      enabled: true,
+      name: "alpha",
+      sourceRepo: join(root, "repo"),
+      targetRef: "main",
+      tracker: { linear: { defaultIssueId: "FRI-FALLBACK" } },
+    });
+
+    const directories = await daemonStore.ensurePartyDirectories("alpha");
+    writeFileSync(
+      join(directories.inbox, "override.json"),
+      JSON.stringify({
+        priority: 1,
+        retry_count: 0,
+        retry_limit: 0,
+        ...baseDaemonSpec("override"),
+        tracker: { linear: { issueId: "FRI-EXPLICIT" } },
+      }),
+      "utf8",
+    );
+
+    const result = await runDaemonTick(
+      await daemonStore.readState(),
+      await daemonStore.readConfig(),
+      {
+        daemonStore,
+        partyStateStore,
+        questCommand: [questExecutable],
+      },
+    );
+
+    const dispatched = result.events.find((e) => e.eventType === "daemon_dispatched");
+    expect(dispatched?.trackerIssueId).toBe("FRI-EXPLICIT");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("daemon tick emits a budget_exhausted event when the hourly window is full", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-daemon-tick-"));
   const daemonStore = new QuestDaemonStore(root);

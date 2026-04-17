@@ -19,6 +19,22 @@ export const questPartyBudgetSchema = z
   .strict();
 export type QuestPartyBudget = z.infer<typeof questPartyBudgetSchema>;
 
+// Party-level tracker defaults. When a party declares `tracker.linear.defaultIssueId`, any spec
+// in that party's inbox that lacks its own `tracker.linear.issueId` will inherit this fallback
+// at dispatch time. Specs can still override per-issue; a non-empty spec-level issueId always
+// wins over the party default.
+export const questPartyTrackerSchema = z
+  .object({
+    linear: z
+      .object({
+        defaultIssueId: nonEmptyString(120),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type QuestPartyTracker = z.infer<typeof questPartyTrackerSchema>;
+
 export const questPartySchema = z
   .object({
     budget: questPartyBudgetSchema.default({
@@ -29,6 +45,7 @@ export const questPartySchema = z
     name: partyNameSchema,
     sourceRepo: nonEmptyString(400).transform((value) => resolve(value)),
     targetRef: nonEmptyString(120),
+    tracker: questPartyTrackerSchema.optional(),
   })
   .strict();
 export type QuestParty = z.infer<typeof questPartySchema>;

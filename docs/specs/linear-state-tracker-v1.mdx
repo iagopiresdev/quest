@@ -107,6 +107,8 @@ Party-admin and budget events (`daemon_party_created` / `resting` / `resumed` / 
 
 ## User Or Operator Workflow
 
+### Spec-level opt-in (per issue)
+
 Pin a spec to a Linear issue:
 
 ```yaml
@@ -141,6 +143,19 @@ As the spec progresses, `ENG-142` walks through:
 4. `daemon_landed` → *Done*
 
 If tests fail: `run_integration_checks_failed` → *Blocked*, comment surfaces the failing `command` + `exitCode`. If the run is blocked externally: `run_blocked` → *Blocked*.
+
+### Party-level fallback (per inbox)
+
+For workflows where every spec in a party maps to the same Linear issue (epic-style execution), declare the default once at party creation:
+
+```sh
+quest party create --name alpha \
+  --source-repo ~/code/myrepo \
+  --target-ref main \
+  --linear-default-issue-id FRI-142
+```
+
+Specs dropped into alpha's inbox without their own `tracker.linear.issueId` will inherit `FRI-142`. Specs that declare their own issue id still override — spec-level always wins over party-level fallback. The fallback is stamped onto the running document at dispatch time so run-level events (testing, in_review, blocked) inherit it automatically.
 
 ## Data And State Changes
 
