@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline/promises";
+import { cancel, confirm, intro, isCancel, note, outro, select, text } from "@clack/prompts";
 import type { TesterSelectionStrategy } from "../settings";
 import type { WorkerUpdate } from "../workers/management";
 import {
@@ -6,7 +6,6 @@ import {
   listSetupArchetypesForRole,
   type SetupWizardPartyMode,
 } from "./presets";
-import { writeSetupBanner, writeSetupSection, writeSetupSummary } from "./ui";
 
 export type SetupWizardBackend = "codex" | "hermes" | "openclaw";
 export type SetupWizardSinkKind = "linear" | "none" | "openclaw" | "slack" | "telegram" | "webhook";
@@ -61,40 +60,62 @@ type SetupWizardPromptContext = {
   defaults: SetupWizardDefaults;
 };
 
-async function promptWithDefault(
-  cli: ReturnType<typeof createInterface>,
-  question: string,
-  fallback: string,
-): Promise<string> {
-  const answer = (await cli.question(`${question} [${fallback}]: `)).trim();
-  return answer.length > 0 ? answer : fallback;
-}
-
-async function confirmWithDefault(
-  cli: ReturnType<typeof createInterface>,
-  question: string,
-  fallback: boolean,
-): Promise<boolean> {
-  const suffix = fallback ? "Y/n" : "y/N";
-  const answer = (await cli.question(`${question} [${suffix}]: `)).trim().toLowerCase();
-  if (answer.length === 0) {
-    return fallback;
+// Clack returns `symbol('clack.cancel')` when the user hits Ctrl+C. We treat that as a fatal
+// operator decision: emit the clack cancel banner and throw a stable sentinel the CLI entrypoint
+// can catch to exit with a non-zero code without a stack trace.
+export class SetupWizardCancelledError extends Error {
+  constructor() {
+    super("Setup wizard cancelled");
+    this.name = "SetupWizardCancelledError";
   }
-
-  return answer === "y" || answer === "yes";
 }
 
-async function chooseOne<TChoice extends string>(
-  cli: ReturnType<typeof createInterface>,
-  question: string,
-  choices: readonly TChoice[],
-  fallback: TChoice,
-): Promise<TChoice> {
-  const renderedChoices = choices.join("/");
-  const answer = (
-    await cli.question(`${question} [${fallback}] (${renderedChoices}): `)
-  ).trim() as TChoice;
-  return choices.includes(answer) ? answer : fallback;
+function bail(): never {
+  cancel("Setup cancelled.");
+  throw new SetupWizardCancelledError();
+}
+
+function unwrap<T>(value: T | symbol): T {
+  if (isCancel(value)) {
+    bail();
+  }
+  return value as T;
+}
+
+async function askText(message: string, initial: string, placeholder?: string): Promise<string> {
+  const answer = await text({
+    initialValue: initial,
+    message,
+    placeholder: placeholder ?? initial,
+  });
+  return unwrap(answer).trim();
+}
+
+async function askConfirm(message: string, initial: boolean): Promise<boolean> {
+  const answer = await confirm({ initialValue: initial, message });
+  return unwrap(answer);
+}
+
+async function askSelect<TValue extends string>(
+  message: string,
+  choices: readonly TValue[],
+  initial: TValue,
+  hints?: Partial<Record<TValue, string>>,
+): Promise<TValue> {
+  const options = choices.map((value) => {
+    const hint = hints?.[value];
+    const entry: { hint?: string; label: string; value: TValue } = { label: value, value };
+    if (hint !== undefined) {
+      entry.hint = hint;
+    }
+    return entry;
+  }) as ReadonlyArray<{ hint?: string; label: string; value: TValue }>;
+  const answer = await select<TValue>({
+    initialValue: initial,
+    message,
+    options: options as Parameters<typeof select<TValue>>[0]["options"],
+  });
+  return unwrap(answer);
 }
 
 function defaultProfile(backend: SetupWizardBackend): string {
@@ -136,15 +157,14 @@ function renderRoleStationTitle(role: "builder" | "tester" | "hybrid"): string {
   return `${role.slice(0, 1).toUpperCase()}${role.slice(1)} Station`;
 }
 
-async function promptRuntimeArgs(cli: ReturnType<typeof createInterface>): Promise<string[]> {
-  const advanced = await confirmWithDefault(cli, "Open advanced runtime settings?", false);
+async function promptRuntimeArgs(): Promise<string[]> {
+  const advanced = await askConfirm("Open advanced runtime settings?", false);
   if (!advanced) {
     return [];
   }
 
   const args: string[] = [];
-  const reasoning = await chooseOne(
-    cli,
+  const reasoning = await askSelect(
     "Reasoning effort",
     ["none", "minimal", "low", "medium", "high", "xhigh"] as const,
     "medium",
@@ -153,22 +173,22 @@ async function promptRuntimeArgs(cli: ReturnType<typeof createInterface>): Promi
     args.push("--reasoning-effort", reasoning);
   }
 
-  const maxOutputTokens = await promptWithDefault(cli, "Max output tokens", "");
+  const maxOutputTokens = await askText("Max output tokens", "");
   if (maxOutputTokens.length > 0) {
     args.push("--max-output-tokens", maxOutputTokens);
   }
 
-  const contextWindow = await promptWithDefault(cli, "Context window", "");
+  const contextWindow = await askText("Context window", "");
   if (contextWindow.length > 0) {
     args.push("--context-window", contextWindow);
   }
 
-  const temperature = await promptWithDefault(cli, "Temperature", "");
+  const temperature = await askText("Temperature", "");
   if (temperature.length > 0) {
     args.push("--temperature", temperature);
   }
 
-  const topP = await promptWithDefault(cli, "Top P", "");
+  const topP = await askText("Top P", "");
   if (topP.length > 0) {
     args.push("--top-p", topP);
   }
@@ -177,7 +197,6 @@ async function promptRuntimeArgs(cli: ReturnType<typeof createInterface>): Promi
 }
 
 async function promptWorkerPlan(
-  cli: ReturnType<typeof createInterface>,
   backend: SetupWizardBackend,
   role: "builder" | "tester" | "hybrid",
   defaults: SetupWizardDefaults,
@@ -189,18 +208,15 @@ async function promptWorkerPlan(
     sectionDetail = "Pick the party member that owns trials.";
   }
 
-  await writeSetupSection(renderRoleStationTitle(role), sectionDetail);
-  const name = await promptWithDefault(cli, `${role} name`, defaultWorkerName(backend, role));
-  const profile = await promptWithDefault(
-    cli,
-    `${role} profile`,
-    defaults.profile ?? defaultProfile(backend),
-  );
+  note(sectionDetail, renderRoleStationTitle(role));
+
+  const name = await askText(`${role} name`, defaultWorkerName(backend, role));
+  const profile = await askText(`${role} profile`, defaults.profile ?? defaultProfile(backend));
   const args = ["--name", name, "--profile", profile, "--role", role];
+
   const archetypes = listSetupArchetypesForRole(role);
   const defaultArchetype = defaultSetupArchetype(role);
-  const archetypeId = await chooseOne(
-    cli,
+  const archetypeId = await askSelect(
     `${role} archetype`,
     archetypes.map((archetype) => archetype.id),
     defaultArchetype.id,
@@ -209,8 +225,7 @@ async function promptWorkerPlan(
     archetypes.find((candidate) => candidate.id === archetypeId) ?? defaultArchetype;
 
   if (backend === "hermes") {
-    const baseUrl = await promptWithDefault(
-      cli,
+    const baseUrl = await askText(
       "Hermes base URL",
       defaults.baseUrl ?? "http://127.0.0.1:8000/v1",
     );
@@ -218,15 +233,15 @@ async function promptWorkerPlan(
   }
 
   if (backend === "openclaw") {
-    const agentId = await promptWithDefault(cli, "OpenClaw agent id", defaults.agentId ?? "main");
+    const agentId = await askText("OpenClaw agent id", defaults.agentId ?? "main");
     args.push("--agent-id", agentId);
-    const gatewayUrl = await promptWithDefault(cli, "Gateway URL", defaults.baseUrl ?? "");
+    const gatewayUrl = await askText("Gateway URL", defaults.baseUrl ?? "");
     if (gatewayUrl.length > 0) {
       args.push("--gateway-url", gatewayUrl);
     }
   }
 
-  args.push(...(await promptRuntimeArgs(cli)));
+  args.push(...(await promptRuntimeArgs()));
   return {
     archetypeLabel: archetype.label,
     args,
@@ -235,26 +250,29 @@ async function promptWorkerPlan(
   };
 }
 
-async function promptTelegramSinkPlan(
-  cli: ReturnType<typeof createInterface>,
-  defaults: SetupWizardDefaults,
-): Promise<SetupWizardSinkPlan> {
+async function promptTelegramSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizardSinkPlan> {
   const detectedToken = defaults.sinkDefaults?.openClawTelegramBotToken;
   const detectedChatId = defaults.sinkDefaults?.openClawTelegramChatId;
-  const chatId = await promptWithDefault(cli, "Telegram chat id", detectedChatId ?? "");
+  const chatId = await askText("Telegram chat id", detectedChatId ?? "");
   const authModes = detectedToken
     ? (["openclaw-import", "env", "secret-store"] as const)
     : (["env", "secret-store"] as const);
-  const authMode = await chooseOne(
-    cli,
-    detectedToken
-      ? "Telegram bot token source (openclaw-import pulls from ~/.openclaw/openclaw.json)"
-      : "Telegram bot token source",
+  const authMode = await askSelect(
+    detectedToken ? "Telegram bot token source" : "Telegram bot token source",
     authModes,
     detectedToken ? "openclaw-import" : "env",
+    detectedToken
+      ? {
+          env: "Read from an env var",
+          "openclaw-import": "Pull from ~/.openclaw/openclaw.json",
+          "secret-store": "Reference a quest secret store entry",
+        }
+      : {
+          env: "Read from an env var",
+          "secret-store": "Reference a quest secret store entry",
+        },
   );
-  const useRpgCards = await confirmWithDefault(
-    cli,
+  const useRpgCards = await askConfirm(
     "Render events as RPG flavor cards (HTML parse mode)?",
     true,
   );
@@ -278,19 +296,14 @@ async function promptTelegramSinkPlan(
   }
 
   if (authMode === "secret-store") {
-    const secretRef = await promptWithDefault(
-      cli,
-      "Telegram bot token secret ref",
-      "telegram.bot-token",
-    );
+    const secretRef = await askText("Telegram bot token secret ref", "telegram.bot-token");
     return {
       args: ["--chat-id", chatId, "--bot-token-secret-ref", secretRef, ...parseModeArgs],
       kind: "telegram",
     };
   }
 
-  const botTokenEnv = await promptWithDefault(
-    cli,
+  const botTokenEnv = await askText(
     "Telegram bot token env",
     defaults.sinkDefaults?.telegramBotTokenEnv ?? "TELEGRAM_BOT_TOKEN",
   );
@@ -300,66 +313,62 @@ async function promptTelegramSinkPlan(
   };
 }
 
-async function promptSinkPlan(
-  cli: ReturnType<typeof createInterface>,
-  defaults: SetupWizardDefaults,
-): Promise<SetupWizardSinkPlan> {
-  const sinkKind = await chooseOne(
-    cli,
+async function promptSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizardSinkPlan> {
+  const sinkKind = await askSelect(
     "Observability sink",
     ["none", "webhook", "telegram", "slack", "linear", "openclaw"] as const,
     "none",
+    {
+      linear: "Issue tracker — cards move through workflow",
+      none: "Skip observability",
+      openclaw: "Pipe events into the OpenClaw gateway",
+      slack: "Post to a Slack channel webhook",
+      telegram: "Ping a Telegram chat with run updates",
+      webhook: "POST events to a generic HTTP endpoint",
+    },
   );
   if (sinkKind === "none") {
     return null;
   }
 
   if (sinkKind === "webhook") {
-    const url = await promptWithDefault(cli, "Webhook URL", "http://127.0.0.1:3000/quest");
+    const url = await askText("Webhook URL", "http://127.0.0.1:3000/quest");
     return { args: ["--url", url], kind: "webhook" };
   }
 
   if (sinkKind === "telegram") {
-    return await promptTelegramSinkPlan(cli, defaults);
+    return await promptTelegramSinkPlan(defaults);
   }
 
   if (sinkKind === "slack") {
-    const authMode = await chooseOne(
-      cli,
+    const authMode = await askSelect(
       "Slack webhook source",
       ["direct", "env", "secret-store"] as const,
       "direct",
     );
     if (authMode === "env") {
-      const urlEnv = await promptWithDefault(
-        cli,
+      const urlEnv = await askText(
         "Slack webhook env",
         defaults.sinkDefaults?.slackWebhookEnv ?? "SLACK_WEBHOOK_URL",
       );
       return { args: ["--url-env", urlEnv], kind: "slack" };
     }
     if (authMode === "secret-store") {
-      const secretRef = await promptWithDefault(cli, "Slack webhook secret ref", "slack.webhook");
+      const secretRef = await askText("Slack webhook secret ref", "slack.webhook");
       return { args: ["--secret-ref", secretRef], kind: "slack" };
     }
 
-    const webhookUrl = await promptWithDefault(cli, "Slack webhook URL", "");
+    const webhookUrl = await askText("Slack webhook URL", "");
     return { args: ["--url", webhookUrl], kind: "slack" };
   }
 
   if (sinkKind === "openclaw") {
-    const agentId = await promptWithDefault(
-      cli,
+    const agentId = await askText(
       "OpenClaw sink agent id",
       defaults.sinkDefaults?.openClawAgentId ?? "main",
     );
-    const sessionId = await promptWithDefault(
-      cli,
-      "OpenClaw sink session id",
-      "quest-observability",
-    );
-    const gatewayUrl = await promptWithDefault(
-      cli,
+    const sessionId = await askText("OpenClaw sink session id", "quest-observability");
+    const gatewayUrl = await askText(
       "OpenClaw sink gateway URL",
       defaults.sinkDefaults?.openClawGatewayUrl ?? "",
     );
@@ -370,20 +379,18 @@ async function promptSinkPlan(
     return { args, kind: "openclaw" };
   }
 
-  const issueId = await promptWithDefault(cli, "Linear issue id", "");
-  const authMode = await chooseOne(
-    cli,
+  const issueId = await askText("Linear issue id", "");
+  const authMode = await askSelect(
     "Linear API key source",
     ["env", "secret-store"] as const,
     "env",
   );
   if (authMode === "secret-store") {
-    const secretRef = await promptWithDefault(cli, "Linear API key secret ref", "linear.api-key");
+    const secretRef = await askText("Linear API key secret ref", "linear.api-key");
     return { args: ["--issue-id", issueId, "--api-key-secret-ref", secretRef], kind: "linear" };
   }
 
-  const apiKeyEnv = await promptWithDefault(
-    cli,
+  const apiKeyEnv = await askText(
     "Linear API key env",
     defaults.sinkDefaults?.linearApiKeyEnv ?? "LINEAR_API_KEY",
   );
@@ -391,14 +398,16 @@ async function promptSinkPlan(
 }
 
 async function promptTesterSelectionStrategy(
-  cli: ReturnType<typeof createInterface>,
   fallback: TesterSelectionStrategy,
 ): Promise<TesterSelectionStrategy> {
-  await writeSetupSection(
-    "Trials",
+  note(
     "Choose whether the planner values the strongest tester overall or the cheapest eligible tester.",
+    "Trials",
   );
-  return await chooseOne(cli, "Tester routing", ["balanced", "prefer-cheapest"] as const, fallback);
+  return await askSelect("Tester routing", ["balanced", "prefer-cheapest"] as const, fallback, {
+    balanced: "Picks the highest-ranked eligible tester",
+    "prefer-cheapest": "Biases toward the lowest cpu/memory/gpu cost",
+  });
 }
 
 function deriveCalibrationIds(workerPlans: SetupWizardWorkerPlan[]): string[] {
@@ -413,63 +422,87 @@ function deriveCalibrationIds(workerPlans: SetupWizardWorkerPlan[]): string[] {
   });
 }
 
+function readPlanArg(plan: SetupWizardWorkerPlan, flag: string): string | null {
+  const index = plan.args.indexOf(flag);
+  if (index < 0) {
+    return null;
+  }
+  return plan.args[index + 1] ?? null;
+}
+
+function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardResult): string {
+  const workerLines = result.workerPlans.map((plan) => {
+    const role = readPlanArg(plan, "--role") ?? "hybrid";
+    const name = readPlanArg(plan, "--name") ?? "Unnamed worker";
+    const profile = readPlanArg(plan, "--profile") ?? "default";
+    return `• ${name} (${role}) · ${plan.backend}:${profile} · ${plan.archetypeLabel}`;
+  });
+  const calibration =
+    result.calibrateWorkerIds.length > 0 ? result.calibrateWorkerIds.join(", ") : "skipped";
+  const lines = [
+    `Party mode: ${partyMode}`,
+    `Workers (${result.workerPlans.length}):`,
+    ...workerLines,
+    `Tester routing: ${result.settingsUpdate.planner.testerSelectionStrategy}`,
+    `Sink: ${result.sinkPlan?.kind ?? "none"}`,
+    `Training Grounds: ${calibration}`,
+  ];
+  return lines.join("\n");
+}
+
 export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
-  const cli = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  try {
-    await writeSetupBanner(context.defaults.backend, context.defaults.importSummary);
-    const backend = await chooseOne(
-      cli,
-      "Backend",
-      ["codex", "hermes", "openclaw"] as const,
-      context.defaults.backend,
-    );
-    const partyMode = (await chooseOne(
-      cli,
-      "Party mode",
-      ["hybrid", "split"] as const,
-      "hybrid",
-    )) as SetupWizardPartyMode;
-    const testerSelectionStrategy = await promptTesterSelectionStrategy(
-      cli,
-      context.defaults.testerSelectionStrategy,
-    );
-
-    const workerPlans: SetupWizardWorkerPlan[] = [];
-    if (partyMode === "hybrid") {
-      workerPlans.push(await promptWorkerPlan(cli, backend, "hybrid", context.defaults));
-    } else {
-      workerPlans.push(await promptWorkerPlan(cli, backend, "builder", context.defaults));
-      workerPlans.push(await promptWorkerPlan(cli, backend, "tester", context.defaults));
-    }
-
-    await writeSetupSection("Observability", "Choose where quest events should be delivered.");
-    const sinkPlan = await promptSinkPlan(cli, context.defaults);
-
-    await writeSetupSection("Training Grounds", "Decide whether to calibrate the new party now.");
-    const runCalibration = await confirmWithDefault(
-      cli,
-      "Send new party members to the Training Grounds now?",
-      true,
-    );
-    const result = {
-      calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
-      settingsUpdate: {
-        planner: {
-          testerSelectionStrategy,
-        },
-      },
-      sinkPlan,
-      workerPlans,
-    };
-    await writeSetupSummary(partyMode, result);
-    return result;
-  } finally {
-    cli.close();
+  intro("Quest Runner Setup");
+  if (context.defaults.importSummary) {
+    note(context.defaults.importSummary, "Imported defaults");
   }
+
+  const backend = await askSelect(
+    "Backend",
+    ["codex", "hermes", "openclaw"] as const,
+    context.defaults.backend,
+    {
+      codex: "OpenAI Codex CLI",
+      hermes: "Self-hosted Hermes endpoint",
+      openclaw: "OpenClaw gateway agent",
+    },
+  );
+  const partyMode = (await askSelect("Party mode", ["hybrid", "split"] as const, "hybrid", {
+    hybrid: "One worker handles encounters and trials",
+    split: "Dedicated builder + dedicated tester",
+  })) as SetupWizardPartyMode;
+  const testerSelectionStrategy = await promptTesterSelectionStrategy(
+    context.defaults.testerSelectionStrategy,
+  );
+
+  const workerPlans: SetupWizardWorkerPlan[] = [];
+  if (partyMode === "hybrid") {
+    workerPlans.push(await promptWorkerPlan(backend, "hybrid", context.defaults));
+  } else {
+    workerPlans.push(await promptWorkerPlan(backend, "builder", context.defaults));
+    workerPlans.push(await promptWorkerPlan(backend, "tester", context.defaults));
+  }
+
+  note("Choose where quest events should be delivered.", "Observability");
+  const sinkPlan = await promptSinkPlan(context.defaults);
+
+  note("Decide whether to calibrate the new party now.", "Training Grounds");
+  const runCalibration = await askConfirm(
+    "Send new party members to the Training Grounds now?",
+    true,
+  );
+  const result: SetupWizardResult = {
+    calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
+    settingsUpdate: {
+      planner: {
+        testerSelectionStrategy,
+      },
+    },
+    sinkPlan,
+    workerPlans,
+  };
+  note(renderSummaryNote(partyMode, result), "Setup Summary");
+  outro("Party ready. Run `quest party dispatch` when you're good to go.");
+  return result;
 }

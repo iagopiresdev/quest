@@ -2,7 +2,7 @@
 
 import { unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { confirm as clackConfirm, text as clackText, isCancel } from "@clack/prompts";
 import { ZodError } from "zod";
 import { generateRunChronicle, writeRunChronicle } from "./core/chronicles/generator";
 import {
@@ -789,36 +789,24 @@ async function readQuestSpecInput(
 }
 
 async function promptWithDefault(question: string, fallback: string): Promise<string> {
-  const cli = createInterface({
-    input: process.stdin,
-    output: process.stdout,
+  const answer = await clackText({
+    initialValue: fallback,
+    message: question,
+    placeholder: fallback,
   });
-
-  try {
-    const answer = (await cli.question(`${question} [${fallback}]: `)).trim();
-    return answer.length > 0 ? answer : fallback;
-  } finally {
-    cli.close();
+  if (isCancel(answer)) {
+    throw new Error(`Cancelled: ${question}`);
   }
+  const trimmed = answer.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
 }
 
 async function confirmWithDefault(question: string, fallback: boolean): Promise<boolean> {
-  const fallbackLabel = fallback ? "Y/n" : "y/N";
-  const cli = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  try {
-    const answer = (await cli.question(`${question} [${fallbackLabel}]: `)).trim().toLowerCase();
-    if (answer.length === 0) {
-      return fallback;
-    }
-
-    return answer === "y" || answer === "yes";
-  } finally {
-    cli.close();
+  const answer = await clackConfirm({ initialValue: fallback, message: question });
+  if (isCancel(answer)) {
+    throw new Error(`Cancelled: ${question}`);
   }
+  return answer;
 }
 
 function describeImportedBackendDefaults(

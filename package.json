@@ -48,6 +48,7 @@
     "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@clack/prompts": "^1.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
