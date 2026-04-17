@@ -202,6 +202,33 @@ async function askConfirm(message: string, initial: boolean): Promise<boolean> {
   return unwrap(answer);
 }
 
+// Variant of askSelect that lets the caller substitute a friendly label per option value. Used
+// when the underlying value carries a sentinel string the operator should never see (e.g.
+// `__done_codex__`). All other options stay value-as-label.
+async function askSelectWithLabels<TValue extends string>(
+  message: string,
+  choices: readonly TValue[],
+  initial: TValue,
+  labels: Partial<Record<TValue, string>>,
+  hints?: Partial<Record<TValue, string>>,
+): Promise<TValue> {
+  const options = choices.map((value) => {
+    const hint = hints?.[value];
+    const label = labels[value] ?? value;
+    const entry: { hint?: string; label: string; value: TValue } = { label, value };
+    if (hint !== undefined) {
+      entry.hint = hint;
+    }
+    return entry;
+  }) as ReadonlyArray<{ hint?: string; label: string; value: TValue }>;
+  const answer = await select<TValue>({
+    initialValue: initial,
+    message,
+    options: options as Parameters<typeof select<TValue>>[0]["options"],
+  });
+  return unwrap(answer);
+}
+
 async function askSelect<TValue extends string>(
   message: string,
   choices: readonly TValue[],
@@ -478,24 +505,31 @@ async function promptWorkersForHarness(
   progress: WizardProgress,
 ): Promise<SetupWizardWorkerPlan[]> {
   const models = listModelsForHarness(harness, defaults);
+  // Sentinel value the operator never sees as a model name. We map it to a friendly label
+  // ("Done with <harness>") in the select via the option list below.
   const doneSentinel = `__done_${harness}__` as const;
+  const doneLabel = `Done with ${harnessLabel(harness)}`;
   const workers: SetupWizardWorkerPlan[] = [];
 
   for (;;) {
     page(progress, `${harnessLabel(harness)} models`);
     const choices = [...models, doneSentinel];
+    const labels: Record<string, string> = {};
     const hints: Record<string, string> = {};
     for (const model of models) {
+      labels[model] = model;
       hints[model] = "Register a new worker that runs on this model";
     }
+    labels[doneSentinel] = doneLabel;
     hints[doneSentinel] =
       workers.length > 0
-        ? `Done — move on (${workers.length} worker${workers.length === 1 ? "" : "s"} registered)`
+        ? `Move on (${workers.length} worker${workers.length === 1 ? "" : "s"} registered)`
         : `Need at least one worker for ${harnessLabel(harness)}`;
-    const choice = await askSelect(
+    const choice = await askSelectWithLabels(
       `Pick a model to register (or Done)`,
       choices as readonly string[],
       models[0] ?? doneSentinel,
+      labels,
       hints,
     );
     if (choice === doneSentinel) {
