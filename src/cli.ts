@@ -72,6 +72,7 @@ import {
   resolveQuestWorkspacesRoot,
   resolveWorkerRegistryPath,
 } from "./core/storage";
+import { renderCategorizedHelp } from "./core/ui/help";
 import { formatPrettyStatus } from "./core/ui/terminal";
 import { listCalibrationSuites, WorkerCalibrator } from "./core/workers/calibration";
 import {
@@ -265,6 +266,10 @@ function printUsage(): void {
       "Output defaults to JSON for pipes and pretty text for interactive terminals.",
     ].join("\n")}\n`,
   );
+}
+
+function printCategorizedHelp(): void {
+  void Bun.write(Bun.stdout, renderCategorizedHelp());
 }
 
 function stdinIsTty(): boolean {
@@ -4274,14 +4279,23 @@ async function main(): Promise<number> {
   const outputMode = determineOutputMode(rawArgs);
   const args = stripGlobalOutputFlags(rawArgs);
 
-  if (args.length === 0 || hasFlag(args, "--help")) {
+  // `quest --help` still prints the flat every-flag dump for scripts and power users.
+  // `quest` with no args, or `quest help`, gets the categorized grouped view so operators who are
+  // scanning the binary for the first time see sections and inline comments instead of a wall of
+  // usage lines.
+  if (hasFlag(args, "--help")) {
     printUsage();
+    return 0;
+  }
+
+  if (args.length === 0 || args[0] === "help") {
+    printCategorizedHelp();
     return 0;
   }
 
   const command = commandDefinitions.find((definition) => definition.matches(args)) ?? null;
   if (!command) {
-    printUsage();
+    printCategorizedHelp();
     return 1;
   }
 
