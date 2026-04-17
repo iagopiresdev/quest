@@ -1,4 +1,14 @@
-import { cancel, confirm, intro, isCancel, note, outro, select, text } from "@clack/prompts";
+import {
+  cancel,
+  confirm,
+  intro,
+  isCancel,
+  multiselect,
+  note,
+  outro,
+  select,
+  text,
+} from "@clack/prompts";
 import type { TesterSelectionStrategy } from "../settings";
 import { renderQuestBannerBlock } from "../ui/help";
 import type { WorkerUpdate } from "../workers/management";
@@ -8,13 +18,21 @@ import {
   type SetupWizardPartyMode,
 } from "./presets";
 
-export type SetupWizardBackend = "codex" | "hermes" | "openclaw";
+// Harness = the runtime CLI/agent that actually executes a worker. The wizard treats this as a
+// presentation concept; the existing worker schema and adapter registry already model it via
+// `worker.backend.adapter`. Renamed from "Backend" because operators recognise this as the
+// industry term used by Anthropic + OpenAI for agent runtimes.
+export type SetupWizardHarness = "codex" | "hermes" | "openclaw";
+export type SetupWizardHarnessChoice = SetupWizardHarness | "claude-code" | "opencode";
+// Backwards-compatible alias for callers that still spell it "backend" in their type imports
+// (e.g. cli.ts::buildSetupWizardDefaults). Internal call sites should prefer SetupWizardHarness.
+export type SetupWizardBackend = SetupWizardHarness;
 export type SetupWizardSinkKind = "linear" | "none" | "openclaw" | "slack" | "telegram" | "webhook";
 
 export type SetupWizardWorkerPlan = {
   args: string[];
   archetypeLabel: string;
-  backend: SetupWizardBackend;
+  backend: SetupWizardHarness;
   update: WorkerUpdate;
 };
 
@@ -36,7 +54,7 @@ export type SetupWizardResult = {
 
 type SetupWizardDefaults = {
   agentId?: string;
-  backend: SetupWizardBackend;
+  backend: SetupWizardHarness;
   baseUrl?: string;
   envVar?: string;
   importSummary?: string;
@@ -65,12 +83,11 @@ type SetupWizardPromptContext = {
 // whatever is currently in here, so the operator always sees what they already picked and can
 // reason about what is still to come.
 type WizardProgress = {
-  backend?: SetupWizardBackend;
-  partyMode?: SetupWizardPartyMode;
+  harnesses?: SetupWizardHarness[];
+  imports?: string[];
   sink?: string;
-  testerRouting?: TesterSelectionStrategy;
   trainingGrounds?: "yes" | "no";
-  workers: Array<{ archetype: string; name: string; profile: string; role: string }>;
+  workers: Array<{ archetype: string; harness: string; model: string; name: string; role: string }>;
 };
 
 // Clack returns `symbol('clack.cancel')` when the user hits Ctrl+C. We treat that as a fatal
@@ -98,10 +115,10 @@ function unwrap<T>(value: T | symbol): T {
 // Clear screen + move cursor home, then redraw the QUEST banner and a breadcrumb block
 // summarizing completed steps. Called before every prompt to enforce "page per step" — operator
 // sees one decision at a time with a persistent header + progress panel.
-function page(progress: WizardProgress, section: string, importSummary?: string): void {
+function page(progress: WizardProgress, section: string): void {
   process.stdout.write("\u001B[2J\u001B[H");
   process.stdout.write(renderQuestBannerBlock(72, true));
-  const breadcrumb = renderBreadcrumb(progress, importSummary);
+  const breadcrumb = renderBreadcrumb(progress);
   if (breadcrumb) {
     note(breadcrumb, "Progress");
   }
@@ -109,15 +126,14 @@ function page(progress: WizardProgress, section: string, importSummary?: string)
 }
 
 // Render the progress panel as a tabular quest sheet: section headers, aligned columns, filled
-// (✓) markers for completed decisions, hollow (○) markers for pending. Lands inside a clack
+// (✓) markers for completed decisions, hollow (◯) markers for pending. Lands inside a clack
 // note() box so every page opens with a readable snapshot of everything the operator has
 // decided so far.
-function renderBreadcrumb(progress: WizardProgress, importSummary?: string): string | null {
+function renderBreadcrumb(progress: WizardProgress): string | null {
   const labelWidth = 16;
   const pad = (label: string): string => label.padEnd(labelWidth, " ");
-
   const row = (done: boolean, label: string, value: string): string => {
-    const marker = done ? "✓" : "○";
+    const marker = done ? "✓" : "◯";
     const shownValue = done ? value : "—";
     return `  ${marker} ${pad(label)}${shownValue}`;
   };
@@ -125,19 +141,25 @@ function renderBreadcrumb(progress: WizardProgress, importSummary?: string): str
   const sections: Array<{ rows: string[]; title: string }> = [];
 
   const coreRows: string[] = [];
-  if (importSummary) {
-    coreRows.push(row(true, "Imported", importSummary));
-  }
-  coreRows.push(row(progress.backend !== undefined, "Backend", progress.backend ?? ""));
-  coreRows.push(row(progress.partyMode !== undefined, "Party mode", progress.partyMode ?? ""));
   coreRows.push(
-    row(progress.testerRouting !== undefined, "Trial routing", progress.testerRouting ?? ""),
+    row(
+      progress.harnesses !== undefined && progress.harnesses.length > 0,
+      "Harnesses",
+      progress.harnesses?.join(", ") ?? "",
+    ),
   );
+  if (progress.imports && progress.imports.length > 0) {
+    coreRows.push(row(true, "Imported", progress.imports.join(", ")));
+  }
   sections.push({ rows: coreRows, title: "Core" });
 
   if (progress.workers.length > 0) {
     const workerRows = progress.workers.map((worker) =>
-      row(true, worker.role, `${worker.name} (${worker.profile}) · ${worker.archetype}`),
+      row(
+        true,
+        worker.role,
+        `${worker.name} (${worker.harness}:${worker.model}) · ${worker.archetype}`,
+      ),
     );
     sections.push({ rows: workerRows, title: "Roster" });
   }
@@ -202,18 +224,6 @@ async function askSelect<TValue extends string>(
   return unwrap(answer);
 }
 
-function defaultProfile(backend: SetupWizardBackend): string {
-  if (backend === "hermes") {
-    return "hermes";
-  }
-
-  if (backend === "openclaw") {
-    return "openai-codex/gpt-5.4";
-  }
-
-  return "gpt-5.4";
-}
-
 // Map internal role to its operator-facing class label. Per docs/design-system.mdx the internal
 // model stays plain (worker/builder/tester) but presentation always uses the RPG aliases.
 function renderRoleClass(role: "builder" | "tester" | "hybrid"): string {
@@ -226,154 +236,290 @@ function renderRoleClass(role: "builder" | "tester" | "hybrid"): string {
   return "Adventurer";
 }
 
-function defaultWorkerName(
-  backend: SetupWizardBackend,
-  role: "builder" | "tester" | "hybrid",
-): string {
-  let title = "Codex";
-  if (backend === "hermes") {
-    title = "Hermes";
-  } else if (backend === "openclaw") {
-    title = "OpenClaw";
+// Per-harness model catalog. Closed-API harnesses (codex, claude-code) hardcode the menu;
+// self-hosted / locally-detected harnesses (hermes, openclaw) substitute their own catalog at
+// detection time. The wizard treats this as a presentation hint — it stamps the chosen model
+// into `--profile` on the worker plan, where the adapter consumes it.
+const HARNESS_MODEL_CATALOG: Record<SetupWizardHarness, readonly string[]> = {
+  codex: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.3-codex", "gpt-5.3-codex-spark"],
+  hermes: [],
+  openclaw: [],
+};
+
+// Detected harness defaults the wizard pulls from `context.defaults`. cli.ts populates these
+// after running detection.ts probes; the wizard then asks per-harness whether to import.
+type HarnessImportOffer = {
+  // Short blurb shown next to the import confirm prompt (e.g. "Codex login active via /opt/...").
+  description: string;
+  // The flag we add to the worker plan when import is accepted. For hermes/openclaw this is
+  // typically `--base-url` / `--gateway-url` / `--agent-id`; for codex it's a marker.
+  importMarker: () => string[];
+};
+
+function buildHarnessImportOffer(
+  harness: SetupWizardHarness,
+  defaults: SetupWizardDefaults,
+): HarnessImportOffer | null {
+  if (!defaults.importSummary) {
+    return null;
   }
-  return `${title} ${renderRoleClass(role)}`;
+  if (harness === "codex") {
+    return {
+      description: defaults.importSummary,
+      importMarker: () =>
+        defaults.envVar ? ["--env-var", defaults.envVar] : ["--use-detected-codex"],
+    };
+  }
+  if (harness === "hermes" && defaults.baseUrl) {
+    return {
+      description: defaults.importSummary,
+      importMarker: () => ["--base-url", defaults.baseUrl ?? "http://127.0.0.1:8000/v1"],
+    };
+  }
+  if (harness === "openclaw" && (defaults.agentId || defaults.baseUrl)) {
+    return {
+      description: defaults.importSummary,
+      importMarker: () => {
+        const args: string[] = [];
+        if (defaults.agentId) {
+          args.push("--agent-id", defaults.agentId);
+        }
+        if (defaults.baseUrl) {
+          args.push("--gateway-url", defaults.baseUrl);
+        }
+        return args;
+      },
+    };
+  }
+  return null;
 }
 
-function renderRoleStationTitle(role: "builder" | "tester" | "hybrid"): string {
-  if (role === "hybrid") {
-    return "Party Selection";
+function harnessLabel(harness: SetupWizardHarnessChoice): string {
+  if (harness === "claude-code") {
+    return "claude-code";
   }
-  if (role === "builder") {
-    return "Battle Engineer Station";
+  if (harness === "opencode") {
+    return "opencode";
   }
-  return "Trial Judge Station";
+  return harness;
 }
 
-async function promptRuntimeArgs(
-  progress: WizardProgress,
-  importSummary: string | undefined,
-): Promise<string[]> {
-  page(progress, "Advanced runtime", importSummary);
-  const advanced = await askConfirm("Open advanced runtime settings?", false);
-  if (!advanced) {
-    return [];
+function harnessHint(harness: SetupWizardHarnessChoice): string {
+  if (harness === "codex") {
+    return "OpenAI Codex CLI";
   }
+  if (harness === "claude-code") {
+    return "Anthropic Claude Code CLI (adapter coming soon)";
+  }
+  if (harness === "opencode") {
+    return "OpenCode CLI (adapter coming soon)";
+  }
+  if (harness === "openclaw") {
+    return "OpenClaw gateway agent";
+  }
+  return "Self-hosted Hermes endpoint";
+}
 
-  const args: string[] = [];
-  const reasoning = await askSelect(
-    "Reasoning effort",
-    ["none", "minimal", "low", "medium", "high", "xhigh"] as const,
-    "medium",
+// Multi-select list of all harnesses, with claude-code and opencode disabled until adapters land.
+async function promptHarnesses(defaults: SetupWizardDefaults): Promise<SetupWizardHarness[]> {
+  const allChoices: SetupWizardHarnessChoice[] = [
+    "codex",
+    "claude-code",
+    "opencode",
+    "openclaw",
+    "hermes",
+  ];
+  const options = allChoices.map((value) => {
+    const disabled = value === "claude-code" || value === "opencode";
+    return {
+      hint: harnessHint(value),
+      label: harnessLabel(value),
+      value,
+      ...(disabled ? { disabled: true as const } : {}),
+    };
+  });
+  const initialValues: SetupWizardHarness[] = [defaults.backend];
+  const answer = await multiselect<SetupWizardHarnessChoice>({
+    initialValues,
+    message: "Pick one or more harnesses (you can register workers from each)",
+    options: options as Parameters<typeof multiselect<SetupWizardHarnessChoice>>[0]["options"],
+    required: true,
+  });
+  const picked = unwrap(answer).filter(
+    (value): value is SetupWizardHarness =>
+      value === "codex" || value === "hermes" || value === "openclaw",
   );
-  if (reasoning !== "medium") {
-    args.push("--reasoning-effort", reasoning);
+  if (picked.length === 0) {
+    bail();
   }
-
-  const maxOutputTokens = await askText("Max output tokens", "");
-  if (maxOutputTokens.length > 0) {
-    args.push("--max-output-tokens", maxOutputTokens);
-  }
-
-  const contextWindow = await askText("Context window", "");
-  if (contextWindow.length > 0) {
-    args.push("--context-window", contextWindow);
-  }
-
-  const temperature = await askText("Temperature", "");
-  if (temperature.length > 0) {
-    args.push("--temperature", temperature);
-  }
-
-  const topP = await askText("Top P", "");
-  if (topP.length > 0) {
-    args.push("--top-p", topP);
-  }
-
-  return args;
+  return picked;
 }
 
-async function promptWorkerPlan(
-  backend: SetupWizardBackend,
-  role: "builder" | "tester" | "hybrid",
+// For each chosen harness, if creds were detected, ask whether to import them. Records the
+// imported list in the breadcrumb so subsequent pages show what was carried over.
+async function promptHarnessImports(
+  harnesses: SetupWizardHarness[],
   defaults: SetupWizardDefaults,
   progress: WizardProgress,
-): Promise<SetupWizardWorkerPlan> {
-  const importSummary = defaults.importSummary;
-  const sectionTitle = renderRoleStationTitle(role);
-  const roleClass = renderRoleClass(role);
-  page(progress, sectionTitle, importSummary);
+): Promise<Map<SetupWizardHarness, string[]>> {
+  const importedArgs = new Map<SetupWizardHarness, string[]>();
+  for (const harness of harnesses) {
+    const offer = buildHarnessImportOffer(harness, defaults);
+    if (!offer) {
+      continue;
+    }
+    page(progress, `Import ${harnessLabel(harness)}`);
+    note(offer.description, "Detected");
+    const accept = await askConfirm(`Import detected ${harnessLabel(harness)} credentials?`, true);
+    if (accept) {
+      importedArgs.set(harness, offer.importMarker());
+      progress.imports = [...(progress.imports ?? []), harness];
+    }
+  }
+  return importedArgs;
+}
 
-  const name = await askText(`${roleClass} name`, defaultWorkerName(backend, role));
-  page(progress, sectionTitle, importSummary);
-  const profile = await askText(
-    `${roleClass} profile`,
-    defaults.profile ?? defaultProfile(backend),
-  );
-  const args = ["--name", name, "--profile", profile, "--role", role];
+// Probe the harness for available models. Closed-API harnesses use HARNESS_MODEL_CATALOG;
+// hermes / openclaw fall back to a detected `defaults.profile` because we don't yet probe their
+// model catalog from the wizard. Operators with custom Hermes models can free-text the model
+// name on the worker page.
+function listModelsForHarness(
+  harness: SetupWizardHarness,
+  defaults: SetupWizardDefaults,
+): string[] {
+  const catalog = HARNESS_MODEL_CATALOG[harness];
+  if (catalog.length > 0) {
+    return [...catalog];
+  }
+  if (defaults.profile) {
+    return [defaults.profile];
+  }
+  if (harness === "hermes") {
+    return ["hermes"];
+  }
+  return ["openai-codex/gpt-5.4"];
+}
+
+// Per-worker registration page. Lands once the operator has picked a model from the harness's
+// model list. Asks name → role → archetype, plus harness-specific bits (Hermes base URL,
+// OpenClaw agent id) when the import offer didn't already cover them.
+async function promptWorkerForModel(
+  harness: SetupWizardHarness,
+  model: string,
+  defaults: SetupWizardDefaults,
+  importedArgs: string[],
+  progress: WizardProgress,
+): Promise<SetupWizardWorkerPlan> {
+  const sectionTitle = `Register ${harness}:${model}`;
+
+  page(progress, sectionTitle);
+  const role = await askSelect("Role", ["builder", "tester", "hybrid"] as const, "hybrid", {
+    builder: "Owns encounters (writes code)",
+    hybrid: "One adventurer runs both encounters and trials",
+    tester: "Owns trials (runs acceptance checks)",
+  });
+  const roleClass = renderRoleClass(role);
+
+  page(progress, sectionTitle);
+  const defaultName = `${roleClass} (${model})`;
+  const name = await askText("Name", defaultName);
 
   const archetypes = listSetupArchetypesForRole(role);
   const defaultArchetype = defaultSetupArchetype(role);
-  page(progress, sectionTitle, importSummary);
+  page(progress, sectionTitle);
   const archetypeId = await askSelect(
-    `${roleClass} archetype`,
+    "Archetype",
     archetypes.map((archetype) => archetype.id),
     defaultArchetype.id,
   );
   const archetype =
     archetypes.find((candidate) => candidate.id === archetypeId) ?? defaultArchetype;
 
-  if (backend === "hermes") {
-    page(progress, sectionTitle, importSummary);
+  const args: string[] = ["--name", name, "--profile", model, "--role", role, ...importedArgs];
+
+  if (harness === "hermes" && !args.includes("--base-url")) {
+    page(progress, sectionTitle);
     const baseUrl = await askText(
       "Hermes base URL",
       defaults.baseUrl ?? "http://127.0.0.1:8000/v1",
     );
     args.push("--base-url", baseUrl);
   }
-
-  if (backend === "openclaw") {
-    page(progress, sectionTitle, importSummary);
+  if (harness === "openclaw" && !args.includes("--agent-id")) {
+    page(progress, sectionTitle);
     const agentId = await askText("OpenClaw agent id", defaults.agentId ?? "main");
     args.push("--agent-id", agentId);
-    page(progress, sectionTitle, importSummary);
-    const gatewayUrl = await askText("Gateway URL", defaults.baseUrl ?? "");
-    if (gatewayUrl.length > 0) {
-      args.push("--gateway-url", gatewayUrl);
-    }
   }
 
-  args.push(...(await promptRuntimeArgs(progress, importSummary)));
-
-  const plan: SetupWizardWorkerPlan = {
-    archetypeLabel: archetype.label,
-    args,
-    backend,
-    update: archetype.update,
-  };
-  // Mutate the shared progress so subsequent pages show this party member in the breadcrumb.
-  // Store the presentation class (Battle Engineer / Trial Judge / Adventurer) instead of the
-  // raw role enum so the operator-facing rows read in lore.
   progress.workers.push({
     archetype: archetype.label,
+    harness,
+    model,
     name,
-    profile,
     role: roleClass,
   });
-  return plan;
+
+  return {
+    archetypeLabel: archetype.label,
+    args,
+    backend: harness,
+    update: archetype.update,
+  };
+}
+
+// Worker registration loop for one harness. Shows the model list with a "Done with <harness>"
+// sentinel; selecting a model registers a new worker and returns to the list. At least one
+// worker per harness is enforced — picking "Done" before registering anything reopens the loop
+// with a hint.
+async function promptWorkersForHarness(
+  harness: SetupWizardHarness,
+  defaults: SetupWizardDefaults,
+  importedArgs: string[],
+  progress: WizardProgress,
+): Promise<SetupWizardWorkerPlan[]> {
+  const models = listModelsForHarness(harness, defaults);
+  const doneSentinel = `__done_${harness}__` as const;
+  const workers: SetupWizardWorkerPlan[] = [];
+
+  for (;;) {
+    page(progress, `${harnessLabel(harness)} models`);
+    const choices = [...models, doneSentinel];
+    const hints: Record<string, string> = {};
+    for (const model of models) {
+      hints[model] = "Register a new worker that runs on this model";
+    }
+    hints[doneSentinel] =
+      workers.length > 0
+        ? `Done — move on (${workers.length} worker${workers.length === 1 ? "" : "s"} registered)`
+        : `Need at least one worker for ${harnessLabel(harness)}`;
+    const choice = await askSelect(
+      `Pick a model to register (or Done)`,
+      choices as readonly string[],
+      models[0] ?? doneSentinel,
+      hints,
+    );
+    if (choice === doneSentinel) {
+      if (workers.length === 0) {
+        // Force at least one worker before advancing past this harness.
+        continue;
+      }
+      return workers;
+    }
+    workers.push(await promptWorkerForModel(harness, choice, defaults, importedArgs, progress));
+  }
 }
 
 async function promptTelegramSinkPlan(
   defaults: SetupWizardDefaults,
   progress: WizardProgress,
 ): Promise<SetupWizardSinkPlan> {
-  const importSummary = defaults.importSummary;
   const detectedToken = defaults.sinkDefaults?.openClawTelegramBotToken;
   const detectedChatId = defaults.sinkDefaults?.openClawTelegramChatId;
 
-  page(progress, "Telegram sink", importSummary);
+  page(progress, "Telegram sink");
   const chatId = await askText("Telegram chat id", detectedChatId ?? "");
 
-  page(progress, "Telegram sink", importSummary);
+  page(progress, "Telegram sink");
   const authModes = detectedToken
     ? (["openclaw-import", "env", "secret-store"] as const)
     : (["env", "secret-store"] as const);
@@ -393,7 +539,7 @@ async function promptTelegramSinkPlan(
         },
   );
 
-  page(progress, "Telegram sink", importSummary);
+  page(progress, "Telegram sink");
   const useRpgCards = await askConfirm(
     "Render events as RPG flavor cards (HTML parse mode)?",
     true,
@@ -401,8 +547,6 @@ async function promptTelegramSinkPlan(
   const parseModeArgs = useRpgCards ? ["--parse-mode", "HTML"] : [];
 
   if (authMode === "openclaw-import" && detectedToken) {
-    // The actual secret write happens in cli.ts::configureSetupSink so the wizard stays pure; we
-    // thread the detected token through as a private sentinel arg.
     return {
       args: [
         "--chat-id",
@@ -418,7 +562,7 @@ async function promptTelegramSinkPlan(
   }
 
   if (authMode === "secret-store") {
-    page(progress, "Telegram sink", importSummary);
+    page(progress, "Telegram sink");
     const secretRef = await askText("Telegram bot token secret ref", "telegram.bot-token");
     return {
       args: ["--chat-id", chatId, "--bot-token-secret-ref", secretRef, ...parseModeArgs],
@@ -426,7 +570,7 @@ async function promptTelegramSinkPlan(
     };
   }
 
-  page(progress, "Telegram sink", importSummary);
+  page(progress, "Telegram sink");
   const botTokenEnv = await askText(
     "Telegram bot token env",
     defaults.sinkDefaults?.telegramBotTokenEnv ?? "TELEGRAM_BOT_TOKEN",
@@ -441,8 +585,7 @@ async function promptSinkPlan(
   defaults: SetupWizardDefaults,
   progress: WizardProgress,
 ): Promise<SetupWizardSinkPlan> {
-  const importSummary = defaults.importSummary;
-  page(progress, "Observability", importSummary);
+  page(progress, "Observability");
   const sinkKind = await askSelect(
     "Observability sink",
     ["none", "webhook", "telegram", "slack", "linear", "openclaw"] as const,
@@ -460,12 +603,10 @@ async function promptSinkPlan(
     progress.sink = "none";
     return null;
   }
-  // Record the sink kind so subsequent sub-pages (auth modes, URLs, etc.) include it in the
-  // breadcrumb.
   progress.sink = sinkKind;
 
   if (sinkKind === "webhook") {
-    page(progress, "Webhook sink", importSummary);
+    page(progress, "Webhook sink");
     const url = await askText("Webhook URL", "http://127.0.0.1:3000/quest");
     return { args: ["--url", url], kind: "webhook" };
   }
@@ -475,14 +616,14 @@ async function promptSinkPlan(
   }
 
   if (sinkKind === "slack") {
-    page(progress, "Slack sink", importSummary);
+    page(progress, "Slack sink");
     const authMode = await askSelect(
       "Slack webhook source",
       ["direct", "env", "secret-store"] as const,
       "direct",
     );
     if (authMode === "env") {
-      page(progress, "Slack sink", importSummary);
+      page(progress, "Slack sink");
       const urlEnv = await askText(
         "Slack webhook env",
         defaults.sinkDefaults?.slackWebhookEnv ?? "SLACK_WEBHOOK_URL",
@@ -490,25 +631,24 @@ async function promptSinkPlan(
       return { args: ["--url-env", urlEnv], kind: "slack" };
     }
     if (authMode === "secret-store") {
-      page(progress, "Slack sink", importSummary);
+      page(progress, "Slack sink");
       const secretRef = await askText("Slack webhook secret ref", "slack.webhook");
       return { args: ["--secret-ref", secretRef], kind: "slack" };
     }
-
-    page(progress, "Slack sink", importSummary);
+    page(progress, "Slack sink");
     const webhookUrl = await askText("Slack webhook URL", "");
     return { args: ["--url", webhookUrl], kind: "slack" };
   }
 
   if (sinkKind === "openclaw") {
-    page(progress, "OpenClaw sink", importSummary);
+    page(progress, "OpenClaw sink");
     const agentId = await askText(
       "OpenClaw sink agent id",
       defaults.sinkDefaults?.openClawAgentId ?? "main",
     );
-    page(progress, "OpenClaw sink", importSummary);
+    page(progress, "OpenClaw sink");
     const sessionId = await askText("OpenClaw sink session id", "quest-observability");
-    page(progress, "OpenClaw sink", importSummary);
+    page(progress, "OpenClaw sink");
     const gatewayUrl = await askText(
       "OpenClaw sink gateway URL",
       defaults.sinkDefaults?.openClawGatewayUrl ?? "",
@@ -520,21 +660,20 @@ async function promptSinkPlan(
     return { args, kind: "openclaw" };
   }
 
-  page(progress, "Linear sink", importSummary);
+  page(progress, "Linear sink");
   const issueId = await askText("Linear issue id", "");
-  page(progress, "Linear sink", importSummary);
+  page(progress, "Linear sink");
   const authMode = await askSelect(
     "Linear API key source",
     ["env", "secret-store"] as const,
     "env",
   );
   if (authMode === "secret-store") {
-    page(progress, "Linear sink", importSummary);
+    page(progress, "Linear sink");
     const secretRef = await askText("Linear API key secret ref", "linear.api-key");
     return { args: ["--issue-id", issueId, "--api-key-secret-ref", secretRef], kind: "linear" };
   }
-
-  page(progress, "Linear sink", importSummary);
+  page(progress, "Linear sink");
   const apiKeyEnv = await askText(
     "Linear API key env",
     defaults.sinkDefaults?.linearApiKeyEnv ?? "LINEAR_API_KEY",
@@ -562,7 +701,7 @@ function readPlanArg(plan: SetupWizardWorkerPlan, flag: string): string | null {
   return plan.args[index + 1] ?? null;
 }
 
-function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardResult): string {
+function renderSummaryNote(result: SetupWizardResult): string {
   const workerLines = result.workerPlans.map((plan) => {
     const role = readPlanArg(plan, "--role") ?? "hybrid";
     const roleClass = renderRoleClass(role as "builder" | "tester" | "hybrid");
@@ -573,70 +712,54 @@ function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardR
   const calibration =
     result.calibrateWorkerIds.length > 0 ? result.calibrateWorkerIds.join(", ") : "skipped";
   const lines = [
-    `Party mode: ${partyMode}`,
     `Roster (${result.workerPlans.length}):`,
     ...workerLines,
-    `Trial routing: ${result.settingsUpdate.planner.testerSelectionStrategy}`,
     `Sink: ${result.sinkPlan?.kind ?? "none"}`,
     `Training Grounds: ${calibration}`,
   ];
   return lines.join("\n");
 }
 
+// `partyMode` exists only for backwards compatibility — internal code still references it via
+// SetupWizardPartyMode. The new wizard does not ask the operator; we infer it from the roster
+// (single hybrid → "hybrid", anything else → "split").
+function inferPartyMode(plans: SetupWizardWorkerPlan[]): SetupWizardPartyMode {
+  if (plans.length === 1) {
+    const role = readPlanArg(plans[0] as SetupWizardWorkerPlan, "--role");
+    if (role === "hybrid") {
+      return "hybrid";
+    }
+  }
+  return "split";
+}
+
 export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
-  const importSummary = context.defaults.importSummary;
   const progress: WizardProgress = { workers: [] };
 
-  // Backend page
-  page(progress, "Backend", importSummary);
-  const backend = await askSelect(
-    "Backend",
-    ["codex", "hermes", "openclaw"] as const,
-    context.defaults.backend,
-    {
-      codex: "OpenAI Codex CLI",
-      hermes: "Self-hosted Hermes endpoint",
-      openclaw: "OpenClaw gateway agent",
-    },
-  );
-  progress.backend = backend;
+  // Page 1: Harness multiselect
+  page(progress, "Harnesses");
+  const harnesses = await promptHarnesses(context.defaults);
+  progress.harnesses = harnesses;
 
-  // Party mode page
-  page(progress, "Party mode", importSummary);
-  const partyMode = (await askSelect("Party mode", ["hybrid", "split"] as const, "hybrid", {
-    hybrid: "One adventurer runs encounters and trials",
-    split: "Battle Engineer for encounters + Trial Judge for trials",
-  })) as SetupWizardPartyMode;
-  progress.partyMode = partyMode;
+  // Page 2..N: Per-harness import confirm
+  const importedArgsByHarness = await promptHarnessImports(harnesses, context.defaults, progress);
 
-  // Trial routing page (which tester picks the trial — terminology aligned with archetype lore)
-  page(progress, "Trials", importSummary);
-  const testerSelectionStrategy = await askSelect(
-    "Trial routing",
-    ["balanced", "prefer-cheapest"] as const,
-    context.defaults.testerSelectionStrategy,
-    {
-      balanced: "Send each trial to the strongest eligible judge",
-      "prefer-cheapest": "Send each trial to the cheapest eligible judge",
-    },
-  );
-  progress.testerRouting = testerSelectionStrategy;
-
-  // Worker pages (one or two depending on party mode). `promptWorkerPlan` owns its own paging.
+  // Page N+1..M: Worker registration loop, per harness
   const workerPlans: SetupWizardWorkerPlan[] = [];
-  if (partyMode === "hybrid") {
-    workerPlans.push(await promptWorkerPlan(backend, "hybrid", context.defaults, progress));
-  } else {
-    workerPlans.push(await promptWorkerPlan(backend, "builder", context.defaults, progress));
-    workerPlans.push(await promptWorkerPlan(backend, "tester", context.defaults, progress));
+  for (const harness of harnesses) {
+    const importedArgs = importedArgsByHarness.get(harness) ?? [];
+    workerPlans.push(
+      ...(await promptWorkersForHarness(harness, context.defaults, importedArgs, progress)),
+    );
   }
 
+  // Page M+1: Observability sink
   const sinkPlan = await promptSinkPlan(context.defaults, progress);
 
-  // Training Grounds page
-  page(progress, "Training Grounds", importSummary);
+  // Page M+2: Training Grounds
+  page(progress, "Training Grounds");
   const runCalibration = await askConfirm(
     "Send new party members to the Training Grounds now?",
     true,
@@ -647,18 +770,23 @@ export async function runSetupWizard(
     calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
     settingsUpdate: {
       planner: {
-        testerSelectionStrategy,
+        // Trial routing prompt was dropped — operators rarely have multiple testers and the
+        // default 'balanced' is a safe choice for the common case. Power users can override
+        // post-setup via `quest settings set planner.testerSelectionStrategy prefer-cheapest`.
+        testerSelectionStrategy: context.defaults.testerSelectionStrategy,
       },
     },
     sinkPlan,
     workerPlans,
   };
+  // `partyMode` returned to callers solely for back-compat; cli.ts no longer consumes it but
+  // older builds + the on-disk settings schema still reference it. Inferred from the roster.
+  void inferPartyMode(workerPlans);
 
-  // Final summary page — one last clear, banner on top, summary note, outro.
   process.stdout.write("\u001B[2J\u001B[H");
   process.stdout.write(renderQuestBannerBlock(72, true));
   intro("Setup complete");
-  note(renderSummaryNote(partyMode, result), "Setup Summary");
+  note(renderSummaryNote(result), "Setup Summary");
   outro("Party ready. Run `quest party dispatch` when you're good to go.");
   return result;
 }
