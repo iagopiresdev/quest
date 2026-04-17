@@ -25,11 +25,19 @@ Ship a Telegram-only HTML card builder with RPG flavor copy, route the Telegram 
 
 ## Non-Goals
 
-- No Slack Block Kit, Linear rich formatting, or webhook cards in v1. The plain-text formatter remains the portable fallback and the default for every non-Telegram sink.
+- No Slack Block Kit cards in v1. The plain-text formatter remains the portable fallback and the default for Slack + webhook.
 - No per-event opt-out (e.g., "show cards for failures but plain text for success"). All-or-nothing per sink.
-- No Markdown/MarkdownV2 card path. HTML is the only rich mode supported today.
+- No Markdown/MarkdownV2 card path. HTML is the only rich mode supported today for Telegram.
 - No translation or localization. Copy is English-only.
 - No OpenClaw import for Slack / Linear. The pattern generalizes but only Telegram is wired in v1.
+
+## Addendum: Linear RPG Markdown Cards (2026-04-16)
+
+Linear issue comments render GitHub-flavored Markdown, so the card builder pattern extends cleanly. The Linear sink now accepts `useRpgCards: true` (CLI flag `--rpg-cards` on `observability linear upsert`), and when enabled routes events through `formatLinearCard` instead of the plain-text formatter.
+
+The RPG copy (`⚔️ Quest Accepted`, `💀 Party Wiped`, etc.) matches the Telegram card builder 1:1 so the two sinks feel like the same product. Linear cards use `##` headings, italic flavor taglines, bulleted fact lists, fenced code blocks for errors, and a local clock footer.
+
+Back-compat: existing Linear sinks with `useRpgCards` unset keep the plain-text formatter. No schema migration.
 
 ## Domain Impact
 

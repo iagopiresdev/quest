@@ -4,6 +4,7 @@ import type { DeliveryRecord } from "../delivery-schema";
 import { observableEventTypeSchema } from "../event-types";
 import type { ObservableEvent } from "../observable-events";
 import type { EventSinkDeliveryContext, EventSinkHandler } from "./handler";
+import { formatLinearCard } from "./linear-card-builder";
 import { formatSinkTextMessage } from "./message-format";
 import { nonEmptyString, secretRefSchema, urlSchema } from "./schema-helpers";
 
@@ -18,6 +19,10 @@ export const linearSinkSchema = z
     issueId: nonEmptyString(120),
     titlePrefix: nonEmptyString(120).optional(),
     type: z.literal("linear"),
+    // When true, render Linear comments as RPG-flavor markdown cards (headings,
+    // bulleted facts, fenced error blocks). When omitted or false, fall back to
+    // the shared plain-text formatter so existing sinks keep their current voice.
+    useRpgCards: z.boolean().optional(),
   })
   .strict()
   .check(
@@ -97,9 +102,11 @@ export class LinearSinkHandler implements EventSinkHandler<LinearSink> {
         );
       }
 
-      const body = sink.titlePrefix
-        ? `${sink.titlePrefix}\n\n${formatSinkTextMessage(context.event)}`
-        : formatSinkTextMessage(context.event);
+      const formatted =
+        sink.useRpgCards === true
+          ? formatLinearCard(context.event)
+          : formatSinkTextMessage(context.event);
+      const body = sink.titlePrefix ? `${sink.titlePrefix}\n\n${formatted}` : formatted;
       const response = await fetch(sink.apiBaseUrl, {
         body: JSON.stringify({
           query:

@@ -3633,11 +3633,12 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         issueId: requireOptionValue(args, "--issue-id", "--issue-id <id>"),
         titlePrefix: findOptionValue(args, "--title-prefix") ?? undefined,
         type: "linear",
+        useRpgCards: hasFlag(args, "--rpg-cards") ? true : undefined,
       });
       return { sink: await observabilityStore.upsertLinearSink(sink) };
     },
     usage:
-      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--disabled] [--observability-config <path>] [--state-root <path>]",
+      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--rpg-cards] [--disabled] [--observability-config <path>] [--state-root <path>]",
   },
   {
     id: "observability:openclaw:upsert",

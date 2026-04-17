@@ -281,6 +281,57 @@ test("linear sink posts a GraphQL commentCreate mutation and records success", a
   }
 });
 
+test("linear sink renders RPG markdown cards when useRpgCards is enabled", async () => {
+  const captured: Array<{ body: string }> = [];
+  const server = await startTestServer({
+    fetch: async (request) => {
+      captured.push({ body: await request.text() });
+      return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    },
+  });
+  if (!server) return;
+  activeServers.push(server);
+
+  Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY = "linear-test-key";
+
+  try {
+    const handler = new LinearSinkHandler();
+    const delivery = await handler.deliver(
+      {
+        apiBaseUrl: `http://127.0.0.1:${server.port}/graphql`,
+        apiKeyEnv: "QUEST_RUNNER_LINEAR_TEST_KEY",
+        enabled: true,
+        eventTypes: [],
+        id: "linear-cards",
+        issueId: "ISSUE-4",
+        type: "linear",
+        useRpgCards: true,
+      },
+      {
+        attempts: 1,
+        event: sampleEvent(),
+        secretStore: createHarnessSecretStore(trackRoot()),
+      },
+    );
+
+    expect(delivery.status).toBe("delivered");
+    const payload = JSON.parse(captured[0]?.body ?? "{}") as {
+      variables: { body: string };
+    };
+    // RPG card fingerprints: H2 heading, italic flavor, bulleted party field.
+    expect(payload.variables.body).toContain("## \ud83d\udee1\ufe0f Party Assembled");
+    expect(payload.variables.body).toContain("_A new fellowship forms._");
+    expect(payload.variables.body).toContain("- **Party:** alpha");
+    // Plain-text formatter fingerprints must NOT appear when cards are on.
+    expect(payload.variables.body).not.toContain("quest-runner daemon");
+  } finally {
+    delete Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY;
+  }
+});
+
 test("linear sink records failure when the API returns GraphQL errors", async () => {
   const server = await startTestServer({
     fetch: async () =>
