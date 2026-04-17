@@ -6,7 +6,13 @@
 // command, color-accented flag names, and omission of the state-root / workspaces-root / registry
 // boilerplate that applies to almost every command.
 
-import { colorize, isInteractiveOutput } from "./terminal";
+import {
+  colorize,
+  colorizeRgb,
+  interpolateRgb,
+  isInteractiveOutput,
+  type RgbColor,
+} from "./terminal";
 
 type HelpEntry = {
   // Short prose shown on the line above the command (rendered as a comment).
@@ -222,10 +228,11 @@ function colorizeInvocation(invocation: string): string {
     .join("");
 }
 
-// ANSI Shadow style wordmark. Rendered in magenta with the sword accent in yellow so the banner
-// reads as a logo without overwhelming the categorized help. Pipes get the plain one-liner
-// instead so downstream tools never see box-drawing characters.
-const LOGO = [
+// ANSI Shadow style wordmark with a vertical gradient. The sword-blade palette runs amber at the
+// top (hot tempered steel) through crimson (cooling blade) to deep violet (shadow at the grip),
+// echoing the RPG flavor without stealing attention from the categorized help that follows.
+// Pipes and non-TTY callers fall through to a plain one-liner so scripts never see the art.
+const LOGO_ROWS = [
   " ██████╗  ██╗   ██╗███████╗███████╗████████╗",
   "██╔═══██╗ ██║   ██║██╔════╝██╔════╝╚══██╔══╝",
   "██║   ██║ ██║   ██║█████╗  ███████╗   ██║   ",
@@ -234,24 +241,54 @@ const LOGO = [
   " ╚══▀▀═╝   ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ",
 ];
 
+const GRADIENT_TOP: RgbColor = [245, 158, 66]; // amber / hot blade
+const GRADIENT_MID: RgbColor = [220, 60, 100]; // crimson / cooling steel
+const GRADIENT_BOT: RgbColor = [118, 75, 190]; // deep violet / shadow
+
+// Cached tagline rendered to the right of the fourth logo row so the banner reads as one unit.
+const TAGLINE = "orchestrate coding agents into planned runs";
+
+function gradientForRow(rowIndex: number, totalRows: number): RgbColor {
+  const ratio = totalRows <= 1 ? 0 : rowIndex / (totalRows - 1);
+  if (ratio < 0.5) {
+    return interpolateRgb(GRADIENT_TOP, GRADIENT_MID, ratio * 2);
+  }
+  return interpolateRgb(GRADIENT_MID, GRADIENT_BOT, (ratio - 0.5) * 2);
+}
+
+function renderLogoBlock(): string[] {
+  return LOGO_ROWS.map((row, index) => colorizeRgb(row, gradientForRow(index, LOGO_ROWS.length)));
+}
+
 export function renderCategorizedHelp(): string {
   const width = 72;
   const lines: string[] = [];
   if (isInteractiveOutput()) {
-    for (const row of LOGO) {
-      lines.push(colorize(row, "magenta"));
+    // Decorative top rule sits flush with the banner's left edge so the logo "sits on the page"
+    // instead of floating. The crossed-swords emoji doubles as a visual anchor for the tagline.
+    lines.push(
+      colorize("╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼", "dim"),
+    );
+    const logoRows = renderLogoBlock();
+    for (let i = 0; i < logoRows.length; i += 1) {
+      if (i === 2) {
+        // Align the tagline against the tallest row of the logo block so the eye catches both
+        // at once. `   • ` gives enough padding for the terminal to breathe.
+        lines.push(`${logoRows[i]}   ${colorize("•", "yellow")} ${colorize(TAGLINE, "dim")}`);
+      } else if (i === 3) {
+        lines.push(
+          `${logoRows[i]}   ${colorize("•", "yellow")} ${colorize("party-based · observable · idempotent", "dim")}`,
+        );
+      } else {
+        lines.push(logoRows[i] ?? "");
+      }
     }
     lines.push(
-      `${colorize("⚔⚔⚔", "yellow")}  ${colorize(
-        "orchestrate coding agents into planned runs",
-        "dim",
-      )}\n`,
+      colorize("╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼", "dim"),
     );
+    lines.push("");
   } else {
-    lines.push(
-      `${colorize("quest", "bold")}  ${colorize("orchestrate coding agents into planned runs", "dim")}`,
-      "",
-    );
+    lines.push(`${colorize("quest", "bold")}  ${colorize(TAGLINE, "dim")}`, "");
   }
 
   for (const section of HELP_SECTIONS) {
