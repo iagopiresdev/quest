@@ -108,30 +108,62 @@ function page(progress: WizardProgress, section: string, importSummary?: string)
   intro(section);
 }
 
+// Render the progress panel as a tabular quest sheet: section headers, aligned columns, filled
+// (✓) markers for completed decisions, hollow (○) markers for pending. Lands inside a clack
+// note() box so every page opens with a readable snapshot of everything the operator has
+// decided so far.
 function renderBreadcrumb(progress: WizardProgress, importSummary?: string): string | null {
-  const lines: string[] = [];
+  const labelWidth = 16;
+  const pad = (label: string): string => label.padEnd(labelWidth, " ");
+
+  const row = (done: boolean, label: string, value: string): string => {
+    const marker = done ? "✓" : "○";
+    const shownValue = done ? value : "—";
+    return `  ${marker} ${pad(label)}${shownValue}`;
+  };
+
+  const sections: Array<{ rows: string[]; title: string }> = [];
+
+  const coreRows: string[] = [];
   if (importSummary) {
-    lines.push(`Imported: ${importSummary}`);
+    coreRows.push(row(true, "Imported", importSummary));
   }
-  if (progress.backend) {
-    lines.push(`Backend: ${progress.backend}`);
+  coreRows.push(row(progress.backend !== undefined, "Backend", progress.backend ?? ""));
+  coreRows.push(row(progress.partyMode !== undefined, "Party mode", progress.partyMode ?? ""));
+  coreRows.push(
+    row(progress.testerRouting !== undefined, "Tester routing", progress.testerRouting ?? ""),
+  );
+  sections.push({ rows: coreRows, title: "Core" });
+
+  if (progress.workers.length > 0) {
+    const workerRows = progress.workers.map((worker) =>
+      row(true, worker.role, `${worker.name} (${worker.profile}) · ${worker.archetype}`),
+    );
+    sections.push({ rows: workerRows, title: "Workers" });
   }
-  if (progress.partyMode) {
-    lines.push(`Party mode: ${progress.partyMode}`);
+
+  sections.push({
+    rows: [row(progress.sink !== undefined, "Sink", progress.sink ?? "")],
+    title: "Observability",
+  });
+
+  sections.push({
+    rows: [
+      row(progress.trainingGrounds !== undefined, "Calibration", progress.trainingGrounds ?? ""),
+    ],
+    title: "Training",
+  });
+
+  const blocks: string[] = [];
+  for (const section of sections) {
+    blocks.push(section.title);
+    blocks.push(...section.rows);
+    blocks.push("");
   }
-  if (progress.testerRouting) {
-    lines.push(`Tester routing: ${progress.testerRouting}`);
+  while (blocks.length > 0 && blocks[blocks.length - 1] === "") {
+    blocks.pop();
   }
-  for (const worker of progress.workers) {
-    lines.push(`Worker ${worker.role}: ${worker.name} (${worker.profile}) · ${worker.archetype}`);
-  }
-  if (progress.sink) {
-    lines.push(`Sink: ${progress.sink}`);
-  }
-  if (progress.trainingGrounds) {
-    lines.push(`Training Grounds: ${progress.trainingGrounds}`);
-  }
-  return lines.length > 0 ? lines.join("\n") : null;
+  return blocks.length > 0 ? blocks.join("\n") : null;
 }
 
 async function askText(message: string, initial: string, placeholder?: string): Promise<string> {
