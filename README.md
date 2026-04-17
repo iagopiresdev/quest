@@ -89,6 +89,12 @@ Concurrent-parties canary (proves two parties with two distinct source repos run
 bun ./scripts/canaries/concurrent-parties.ts
 ```
 
+YAML spec lifecycle canary (proves a hand-authored `.yaml` spec is parsed, planned, executed, and landed end-to-end):
+
+```sh
+bun ./scripts/canaries/yaml-spec-lifecycle.ts
+```
+
 ## Open Source Readiness
 
 This repository is intended to be publishable on GitHub as source code, not as a dump of local state.
