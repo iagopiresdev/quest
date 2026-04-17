@@ -228,21 +228,22 @@ function colorizeInvocation(invocation: string): string {
     .join("");
 }
 
-// Colossal figlet wordmark with a vertical gradient. Chunky 8-row block letters that read big
-// and clean in any monospace terminal; the RPG flavor comes from the gradient and tagline rather
-// than an ornate font. Sword-blade palette: amber top (hot tempered steel) through crimson
-// (cooling blade) to deep violet (shadow at the grip). Pipes and non-TTY callers still fall
-// through to the plain one-liner.
+// ANSI Shadow wordmark with a vertical gradient. 6-row box-drawing block letters that read
+// like an engraved title when centered inside the banner. Sword-blade palette: amber top (hot
+// tempered steel) through crimson (cooling blade) to deep violet (shadow at the grip). Pipes
+// and non-TTY callers fall through to the plain one-liner.
 const LOGO_ROWS = [
-  ".d88888b. 888     8888888888888 .d8888b.88888888888 ",
-  'd88P" "Y88b888     888888       d88P  Y88b   888     ',
-  "888     888888     888888       Y88b.        888     ",
-  '888     888888     8888888888    "Y888b.     888     ',
-  '888     888888     888888           "Y88b.   888     ',
-  '888 Y8b 888888     888888             "888   888     ',
-  "Y88b.Y8b88PY88b. .d88P888       Y88b  d88P   888     ",
-  '  "Y888888"  "Y88888P" 8888888888 "Y8888P"    888     ',
+  " ██████╗  ██╗   ██╗███████╗███████╗████████╗",
+  "██╔═══██╗ ██║   ██║██╔════╝██╔════╝╚══██╔══╝",
+  "██║   ██║ ██║   ██║█████╗  ███████╗   ██║   ",
+  "██║▄▄ ██║ ██║   ██║██╔══╝  ╚════██║   ██║   ",
+  "╚██████╔╝ ╚██████╔╝███████╗███████║   ██║   ",
+  " ╚══▀▀═╝   ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ",
 ];
+
+// Display width of the widest logo row (all rows are identical width). Hardcoded so we avoid
+// Unicode-aware width measurement on every render.
+const LOGO_WIDTH = 44;
 
 const GRADIENT_TOP: RgbColor = [245, 158, 66]; // amber / hot blade
 const GRADIENT_MID: RgbColor = [220, 60, 100]; // crimson / cooling steel
@@ -267,29 +268,30 @@ export function renderCategorizedHelp(): string {
   const width = 72;
   const lines: string[] = [];
   if (isInteractiveOutput()) {
-    // Decorative top rule sits flush with the banner's left edge so the logo "sits on the page"
-    // instead of floating. The crossed-swords emoji doubles as a visual anchor for the tagline.
-    lines.push(
-      colorize("╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼", "dim"),
-    );
+    // Centered, padded logo block. The wordmark lands in the optical center of the sections
+    // below (headers are `width` columns wide). Generous top/bottom blank lines keep the banner
+    // from crowding the decorative rules.
     const logoRows = renderLogoBlock();
-    for (let i = 0; i < logoRows.length; i += 1) {
-      // Anchor the tagline to the middle rows of the 8-row colossal block so the eye lands on
-      // both the logo and the tagline at the same vertical center.
-      if (i === 3) {
-        lines.push(`${logoRows[i]}   ${colorize("•", "yellow")} ${colorize(TAGLINE, "dim")}`);
-      } else if (i === 4) {
-        lines.push(
-          `${logoRows[i]}   ${colorize("•", "yellow")} ${colorize("party-based · observable · idempotent", "dim")}`,
-        );
-      } else {
-        lines.push(logoRows[i] ?? "");
-      }
-    }
-    lines.push(
-      colorize("╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼", "dim"),
+    const leftPad = Math.max(0, Math.floor((width - LOGO_WIDTH) / 2));
+    const logoPad = " ".repeat(leftPad);
+    const rule = colorize(
+      "╾━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╼",
+      "dim",
     );
+    lines.push(rule, "");
+    for (const row of logoRows) {
+      lines.push(`${logoPad}${row}`);
+    }
     lines.push("");
+    // Tagline + sub-tagline centered below the logo, each with a yellow bullet anchor so the
+    // eye catches the tagline first, then reads the feature trio underneath.
+    const bullet = colorize("•", "yellow");
+    const subTagline = "party-based · observable · idempotent";
+    const taglinePad = " ".repeat(Math.max(0, Math.floor((width - (TAGLINE.length + 2)) / 2)));
+    const subPad = " ".repeat(Math.max(0, Math.floor((width - (subTagline.length + 2)) / 2)));
+    lines.push(`${taglinePad}${bullet} ${colorize(TAGLINE, "dim")}`);
+    lines.push(`${subPad}${bullet} ${colorize(subTagline, "dim")}`);
+    lines.push("", rule, "");
   } else {
     lines.push(`${colorize("quest", "bold")}  ${colorize(TAGLINE, "dim")}`, "");
   }
