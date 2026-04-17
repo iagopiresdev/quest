@@ -61,6 +61,18 @@ type SetupWizardPromptContext = {
   defaults: SetupWizardDefaults;
 };
 
+// Live breadcrumb state the wizard mutates as prompts are answered. Each rendered page shows
+// whatever is currently in here, so the operator always sees what they already picked and can
+// reason about what is still to come.
+type WizardProgress = {
+  backend?: SetupWizardBackend;
+  partyMode?: SetupWizardPartyMode;
+  sink?: string;
+  testerRouting?: TesterSelectionStrategy;
+  trainingGrounds?: "yes" | "no";
+  workers: Array<{ archetype: string; name: string; profile: string; role: string }>;
+};
+
 // Clack returns `symbol('clack.cancel')` when the user hits Ctrl+C. We treat that as a fatal
 // operator decision: emit the clack cancel banner and throw a stable sentinel the CLI entrypoint
 // can catch to exit with a non-zero code without a stack trace.
@@ -81,6 +93,45 @@ function unwrap<T>(value: T | symbol): T {
     bail();
   }
   return value as T;
+}
+
+// Clear screen + move cursor home, then redraw the QUEST banner and a breadcrumb block
+// summarizing completed steps. Called before every prompt to enforce "page per step" — operator
+// sees one decision at a time with a persistent header + progress panel.
+function page(progress: WizardProgress, section: string, importSummary?: string): void {
+  process.stdout.write("\u001B[2J\u001B[H");
+  process.stdout.write(renderQuestBannerBlock(72, true));
+  const breadcrumb = renderBreadcrumb(progress, importSummary);
+  if (breadcrumb) {
+    note(breadcrumb, "Progress");
+  }
+  intro(section);
+}
+
+function renderBreadcrumb(progress: WizardProgress, importSummary?: string): string | null {
+  const lines: string[] = [];
+  if (importSummary) {
+    lines.push(`Imported: ${importSummary}`);
+  }
+  if (progress.backend) {
+    lines.push(`Backend: ${progress.backend}`);
+  }
+  if (progress.partyMode) {
+    lines.push(`Party mode: ${progress.partyMode}`);
+  }
+  if (progress.testerRouting) {
+    lines.push(`Tester routing: ${progress.testerRouting}`);
+  }
+  for (const worker of progress.workers) {
+    lines.push(`Worker ${worker.role}: ${worker.name} (${worker.profile}) · ${worker.archetype}`);
+  }
+  if (progress.sink) {
+    lines.push(`Sink: ${progress.sink}`);
+  }
+  if (progress.trainingGrounds) {
+    lines.push(`Training Grounds: ${progress.trainingGrounds}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
 }
 
 async function askText(message: string, initial: string, placeholder?: string): Promise<string> {
@@ -158,7 +209,11 @@ function renderRoleStationTitle(role: "builder" | "tester" | "hybrid"): string {
   return `${role.slice(0, 1).toUpperCase()}${role.slice(1)} Station`;
 }
 
-async function promptRuntimeArgs(): Promise<string[]> {
+async function promptRuntimeArgs(
+  progress: WizardProgress,
+  importSummary: string | undefined,
+): Promise<string[]> {
+  page(progress, "Advanced runtime", importSummary);
   const advanced = await askConfirm("Open advanced runtime settings?", false);
   if (!advanced) {
     return [];
@@ -201,22 +256,20 @@ async function promptWorkerPlan(
   backend: SetupWizardBackend,
   role: "builder" | "tester" | "hybrid",
   defaults: SetupWizardDefaults,
+  progress: WizardProgress,
 ): Promise<SetupWizardWorkerPlan> {
-  let sectionDetail = "Pick a solo operator that can clear encounters and trials.";
-  if (role === "builder") {
-    sectionDetail = "Pick the party member that owns encounters.";
-  } else if (role === "tester") {
-    sectionDetail = "Pick the party member that owns trials.";
-  }
-
-  note(sectionDetail, renderRoleStationTitle(role));
+  const importSummary = defaults.importSummary;
+  const sectionTitle = renderRoleStationTitle(role);
+  page(progress, sectionTitle, importSummary);
 
   const name = await askText(`${role} name`, defaultWorkerName(backend, role));
+  page(progress, sectionTitle, importSummary);
   const profile = await askText(`${role} profile`, defaults.profile ?? defaultProfile(backend));
   const args = ["--name", name, "--profile", profile, "--role", role];
 
   const archetypes = listSetupArchetypesForRole(role);
   const defaultArchetype = defaultSetupArchetype(role);
+  page(progress, sectionTitle, importSummary);
   const archetypeId = await askSelect(
     `${role} archetype`,
     archetypes.map((archetype) => archetype.id),
@@ -226,6 +279,7 @@ async function promptWorkerPlan(
     archetypes.find((candidate) => candidate.id === archetypeId) ?? defaultArchetype;
 
   if (backend === "hermes") {
+    page(progress, sectionTitle, importSummary);
     const baseUrl = await askText(
       "Hermes base URL",
       defaults.baseUrl ?? "http://127.0.0.1:8000/v1",
@@ -234,32 +288,51 @@ async function promptWorkerPlan(
   }
 
   if (backend === "openclaw") {
+    page(progress, sectionTitle, importSummary);
     const agentId = await askText("OpenClaw agent id", defaults.agentId ?? "main");
     args.push("--agent-id", agentId);
+    page(progress, sectionTitle, importSummary);
     const gatewayUrl = await askText("Gateway URL", defaults.baseUrl ?? "");
     if (gatewayUrl.length > 0) {
       args.push("--gateway-url", gatewayUrl);
     }
   }
 
-  args.push(...(await promptRuntimeArgs()));
-  return {
+  args.push(...(await promptRuntimeArgs(progress, importSummary)));
+
+  const plan: SetupWizardWorkerPlan = {
     archetypeLabel: archetype.label,
     args,
     backend,
     update: archetype.update,
   };
+  // Mutate the shared progress so subsequent pages show this worker in the breadcrumb.
+  progress.workers.push({
+    archetype: archetype.label,
+    name,
+    profile,
+    role,
+  });
+  return plan;
 }
 
-async function promptTelegramSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizardSinkPlan> {
+async function promptTelegramSinkPlan(
+  defaults: SetupWizardDefaults,
+  progress: WizardProgress,
+): Promise<SetupWizardSinkPlan> {
+  const importSummary = defaults.importSummary;
   const detectedToken = defaults.sinkDefaults?.openClawTelegramBotToken;
   const detectedChatId = defaults.sinkDefaults?.openClawTelegramChatId;
+
+  page(progress, "Telegram sink", importSummary);
   const chatId = await askText("Telegram chat id", detectedChatId ?? "");
+
+  page(progress, "Telegram sink", importSummary);
   const authModes = detectedToken
     ? (["openclaw-import", "env", "secret-store"] as const)
     : (["env", "secret-store"] as const);
   const authMode = await askSelect(
-    detectedToken ? "Telegram bot token source" : "Telegram bot token source",
+    "Telegram bot token source",
     authModes,
     detectedToken ? "openclaw-import" : "env",
     detectedToken
@@ -273,6 +346,8 @@ async function promptTelegramSinkPlan(defaults: SetupWizardDefaults): Promise<Se
           "secret-store": "Reference a quest secret store entry",
         },
   );
+
+  page(progress, "Telegram sink", importSummary);
   const useRpgCards = await askConfirm(
     "Render events as RPG flavor cards (HTML parse mode)?",
     true,
@@ -297,6 +372,7 @@ async function promptTelegramSinkPlan(defaults: SetupWizardDefaults): Promise<Se
   }
 
   if (authMode === "secret-store") {
+    page(progress, "Telegram sink", importSummary);
     const secretRef = await askText("Telegram bot token secret ref", "telegram.bot-token");
     return {
       args: ["--chat-id", chatId, "--bot-token-secret-ref", secretRef, ...parseModeArgs],
@@ -304,6 +380,7 @@ async function promptTelegramSinkPlan(defaults: SetupWizardDefaults): Promise<Se
     };
   }
 
+  page(progress, "Telegram sink", importSummary);
   const botTokenEnv = await askText(
     "Telegram bot token env",
     defaults.sinkDefaults?.telegramBotTokenEnv ?? "TELEGRAM_BOT_TOKEN",
@@ -314,7 +391,12 @@ async function promptTelegramSinkPlan(defaults: SetupWizardDefaults): Promise<Se
   };
 }
 
-async function promptSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizardSinkPlan> {
+async function promptSinkPlan(
+  defaults: SetupWizardDefaults,
+  progress: WizardProgress,
+): Promise<SetupWizardSinkPlan> {
+  const importSummary = defaults.importSummary;
+  page(progress, "Observability", importSummary);
   const sinkKind = await askSelect(
     "Observability sink",
     ["none", "webhook", "telegram", "slack", "linear", "openclaw"] as const,
@@ -329,25 +411,32 @@ async function promptSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizar
     },
   );
   if (sinkKind === "none") {
+    progress.sink = "none";
     return null;
   }
+  // Record the sink kind so subsequent sub-pages (auth modes, URLs, etc.) include it in the
+  // breadcrumb.
+  progress.sink = sinkKind;
 
   if (sinkKind === "webhook") {
+    page(progress, "Webhook sink", importSummary);
     const url = await askText("Webhook URL", "http://127.0.0.1:3000/quest");
     return { args: ["--url", url], kind: "webhook" };
   }
 
   if (sinkKind === "telegram") {
-    return await promptTelegramSinkPlan(defaults);
+    return await promptTelegramSinkPlan(defaults, progress);
   }
 
   if (sinkKind === "slack") {
+    page(progress, "Slack sink", importSummary);
     const authMode = await askSelect(
       "Slack webhook source",
       ["direct", "env", "secret-store"] as const,
       "direct",
     );
     if (authMode === "env") {
+      page(progress, "Slack sink", importSummary);
       const urlEnv = await askText(
         "Slack webhook env",
         defaults.sinkDefaults?.slackWebhookEnv ?? "SLACK_WEBHOOK_URL",
@@ -355,20 +444,25 @@ async function promptSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizar
       return { args: ["--url-env", urlEnv], kind: "slack" };
     }
     if (authMode === "secret-store") {
+      page(progress, "Slack sink", importSummary);
       const secretRef = await askText("Slack webhook secret ref", "slack.webhook");
       return { args: ["--secret-ref", secretRef], kind: "slack" };
     }
 
+    page(progress, "Slack sink", importSummary);
     const webhookUrl = await askText("Slack webhook URL", "");
     return { args: ["--url", webhookUrl], kind: "slack" };
   }
 
   if (sinkKind === "openclaw") {
+    page(progress, "OpenClaw sink", importSummary);
     const agentId = await askText(
       "OpenClaw sink agent id",
       defaults.sinkDefaults?.openClawAgentId ?? "main",
     );
+    page(progress, "OpenClaw sink", importSummary);
     const sessionId = await askText("OpenClaw sink session id", "quest-observability");
+    page(progress, "OpenClaw sink", importSummary);
     const gatewayUrl = await askText(
       "OpenClaw sink gateway URL",
       defaults.sinkDefaults?.openClawGatewayUrl ?? "",
@@ -380,35 +474,26 @@ async function promptSinkPlan(defaults: SetupWizardDefaults): Promise<SetupWizar
     return { args, kind: "openclaw" };
   }
 
+  page(progress, "Linear sink", importSummary);
   const issueId = await askText("Linear issue id", "");
+  page(progress, "Linear sink", importSummary);
   const authMode = await askSelect(
     "Linear API key source",
     ["env", "secret-store"] as const,
     "env",
   );
   if (authMode === "secret-store") {
+    page(progress, "Linear sink", importSummary);
     const secretRef = await askText("Linear API key secret ref", "linear.api-key");
     return { args: ["--issue-id", issueId, "--api-key-secret-ref", secretRef], kind: "linear" };
   }
 
+  page(progress, "Linear sink", importSummary);
   const apiKeyEnv = await askText(
     "Linear API key env",
     defaults.sinkDefaults?.linearApiKeyEnv ?? "LINEAR_API_KEY",
   );
   return { args: ["--issue-id", issueId, "--api-key-env", apiKeyEnv], kind: "linear" };
-}
-
-async function promptTesterSelectionStrategy(
-  fallback: TesterSelectionStrategy,
-): Promise<TesterSelectionStrategy> {
-  note(
-    "Choose whether the planner values the strongest tester overall or the cheapest eligible tester.",
-    "Trials",
-  );
-  return await askSelect("Tester routing", ["balanced", "prefer-cheapest"] as const, fallback, {
-    balanced: "Picks the highest-ranked eligible tester",
-    "prefer-cheapest": "Biases toward the lowest cpu/memory/gpu cost",
-  });
 }
 
 function deriveCalibrationIds(workerPlans: SetupWizardWorkerPlan[]): string[] {
@@ -454,16 +539,11 @@ function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardR
 export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
-  // Stamp the QUEST wordmark above the clack pipeline so `quest setup` opens with the same
-  // banner as `quest help`. We call the banner with forceInteractive=true because the wizard
-  // itself is always interactive (clack wouldn't have been invoked otherwise), and the ambient
-  // isTTY check is unreliable under compiled binaries + ttyd emulation.
-  process.stdout.write(renderQuestBannerBlock(72, true));
-  intro("Setup");
-  if (context.defaults.importSummary) {
-    note(context.defaults.importSummary, "Imported defaults");
-  }
+  const importSummary = context.defaults.importSummary;
+  const progress: WizardProgress = { workers: [] };
 
+  // Backend page
+  page(progress, "Backend", importSummary);
   const backend = await askSelect(
     "Backend",
     ["codex", "hermes", "openclaw"] as const,
@@ -474,30 +554,48 @@ export async function runSetupWizard(
       openclaw: "OpenClaw gateway agent",
     },
   );
+  progress.backend = backend;
+
+  // Party mode page
+  page(progress, "Party mode", importSummary);
   const partyMode = (await askSelect("Party mode", ["hybrid", "split"] as const, "hybrid", {
     hybrid: "One worker handles encounters and trials",
     split: "Dedicated builder + dedicated tester",
   })) as SetupWizardPartyMode;
-  const testerSelectionStrategy = await promptTesterSelectionStrategy(
-    context.defaults.testerSelectionStrategy,
-  );
+  progress.partyMode = partyMode;
 
+  // Tester routing page
+  page(progress, "Trials", importSummary);
+  const testerSelectionStrategy = await askSelect(
+    "Tester routing",
+    ["balanced", "prefer-cheapest"] as const,
+    context.defaults.testerSelectionStrategy,
+    {
+      balanced: "Picks the highest-ranked eligible tester",
+      "prefer-cheapest": "Biases toward the lowest cpu/memory/gpu cost",
+    },
+  );
+  progress.testerRouting = testerSelectionStrategy;
+
+  // Worker pages (one or two depending on party mode). `promptWorkerPlan` owns its own paging.
   const workerPlans: SetupWizardWorkerPlan[] = [];
   if (partyMode === "hybrid") {
-    workerPlans.push(await promptWorkerPlan(backend, "hybrid", context.defaults));
+    workerPlans.push(await promptWorkerPlan(backend, "hybrid", context.defaults, progress));
   } else {
-    workerPlans.push(await promptWorkerPlan(backend, "builder", context.defaults));
-    workerPlans.push(await promptWorkerPlan(backend, "tester", context.defaults));
+    workerPlans.push(await promptWorkerPlan(backend, "builder", context.defaults, progress));
+    workerPlans.push(await promptWorkerPlan(backend, "tester", context.defaults, progress));
   }
 
-  note("Choose where quest events should be delivered.", "Observability");
-  const sinkPlan = await promptSinkPlan(context.defaults);
+  const sinkPlan = await promptSinkPlan(context.defaults, progress);
 
-  note("Decide whether to calibrate the new party now.", "Training Grounds");
+  // Training Grounds page
+  page(progress, "Training Grounds", importSummary);
   const runCalibration = await askConfirm(
     "Send new party members to the Training Grounds now?",
     true,
   );
+  progress.trainingGrounds = runCalibration ? "yes" : "no";
+
   const result: SetupWizardResult = {
     calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
     settingsUpdate: {
@@ -508,6 +606,11 @@ export async function runSetupWizard(
     sinkPlan,
     workerPlans,
   };
+
+  // Final summary page — one last clear, banner on top, summary note, outro.
+  process.stdout.write("\u001B[2J\u001B[H");
+  process.stdout.write(renderQuestBannerBlock(72, true));
+  intro("Setup complete");
   note(renderSummaryNote(partyMode, result), "Setup Summary");
   outro("Party ready. Run `quest party dispatch` when you're good to go.");
   return result;
