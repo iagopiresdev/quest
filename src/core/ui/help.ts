@@ -228,17 +228,20 @@ function colorizeInvocation(invocation: string): string {
     .join("");
 }
 
-// ANSI Shadow style wordmark with a vertical gradient. The sword-blade palette runs amber at the
-// top (hot tempered steel) through crimson (cooling blade) to deep violet (shadow at the grip),
-// echoing the RPG flavor without stealing attention from the categorized help that follows.
-// Pipes and non-TTY callers fall through to a plain one-liner so scripts never see the art.
+// Colossal figlet wordmark with a vertical gradient. Chunky 8-row block letters that read big
+// and clean in any monospace terminal; the RPG flavor comes from the gradient and tagline rather
+// than an ornate font. Sword-blade palette: amber top (hot tempered steel) through crimson
+// (cooling blade) to deep violet (shadow at the grip). Pipes and non-TTY callers still fall
+// through to the plain one-liner.
 const LOGO_ROWS = [
-  " ██████╗  ██╗   ██╗███████╗███████╗████████╗",
-  "██╔═══██╗ ██║   ██║██╔════╝██╔════╝╚══██╔══╝",
-  "██║   ██║ ██║   ██║█████╗  ███████╗   ██║   ",
-  "██║▄▄ ██║ ██║   ██║██╔══╝  ╚════██║   ██║   ",
-  "╚██████╔╝ ╚██████╔╝███████╗███████║   ██║   ",
-  " ╚══▀▀═╝   ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ",
+  ".d88888b. 888     8888888888888 .d8888b.88888888888 ",
+  'd88P" "Y88b888     888888       d88P  Y88b   888     ',
+  "888     888888     888888       Y88b.        888     ",
+  '888     888888     8888888888    "Y888b.     888     ',
+  '888     888888     888888           "Y88b.   888     ',
+  '888 Y8b 888888     888888             "888   888     ',
+  "Y88b.Y8b88PY88b. .d88P888       Y88b  d88P   888     ",
+  '  "Y888888"  "Y88888P" 8888888888 "Y8888P"    888     ',
 ];
 
 const GRADIENT_TOP: RgbColor = [245, 158, 66]; // amber / hot blade
@@ -271,11 +274,11 @@ export function renderCategorizedHelp(): string {
     );
     const logoRows = renderLogoBlock();
     for (let i = 0; i < logoRows.length; i += 1) {
-      if (i === 2) {
-        // Align the tagline against the tallest row of the logo block so the eye catches both
-        // at once. `   • ` gives enough padding for the terminal to breathe.
+      // Anchor the tagline to the middle rows of the 8-row colossal block so the eye lands on
+      // both the logo and the tagline at the same vertical center.
+      if (i === 3) {
         lines.push(`${logoRows[i]}   ${colorize("•", "yellow")} ${colorize(TAGLINE, "dim")}`);
-      } else if (i === 3) {
+      } else if (i === 4) {
         lines.push(
           `${logoRows[i]}   ${colorize("•", "yellow")} ${colorize("party-based · observable · idempotent", "dim")}`,
         );
