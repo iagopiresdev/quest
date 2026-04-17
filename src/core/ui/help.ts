@@ -308,5 +308,5 @@ export function renderCategorizedHelp(): string {
   for (const line of FOOTER_LINES) {
     lines.push(colorize(line, "dim"));
   }
-  return lines.join("\n") + "\n";
+  return `${lines.join("\n")}\n`;
 }
