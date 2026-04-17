@@ -12,7 +12,9 @@ const ansi = {
 export type TerminalColor = keyof typeof ansi;
 
 export function isInteractiveOutput(): boolean {
-  return process.stdout.isTTY === true;
+  // QUEST_RUNNER_FORCE_INTERACTIVE lets operators (and screenshot scripts) render colors + logo
+  // through pipes. Production callers still see the automatic TTY detection.
+  return Bun.env.QUEST_RUNNER_FORCE_INTERACTIVE === "1" || process.stdout.isTTY === true;
 }
 
 export function colorize(text: string, color: TerminalColor): string {

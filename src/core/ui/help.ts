@@ -222,14 +222,37 @@ function colorizeInvocation(invocation: string): string {
     .join("");
 }
 
+// ANSI Shadow style wordmark. Rendered in magenta with the sword accent in yellow so the banner
+// reads as a logo without overwhelming the categorized help. Pipes get the plain one-liner
+// instead so downstream tools never see box-drawing characters.
+const LOGO = [
+  " ██████╗  ██╗   ██╗███████╗███████╗████████╗",
+  "██╔═══██╗ ██║   ██║██╔════╝██╔════╝╚══██╔══╝",
+  "██║   ██║ ██║   ██║█████╗  ███████╗   ██║   ",
+  "██║▄▄ ██║ ██║   ██║██╔══╝  ╚════██║   ██║   ",
+  "╚██████╔╝ ╚██████╔╝███████╗███████║   ██║   ",
+  " ╚══▀▀═╝   ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ",
+];
+
 export function renderCategorizedHelp(): string {
   const width = 72;
-  const lines: string[] = [
-    colorize("quest", "bold") +
-      "  " +
-      colorize("orchestrate coding agents into planned runs", "dim"),
-    "",
-  ];
+  const lines: string[] = [];
+  if (isInteractiveOutput()) {
+    for (const row of LOGO) {
+      lines.push(colorize(row, "magenta"));
+    }
+    lines.push(
+      `${colorize("⚔⚔⚔", "yellow")}  ${colorize(
+        "orchestrate coding agents into planned runs",
+        "dim",
+      )}\n`,
+    );
+  } else {
+    lines.push(
+      `${colorize("quest", "bold")}  ${colorize("orchestrate coding agents into planned runs", "dim")}`,
+      "",
+    );
+  }
 
   for (const section of HELP_SECTIONS) {
     lines.push(sectionHeader(section.title, width));
