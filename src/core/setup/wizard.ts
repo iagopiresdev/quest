@@ -139,7 +139,7 @@ function renderBreadcrumb(progress: WizardProgress, importSummary?: string): str
     const workerRows = progress.workers.map((worker) =>
       row(true, worker.role, `${worker.name} (${worker.profile}) · ${worker.archetype}`),
     );
-    sections.push({ rows: workerRows, title: "Workers" });
+    sections.push({ rows: workerRows, title: "Roster" });
   }
 
   sections.push({
@@ -214,6 +214,18 @@ function defaultProfile(backend: SetupWizardBackend): string {
   return "gpt-5.4";
 }
 
+// Map internal role to its operator-facing class label. Per docs/design-system.mdx the internal
+// model stays plain (worker/builder/tester) but presentation always uses the RPG aliases.
+function renderRoleClass(role: "builder" | "tester" | "hybrid"): string {
+  if (role === "builder") {
+    return "Battle Engineer";
+  }
+  if (role === "tester") {
+    return "Trial Judge";
+  }
+  return "Adventurer";
+}
+
 function defaultWorkerName(
   backend: SetupWizardBackend,
   role: "builder" | "tester" | "hybrid",
@@ -224,21 +236,17 @@ function defaultWorkerName(
   } else if (backend === "openclaw") {
     title = "OpenClaw";
   }
-  if (role === "builder") {
-    return `${title} Builder`;
-  }
-  if (role === "tester") {
-    return `${title} Tester`;
-  }
-  return `${title} Adventurer`;
+  return `${title} ${renderRoleClass(role)}`;
 }
 
 function renderRoleStationTitle(role: "builder" | "tester" | "hybrid"): string {
   if (role === "hybrid") {
     return "Party Selection";
   }
-
-  return `${role.slice(0, 1).toUpperCase()}${role.slice(1)} Station`;
+  if (role === "builder") {
+    return "Battle Engineer Station";
+  }
+  return "Trial Judge Station";
 }
 
 async function promptRuntimeArgs(
@@ -292,18 +300,22 @@ async function promptWorkerPlan(
 ): Promise<SetupWizardWorkerPlan> {
   const importSummary = defaults.importSummary;
   const sectionTitle = renderRoleStationTitle(role);
+  const roleClass = renderRoleClass(role);
   page(progress, sectionTitle, importSummary);
 
-  const name = await askText(`${role} name`, defaultWorkerName(backend, role));
+  const name = await askText(`${roleClass} name`, defaultWorkerName(backend, role));
   page(progress, sectionTitle, importSummary);
-  const profile = await askText(`${role} profile`, defaults.profile ?? defaultProfile(backend));
+  const profile = await askText(
+    `${roleClass} profile`,
+    defaults.profile ?? defaultProfile(backend),
+  );
   const args = ["--name", name, "--profile", profile, "--role", role];
 
   const archetypes = listSetupArchetypesForRole(role);
   const defaultArchetype = defaultSetupArchetype(role);
   page(progress, sectionTitle, importSummary);
   const archetypeId = await askSelect(
-    `${role} archetype`,
+    `${roleClass} archetype`,
     archetypes.map((archetype) => archetype.id),
     defaultArchetype.id,
   );
@@ -338,12 +350,14 @@ async function promptWorkerPlan(
     backend,
     update: archetype.update,
   };
-  // Mutate the shared progress so subsequent pages show this worker in the breadcrumb.
+  // Mutate the shared progress so subsequent pages show this party member in the breadcrumb.
+  // Store the presentation class (Battle Engineer / Trial Judge / Adventurer) instead of the
+  // raw role enum so the operator-facing rows read in lore.
   progress.workers.push({
     archetype: archetype.label,
     name,
     profile,
-    role,
+    role: roleClass,
   });
   return plan;
 }
@@ -551,15 +565,16 @@ function readPlanArg(plan: SetupWizardWorkerPlan, flag: string): string | null {
 function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardResult): string {
   const workerLines = result.workerPlans.map((plan) => {
     const role = readPlanArg(plan, "--role") ?? "hybrid";
-    const name = readPlanArg(plan, "--name") ?? "Unnamed worker";
+    const roleClass = renderRoleClass(role as "builder" | "tester" | "hybrid");
+    const name = readPlanArg(plan, "--name") ?? "Unnamed party member";
     const profile = readPlanArg(plan, "--profile") ?? "default";
-    return `• ${name} (${role}) · ${plan.backend}:${profile} · ${plan.archetypeLabel}`;
+    return `• ${name} (${roleClass}) · ${plan.backend}:${profile} · ${plan.archetypeLabel}`;
   });
   const calibration =
     result.calibrateWorkerIds.length > 0 ? result.calibrateWorkerIds.join(", ") : "skipped";
   const lines = [
     `Party mode: ${partyMode}`,
-    `Workers (${result.workerPlans.length}):`,
+    `Roster (${result.workerPlans.length}):`,
     ...workerLines,
     `Trial routing: ${result.settingsUpdate.planner.testerSelectionStrategy}`,
     `Sink: ${result.sinkPlan?.kind ?? "none"}`,
