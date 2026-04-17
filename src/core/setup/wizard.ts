@@ -131,7 +131,7 @@ function renderBreadcrumb(progress: WizardProgress, importSummary?: string): str
   coreRows.push(row(progress.backend !== undefined, "Backend", progress.backend ?? ""));
   coreRows.push(row(progress.partyMode !== undefined, "Party mode", progress.partyMode ?? ""));
   coreRows.push(
-    row(progress.testerRouting !== undefined, "Tester routing", progress.testerRouting ?? ""),
+    row(progress.testerRouting !== undefined, "Trial routing", progress.testerRouting ?? ""),
   );
   sections.push({ rows: coreRows, title: "Core" });
 
@@ -561,7 +561,7 @@ function renderSummaryNote(partyMode: SetupWizardPartyMode, result: SetupWizardR
     `Party mode: ${partyMode}`,
     `Workers (${result.workerPlans.length}):`,
     ...workerLines,
-    `Tester routing: ${result.settingsUpdate.planner.testerSelectionStrategy}`,
+    `Trial routing: ${result.settingsUpdate.planner.testerSelectionStrategy}`,
     `Sink: ${result.sinkPlan?.kind ?? "none"}`,
     `Training Grounds: ${calibration}`,
   ];
@@ -591,20 +591,20 @@ export async function runSetupWizard(
   // Party mode page
   page(progress, "Party mode", importSummary);
   const partyMode = (await askSelect("Party mode", ["hybrid", "split"] as const, "hybrid", {
-    hybrid: "One worker handles encounters and trials",
-    split: "Dedicated builder + dedicated tester",
+    hybrid: "One adventurer runs encounters and trials",
+    split: "Battle Engineer for encounters + Trial Judge for trials",
   })) as SetupWizardPartyMode;
   progress.partyMode = partyMode;
 
-  // Tester routing page
+  // Trial routing page (which tester picks the trial — terminology aligned with archetype lore)
   page(progress, "Trials", importSummary);
   const testerSelectionStrategy = await askSelect(
-    "Tester routing",
+    "Trial routing",
     ["balanced", "prefer-cheapest"] as const,
     context.defaults.testerSelectionStrategy,
     {
-      balanced: "Picks the highest-ranked eligible tester",
-      "prefer-cheapest": "Biases toward the lowest cpu/memory/gpu cost",
+      balanced: "Send each trial to the strongest eligible judge",
+      "prefer-cheapest": "Send each trial to the cheapest eligible judge",
     },
   );
   progress.testerRouting = testerSelectionStrategy;
