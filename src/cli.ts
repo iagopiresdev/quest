@@ -581,6 +581,31 @@ function parseObservableEventType(value: string | undefined): ObservableEventTyp
   return value ? observableEventTypeSchema.parse(value) : undefined;
 }
 
+// Parse `--state-dispatched`, `--state-landed`, `--state-failed` into a LinearStateMap. Absent
+// flags stay undefined (default behavior); explicit `none` strings opt out of transitions for
+// that event type (stored as null).
+function parseLinearStateMapFlags(
+  args: string[],
+): { dispatched?: string | null; failed?: string | null; landed?: string | null } | undefined {
+  const dispatched = findOptionValue(args, "--state-dispatched");
+  const landed = findOptionValue(args, "--state-landed");
+  const failed = findOptionValue(args, "--state-failed");
+  if (dispatched === undefined && landed === undefined && failed === undefined) {
+    return undefined;
+  }
+  const map: { dispatched?: string | null; failed?: string | null; landed?: string | null } = {};
+  if (dispatched !== undefined) {
+    map.dispatched = dispatched === "none" ? null : dispatched;
+  }
+  if (landed !== undefined) {
+    map.landed = landed === "none" ? null : landed;
+  }
+  if (failed !== undefined) {
+    map.failed = failed === "none" ? null : failed;
+  }
+  return map;
+}
+
 function parseDeliveryStatus(value: string | undefined): DeliveryStatus | undefined {
   return value ? deliveryStatusSchema.parse(value) : undefined;
 }
@@ -3631,6 +3656,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
         eventTypes: parseObservableEventTypes(findOptionValue(args, "--events")),
         id: findOptionValue(args, "--id") ?? "default-linear",
         issueId: requireOptionValue(args, "--issue-id", "--issue-id <id>"),
+        stateMap: parseLinearStateMapFlags(args),
         titlePrefix: findOptionValue(args, "--title-prefix") ?? undefined,
         type: "linear",
         useRpgCards: hasFlag(args, "--rpg-cards") ? true : undefined,
@@ -3638,7 +3664,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { sink: await observabilityStore.upsertLinearSink(sink) };
     },
     usage:
-      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--rpg-cards] [--disabled] [--observability-config <path>] [--state-root <path>]",
+      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--rpg-cards] [--state-dispatched <name>] [--state-landed <name>] [--state-failed <name>] [--disabled] [--observability-config <path>] [--state-root <path>]",
   },
   {
     id: "observability:openclaw:upsert",

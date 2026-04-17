@@ -56,6 +56,9 @@ export const observableDaemonEventSchema = z
     // Party-admin and global-state events (party_created/resting/resumed, budget_exhausted) are not
     // tied to a specific spec file; nullable keeps the schema honest instead of coercing "".
     specFile: nonEmptyString(240).nullable(),
+    // Optional external tracker issue id (e.g. Linear TEAM-123), populated by the daemon when a
+    // spec carries a `tracker.linear.issueId` block. Null for admin events and tracker-less specs.
+    trackerIssueId: nonEmptyString(120).nullable().default(null),
   })
   .strict();
 export type ObservableDaemonEvent = z.infer<typeof observableDaemonEventSchema>;
@@ -119,8 +122,11 @@ export function createObservableDaemonEvent(input: {
   reason?: string | undefined;
   runId?: string | undefined;
   specFile?: string | null | undefined;
+  trackerIssueId?: string | null | undefined;
 }): ObservableDaemonEvent {
   const specFile = input.specFile && input.specFile.length > 0 ? input.specFile : null;
+  const trackerIssueId =
+    input.trackerIssueId && input.trackerIssueId.length > 0 ? input.trackerIssueId : null;
   return {
     error: input.error ?? null,
     eventId: `daemon:${input.eventType}:${input.partyName}:${specFile ?? "-"}:${input.at}`,
@@ -131,5 +137,6 @@ export function createObservableDaemonEvent(input: {
     reason: input.reason ?? null,
     runId: input.runId ?? null,
     specFile,
+    trackerIssueId,
   };
 }

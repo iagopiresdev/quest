@@ -127,6 +127,9 @@ function formatDaemonCard(event: ObservableDaemonEvent): string {
   if (event.runId) {
     facts.push(`- **Run:** ${inlineCode(event.runId)}`);
   }
+  if (event.trackerIssueId) {
+    facts.push(`- **Tracker:** ${inlineCode(event.trackerIssueId)}`);
+  }
   if (event.reason) {
     facts.push(`- **Reason:** ${event.reason}`);
   }

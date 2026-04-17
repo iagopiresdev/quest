@@ -51,6 +51,7 @@ function recordDaemonEvent(
     reason?: string | undefined;
     runId?: string | undefined;
     specFile?: string | null | undefined;
+    trackerIssueId?: string | null | undefined;
   },
 ): void {
   events.push(
@@ -62,6 +63,7 @@ function recordDaemonEvent(
       reason: input.reason,
       runId: input.runId,
       specFile: input.specFile,
+      trackerIssueId: input.trackerIssueId,
     }),
   );
 }
@@ -465,11 +467,16 @@ async function processCandidateSpec(
 
   await moveSpecFile(candidate.inboxPath, runningPath);
   await writeSpecInput(runningPath, runningDocument);
+  // `tracker.linear.issueId` is the opt-in per-spec hook for external issue trackers. When
+  // present, every daemon event for this spec carries the issue id so sinks can update the
+  // issue state (e.g. move the Linear card) alongside posting observability comments.
+  const trackerIssueId = candidate.document.tracker?.linear?.issueId ?? null;
   recordDaemonEvent(events, {
     eventType: "daemon_dispatched",
     now: readNow(deps),
     partyName: party.name,
     specFile: candidate.fileName,
+    trackerIssueId,
   });
 
   try {
@@ -492,6 +499,7 @@ async function processCandidateSpec(
       partyName: party.name,
       runId,
       specFile: candidate.fileName,
+      trackerIssueId,
     });
     return {
       party: party.name,
@@ -511,6 +519,7 @@ async function processCandidateSpec(
       partyName: party.name,
       runId,
       specFile: candidate.fileName,
+      trackerIssueId,
     });
     return {
       error: message.slice(0, 2_000),

@@ -60,6 +60,23 @@ export const questSliceSchema = z
 
 export type QuestSliceSpec = z.infer<typeof questSliceSchema>;
 
+// Specs can opt in to external tracker integrations. v1 ships the `linear`
+// block only; other trackers (jira, github-issues) would slot in as sibling
+// keys. The daemon ingests this block when parsing the spec and threads the
+// issue id onto the ObservableDaemonEvent so sinks can act on it without
+// having to re-read the spec file.
+export const questTrackerSchema = z
+  .object({
+    linear: z
+      .object({
+        issueId: nonEmptyString(120),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type QuestTrackerSpec = z.infer<typeof questTrackerSchema>;
+
 export const questSpecSchema = z
   .object({
     acceptanceChecks: z.array(questCommandSchema).max(24).default([]),
@@ -75,6 +92,7 @@ export const questSpecSchema = z
     slices: z.array(questSliceSchema).min(1).max(64),
     summary: nonEmptyString(400).optional(),
     title: nonEmptyString(160),
+    tracker: questTrackerSchema.optional(),
     version: z.literal(1),
     workspace: nonEmptyString(160),
   })

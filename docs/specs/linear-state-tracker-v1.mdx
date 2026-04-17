@@ -1,0 +1,172 @@
+---
+title: Linear State Tracker v1
+description: Move Linear issues through workflow states (Todo → In Progress → Done) as Quest daemon lifecycle events fire, not just comment on a single observability issue.
+---
+
+# Linear State Tracker v1
+
+## Context
+
+Before this spec, the Linear sink was comment-only. Every observability event for every spec posted one new comment on a single pinned Linear issue configured via `--issue-id`. Useful as a chat-log-in-Linear, useless as a project tracker.
+
+Symphony (OpenClaw's Elixir orchestrator) treats each Linear issue as a work item and moves it through workflow states as the runtime makes progress. Quest Runner now does the same, on top of the existing comment stream. The comment path is unchanged (operators who only want observability comments get them); the state-transition path is a per-spec opt-in.
+
+## Problem
+
+- A Quest-Linear operator wants their team's Linear board to reflect Quest work status automatically: a "deploy-api" issue moves to *In Progress* when the daemon dispatches its spec, to *Done* when it lands, back to *Todo* if it fails.
+- The prior sink had no way to know *which* issue corresponds to *which* spec. One sink → one issue → all events.
+- Without per-spec issue mapping, `issueUpdate` would move the observability issue itself every time, which is wrong.
+
+## Goal
+
+1. Let specs declare an opt-in `tracker.linear.issueId` block.
+2. Thread that id through `ObservableDaemonEvent.trackerIssueId` so sinks can act on it.
+3. Teach the Linear sink to issue `stateLookup` + `issueUpdate` GraphQL mutations on `daemon_dispatched` / `daemon_landed` / `daemon_failed`, alongside the existing `commentCreate`.
+4. Per-sink `stateMap` config to override the default *In Progress* / *Done* / *Todo* names when teams use different workflow vocabularies.
+5. Comment-only behavior stays the default for specs without a tracker block.
+
+## Non-Goals
+
+- No per-slice state transitions. Only whole-spec lifecycle.
+- No issue creation per run. Quest does not spawn new Linear issues.
+- No label / assignee / priority updates.
+- No Jira / GitHub-Issues tracker in v1. The `tracker` block is structured so they can slot in later.
+- No bidirectional sync (Quest does not read state back from Linear).
+
+## Domain Impact
+
+### Spec schema — new `tracker` block
+
+`src/core/planning/spec-schema.ts`:
+
+```ts
+export const questTrackerSchema = z
+  .object({
+    linear: z
+      .object({
+        issueId: nonEmptyString(120),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+// questSpecSchema gets:
+tracker: questTrackerSchema.optional();
+```
+
+Strict mode means unknown keys (e.g. `tracker.jira`) reject — we can add them later without a breaking change because the top-level field is already optional.
+
+### Observability event — new `trackerIssueId` field
+
+`src/core/observability/observable-events.ts`:
+
+```ts
+// ObservableDaemonEvent:
+trackerIssueId: nonEmptyString(120).nullable().default(null);
+```
+
+`createObservableDaemonEvent({ ..., trackerIssueId })` coerces empty strings to null so legacy callers keep working unchanged.
+
+### Daemon tick — thread it through
+
+`src/core/daemon/tick.ts` extracts `candidate.document.tracker?.linear?.issueId ?? null` once per spec and passes it to the three lifecycle event emissions (`daemon_dispatched`, `daemon_landed`, `daemon_failed`).
+
+Party-admin and budget events (`daemon_party_created` / `resting` / `resumed` / `daemon_budget_exhausted`) do NOT carry a tracker id — they're not per-spec transitions.
+
+### Linear sink — new state-transition path
+
+`src/core/observability/sinks/linear-sink.ts`:
+
+- New schema fields:
+  - `stateMap?: { dispatched?: string | null; landed?: string | null; failed?: string | null }`
+- On delivery:
+  1. Post the comment (existing behavior, unchanged).
+  2. If the event carries a `trackerIssueId` AND its eventType is one of the three lifecycle types AND the resolved `stateMap` entry is non-null: run `stateLookup(issueId, stateName)` → `issueUpdate(issueId, stateId)`.
+  3. State lookup failure or issue-update failure returns a `failed` delivery with `"tracker state transition: <reason>"` so the delivery queue can retry.
+- Default state names: `dispatched=In Progress`, `landed=Done`, `failed=Todo`. Matches Symphony and Linear's shipped defaults.
+- `null` entries in `stateMap` opt out: `stateMap: { failed: null }` leaves the issue alone on failure but still moves it on dispatch/landing.
+
+### CLI — new flags
+
+```
+--state-dispatched <name>  # default "In Progress", pass "none" to opt out
+--state-landed <name>      # default "Done"
+--state-failed <name>      # default "Todo"
+```
+
+## User Or Operator Workflow
+
+Pin a spec to a Linear issue:
+
+```yaml
+version: 1
+title: Ship checkout flow
+workspace: checkout
+tracker:
+  linear:
+    issueId: ENG-142
+slices:
+  - id: build
+    title: Build checkout
+    ...
+```
+
+Configure the sink once:
+
+```sh
+quest observability linear upsert \
+  --id project-tracker \
+  --issue-id ENG-OBSERVABILITY \
+  --api-key-secret-ref quest-linear-token \
+  --events daemon_dispatched,daemon_landed,daemon_failed \
+  --state-landed "Ready for Review" \
+  --state-failed "Blocked"
+```
+
+When the daemon dispatches that spec:
+1. `commentCreate` on `ENG-OBSERVABILITY` (unchanged).
+2. `stateLookup` on `ENG-142` resolving "In Progress" → state id.
+3. `issueUpdate` on `ENG-142` with that state id.
+
+## Data And State Changes
+
+- `ObservableDaemonEvent` gains `trackerIssueId: nullable`. Existing stored delivery records are backward compatible (new field defaults to null).
+- `LinearSink` gains `stateMap: optional`. Existing sinks without it keep behaving exactly as before (comment-only; no state transitions because default behavior requires a `trackerIssueId` on the event).
+- No migration required.
+
+## Command Surface
+
+No new top-level commands. Three new flags on `observability linear upsert` (listed above).
+
+## Observability
+
+The sink itself is the observability surface; the spec ships tests that hit a mock Linear GraphQL server asserting:
+- Default state map resolves the right state name per event type.
+- `stateMap` overrides win over defaults.
+- `null` entries in `stateMap` opt out cleanly.
+- Events without `trackerIssueId` skip transitions entirely.
+- Party-admin events never trigger transitions even if a tracker id somehow leaked through.
+- State lookup returning no nodes fails the delivery with a specific `state_not_found:<name>` error.
+
+## Acceptance Checks
+
+- `bun test test/linear-state-tracker.test.ts` — 13 tests covering spec schema, event plumbing, and sink dispatch paths.
+- `bun test test/linear-card-builder.test.ts` — the card now exposes a `Tracker:` bullet when the event carries a tracker id.
+- Full suite + lint + typecheck green (253 tests / 1081 expects).
+
+## Rollout / Migration
+
+Zero-config for existing installs. Specs without `tracker.linear` stay comment-only. Existing Linear sinks without `stateMap` use default transitions only when a tracker id appears in an event — which requires the spec opt-in, which requires the operator to deliberately add it. No silent behavior changes.
+
+## Rollback / Recovery
+
+Remove the `tracker` block from the spec to stop moving the Linear issue. No code flip needed.
+
+If the Linear workflow has a state named differently than the defaults (common — e.g. "To Do" vs "Todo"), configure `--state-failed "To Do"` etc. State lookup is name-exact via the Linear GraphQL `filter: { name: { eq } }` predicate.
+
+## Related Docs
+
+- [Observability Cards v1](/docs/specs/observability-cards-v1) — RPG markdown cards the Linear sink uses for comment bodies.
+- [Observability Sinks internals](/docs/internals/observability-sinks) — delivery pipeline reference.
+- Symphony's `SymphonyElixir.Linear.Adapter` — inspiration for the three-mutation flow.
