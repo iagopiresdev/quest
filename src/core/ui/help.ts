@@ -284,14 +284,11 @@ export function renderCategorizedHelp(): string {
       lines.push(`${logoPad}${row}`);
     }
     lines.push("");
-    // Tagline + sub-tagline centered below the logo, each with a yellow bullet anchor so the
-    // eye catches the tagline first, then reads the feature trio underneath.
+    // Single tagline centered below the logo with a yellow bullet anchor. One strong line reads
+    // better than stacking generic engineering descriptors under it.
     const bullet = colorize("•", "yellow");
-    const subTagline = "party-based · observable · idempotent";
     const taglinePad = " ".repeat(Math.max(0, Math.floor((width - (TAGLINE.length + 2)) / 2)));
-    const subPad = " ".repeat(Math.max(0, Math.floor((width - (subTagline.length + 2)) / 2)));
     lines.push(`${taglinePad}${bullet} ${colorize(TAGLINE, "dim")}`);
-    lines.push(`${subPad}${bullet} ${colorize(subTagline, "dim")}`);
     lines.push("", rule, "");
   } else {
     lines.push(`${colorize("quest", "bold")}  ${colorize(TAGLINE, "dim")}`, "");
