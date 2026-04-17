@@ -141,14 +141,42 @@ function formatDaemonCard(event: ObservableDaemonEvent): string {
   return sections.join("\n\n");
 }
 
+// Event types where `details` carries operationally useful fields we want to surface on the card.
+// For everything else, details stays internal to the run document.
+function formatRunDetailFacts(event: ObservableRunEvent): string[] {
+  const facts: string[] = [];
+  const details = event.details;
+  const checkCount = typeof details.checkCount === "number" ? details.checkCount : null;
+  const exitCode = typeof details.exitCode === "number" ? details.exitCode : null;
+  const command = Array.isArray(details.command) ? details.command.join(" ") : null;
+  const phase = typeof details.phase === "string" ? details.phase : null;
+  if (checkCount !== null) {
+    facts.push(`- **Checks:** ${checkCount}`);
+  }
+  if (exitCode !== null) {
+    facts.push(`- **Exit Code:** ${exitCode}`);
+  }
+  if (command) {
+    facts.push(`- **Command:** ${inlineCode(command)}`);
+  }
+  if (phase) {
+    facts.push(`- **Phase:** ${phase}`);
+  }
+  return facts;
+}
+
 function formatRunCard(event: ObservableRunEvent): string {
   const header = runCopy(event.eventType);
-  const facts = [
+  const facts: string[] = [
     `- **Title:** ${event.title}`,
     `- **Run:** ${inlineCode(event.runId)}`,
     `- **Status:** ${event.runStatus}`,
     `- **Workspace:** ${event.workspace}`,
   ];
+  if (event.trackerIssueId) {
+    facts.push(`- **Tracker:** ${inlineCode(event.trackerIssueId)}`);
+  }
+  facts.push(...formatRunDetailFacts(event));
   return [`## ${header}`, "---", facts.join("\n"), `_⌛ ${formatClock()}_`].join("\n\n");
 }
 

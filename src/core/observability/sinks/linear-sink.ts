@@ -2,22 +2,29 @@ import { z } from "zod";
 
 import type { DeliveryRecord } from "../delivery-schema";
 import { observableEventTypeSchema } from "../event-types";
-import type { ObservableDaemonEvent, ObservableEvent } from "../observable-events";
+import type { ObservableEvent } from "../observable-events";
 import type { EventSinkDeliveryContext, EventSinkHandler } from "./handler";
 import { formatLinearCard } from "./linear-card-builder";
 import { formatSinkTextMessage } from "./message-format";
 import { nonEmptyString, secretRefSchema, urlSchema } from "./schema-helpers";
 
-// Per-event-type state name overrides. Each key corresponds to a daemon event; the value is the
-// Linear workflow state name (e.g. "In Progress") that the sink should move the spec's issue to
-// when that event fires. Null entries skip state transitions for that event. Unspecified keys
-// fall back to the defaults (see DEFAULT_STATE_MAP below). Only daemon events that correspond
-// to work lifecycle transitions are mappable; party-admin and budget events are not.
+// Per-event-type state name overrides. Each key corresponds to a lifecycle event that moves the
+// Linear card; the value is the workflow state name (e.g. "In Progress"). Null entries skip
+// transitions for that event. Unspecified keys fall back to DEFAULT_STATE_MAP below.
+//
+// Daemon-level keys: dispatched, landed, failed. These fire from the daemon tick.
+// Run-level keys: testing, in_review, blocked. These fire during run execution / integration.
+//   - `testing`     → `run_integration_checks_started`
+//   - `in_review`   → `run_integration_checks_completed` (tests passed, awaiting land)
+//   - `blocked`     → `run_integration_checks_failed` OR `run_blocked`
 export const linearStateMapSchema = z
   .object({
+    blocked: nonEmptyString(80).nullable().optional(),
     dispatched: nonEmptyString(80).nullable().optional(),
     failed: nonEmptyString(80).nullable().optional(),
+    in_review: nonEmptyString(80).nullable().optional(),
     landed: nonEmptyString(80).nullable().optional(),
+    testing: nonEmptyString(80).nullable().optional(),
   })
   .strict();
 export type LinearStateMap = z.infer<typeof linearStateMapSchema>;
@@ -54,32 +61,39 @@ export const linearSinkSchema = z
   );
 export type LinearSink = z.infer<typeof linearSinkSchema>;
 
+type LifecycleStateKey = "blocked" | "dispatched" | "failed" | "in_review" | "landed" | "testing";
+
 // Default state mapping when the sink doesn't override it. Matches Symphony's convention and
-// Linear's shipped workflow states for most teams: dispatch flips a card to in-progress, a
-// successful land moves it to done, a failure sends it back to the backlog for human triage.
-const DEFAULT_STATE_MAP: Record<"dispatched" | "landed" | "failed", string> = {
+// Linear's shipped workflow states for most teams: dispatch flips a card to in-progress, tests
+// move it to Testing, test pass goes to In Review, a successful land moves it to Done, a
+// failure sends it to Blocked (for human triage) or Todo (for recoverable daemon failures).
+const DEFAULT_STATE_MAP: Record<LifecycleStateKey, string> = {
+  blocked: "Blocked",
   dispatched: "In Progress",
   failed: "Todo",
+  in_review: "In Review",
   landed: "Done",
+  testing: "Testing",
 };
 
-// Which daemon events correspond to state transitions. Party-admin events (created/resting/resumed)
-// and budget/recovery events do not map to per-issue workflow transitions.
-type TrackerEventType = "daemon_dispatched" | "daemon_landed" | "daemon_failed";
+// Map each observable event type to the lifecycle state key it triggers. Events not listed here
+// never move the Linear card (party-admin, budget, and any run events without a lifecycle
+// transition meaning).
+const EVENT_TYPE_TO_STATE_KEY: Record<string, LifecycleStateKey> = {
+  daemon_dispatched: "dispatched",
+  daemon_failed: "failed",
+  daemon_landed: "landed",
+  run_blocked: "blocked",
+  run_integration_checks_completed: "in_review",
+  run_integration_checks_failed: "blocked",
+  run_integration_checks_started: "testing",
+};
 
-function toTrackerEventType(eventType: string): TrackerEventType | null {
-  if (
-    eventType === "daemon_dispatched" ||
-    eventType === "daemon_landed" ||
-    eventType === "daemon_failed"
-  ) {
-    return eventType;
-  }
-  return null;
+function lifecycleStateKeyForEvent(eventType: string): LifecycleStateKey | null {
+  return EVENT_TYPE_TO_STATE_KEY[eventType] ?? null;
 }
 
-function mappedStateName(sink: LinearSink, eventType: TrackerEventType): string | null {
-  const key = eventType.replace(/^daemon_/, "") as "dispatched" | "landed" | "failed";
+function mappedStateName(sink: LinearSink, key: LifecycleStateKey): string | null {
   const map = sink.stateMap;
   if (!map) {
     return DEFAULT_STATE_MAP[key];
@@ -286,8 +300,17 @@ async function updateIssueState(
   return {};
 }
 
-// When the event carries a `trackerIssueId` and maps to a state-transition event type, move that
-// specific issue to the mapped Linear state. Returns null on success, or a short error on failure.
+// Both daemon and run events can carry a trackerIssueId. Extract it uniformly so the state
+// transition logic doesn't branch on kind.
+function trackerIssueIdFromEvent(event: ObservableEvent): string | null {
+  if (event.kind === "daemon" || event.kind === "run") {
+    return event.trackerIssueId ?? null;
+  }
+  return null;
+}
+
+// When the event carries a `trackerIssueId` and maps to a lifecycle state, move that specific
+// issue to the mapped Linear state. Returns null on success, or a short error on failure.
 // The caller decides whether to fail the whole delivery or merely log the tracker miss (we pick
 // the former — if the operator opted into state tracking, a silent failure would be worse than a
 // retryable delivery record).
@@ -296,26 +319,23 @@ async function applyStateTransition(
   apiKey: string,
   event: ObservableEvent,
 ): Promise<string | null> {
-  if (event.kind !== "daemon") {
+  const trackerIssueId = trackerIssueIdFromEvent(event);
+  if (!trackerIssueId) {
     return null;
   }
-  const daemonEvent = event as ObservableDaemonEvent;
-  if (!daemonEvent.trackerIssueId) {
+  const stateKey = lifecycleStateKeyForEvent(event.eventType);
+  if (!stateKey) {
     return null;
   }
-  const trackerEventType = toTrackerEventType(daemonEvent.eventType);
-  if (!trackerEventType) {
-    return null;
-  }
-  const stateName = mappedStateName(sink, trackerEventType);
+  const stateName = mappedStateName(sink, stateKey);
   if (!stateName) {
     return null;
   }
-  const lookup = await resolveStateId(sink, apiKey, daemonEvent.trackerIssueId, stateName);
+  const lookup = await resolveStateId(sink, apiKey, trackerIssueId, stateName);
   if (lookup.error || !lookup.stateId) {
     return lookup.error ?? "state lookup returned no id";
   }
-  const update = await updateIssueState(sink, apiKey, daemonEvent.trackerIssueId, lookup.stateId);
+  const update = await updateIssueState(sink, apiKey, trackerIssueId, lookup.stateId);
   if (update.error) {
     return update.error;
   }

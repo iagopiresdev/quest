@@ -15,6 +15,7 @@ export function createSinkProbeEvent(label: string): ObservableEvent {
     runStatus: "completed",
     sourceRepositoryPath: null,
     title: `Quest Runner sink probe (${label})`,
+    trackerIssueId: null,
     workspace: "doctor",
   };
 }

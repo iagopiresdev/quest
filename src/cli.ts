@@ -581,29 +581,34 @@ function parseObservableEventType(value: string | undefined): ObservableEventTyp
   return value ? observableEventTypeSchema.parse(value) : undefined;
 }
 
-// Parse `--state-dispatched`, `--state-landed`, `--state-failed` into a LinearStateMap. Absent
-// flags stay undefined (default behavior); explicit `none` strings opt out of transitions for
-// that event type (stored as null).
+type LinearStateFlagKey = "blocked" | "dispatched" | "failed" | "in_review" | "landed" | "testing";
+
+// Parse the six `--state-<phase>` flags into a LinearStateMap. Absent flags stay undefined
+// (default behavior); explicit `none` strings opt out of transitions for that event type
+// (stored as null). Daemon-level: dispatched, landed, failed. Run-level: testing, in_review,
+// blocked.
 function parseLinearStateMapFlags(
   args: string[],
-): { dispatched?: string | null; failed?: string | null; landed?: string | null } | undefined {
-  const dispatched = findOptionValue(args, "--state-dispatched");
-  const landed = findOptionValue(args, "--state-landed");
-  const failed = findOptionValue(args, "--state-failed");
-  if (dispatched === undefined && landed === undefined && failed === undefined) {
-    return undefined;
+): Partial<Record<LinearStateFlagKey, string | null>> | undefined {
+  const entries: Array<[LinearStateFlagKey, string]> = [
+    ["dispatched", "--state-dispatched"],
+    ["landed", "--state-landed"],
+    ["failed", "--state-failed"],
+    ["testing", "--state-testing"],
+    ["in_review", "--state-in-review"],
+    ["blocked", "--state-blocked"],
+  ];
+  const map: Partial<Record<LinearStateFlagKey, string | null>> = {};
+  let anySet = false;
+  for (const [key, flag] of entries) {
+    const value = findOptionValue(args, flag);
+    if (value === undefined) {
+      continue;
+    }
+    anySet = true;
+    map[key] = value === "none" ? null : value;
   }
-  const map: { dispatched?: string | null; failed?: string | null; landed?: string | null } = {};
-  if (dispatched !== undefined) {
-    map.dispatched = dispatched === "none" ? null : dispatched;
-  }
-  if (landed !== undefined) {
-    map.landed = landed === "none" ? null : landed;
-  }
-  if (failed !== undefined) {
-    map.failed = failed === "none" ? null : failed;
-  }
-  return map;
+  return anySet ? map : undefined;
 }
 
 function parseDeliveryStatus(value: string | undefined): DeliveryStatus | undefined {
@@ -3664,7 +3669,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
       return { sink: await observabilityStore.upsertLinearSink(sink) };
     },
     usage:
-      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--rpg-cards] [--state-dispatched <name>] [--state-landed <name>] [--state-failed <name>] [--disabled] [--observability-config <path>] [--state-root <path>]",
+      "quest observability linear upsert --issue-id <id> [--id <sink-id>] [--api-key-env <name> | --api-key-secret-ref <name>] [--api-base-url <url>] [--events <event,event>] [--title-prefix <text>] [--rpg-cards] [--state-dispatched <name>] [--state-landed <name>] [--state-failed <name>] [--state-testing <name>] [--state-in-review <name>] [--state-blocked <name>] [--disabled] [--observability-config <path>] [--state-root <path>]",
   },
   {
     id: "observability:openclaw:upsert",

@@ -79,18 +79,28 @@ Party-admin and budget events (`daemon_party_created` / `resting` / `resumed` / 
 `src/core/observability/sinks/linear-sink.ts`:
 
 - New schema fields:
-  - `stateMap?: { dispatched?: string | null; landed?: string | null; failed?: string | null }`
+  - `stateMap?: { dispatched?, landed?, failed?, testing?, in_review?, blocked? }` (string | null each)
 - On delivery:
   1. Post the comment (existing behavior, unchanged).
-  2. If the event carries a `trackerIssueId` AND its eventType is one of the three lifecycle types AND the resolved `stateMap` entry is non-null: run `stateLookup(issueId, stateName)` → `issueUpdate(issueId, stateId)`.
+  2. If the event carries a `trackerIssueId` AND its eventType maps to a lifecycle state AND the resolved `stateMap` entry is non-null: run `stateLookup(issueId, stateName)` → `issueUpdate(issueId, stateId)`.
   3. State lookup failure or issue-update failure returns a `failed` delivery with `"tracker state transition: <reason>"` so the delivery queue can retry.
-- Default state names: `dispatched=In Progress`, `landed=Done`, `failed=Todo`. Matches Symphony and Linear's shipped defaults.
-- `null` entries in `stateMap` opt out: `stateMap: { failed: null }` leaves the issue alone on failure but still moves it on dispatch/landing.
+- Event type → state key mapping:
+  - `daemon_dispatched` → `dispatched` → default *In Progress*
+  - `run_integration_checks_started` → `testing` → default *Testing*
+  - `run_integration_checks_completed` → `in_review` → default *In Review*
+  - `run_integration_checks_failed` → `blocked` → default *Blocked*
+  - `run_blocked` → `blocked` → default *Blocked*
+  - `daemon_landed` → `landed` → default *Done*
+  - `daemon_failed` → `failed` → default *Todo*
+- `null` entries in `stateMap` opt out: `stateMap: { failed: null }` leaves the issue alone on daemon failure but still moves it on dispatch/testing/review/landing.
 
 ### CLI — new flags
 
 ```
 --state-dispatched <name>  # default "In Progress", pass "none" to opt out
+--state-testing <name>     # default "Testing"
+--state-in-review <name>   # default "In Review"
+--state-blocked <name>     # default "Blocked"
 --state-landed <name>      # default "Done"
 --state-failed <name>      # default "Todo"
 ```
@@ -124,10 +134,13 @@ quest observability linear upsert \
   --state-failed "Blocked"
 ```
 
-When the daemon dispatches that spec:
-1. `commentCreate` on `ENG-OBSERVABILITY` (unchanged).
-2. `stateLookup` on `ENG-142` resolving "In Progress" → state id.
-3. `issueUpdate` on `ENG-142` with that state id.
+As the spec progresses, `ENG-142` walks through:
+1. `daemon_dispatched` → *In Progress* (comment + state move)
+2. `run_integration_checks_started` → *Testing* (comment surfaces `checkCount`)
+3. `run_integration_checks_completed` → *In Review* (comment surfaces `checkCount`)
+4. `daemon_landed` → *Done*
+
+If tests fail: `run_integration_checks_failed` → *Blocked*, comment surfaces the failing `command` + `exitCode`. If the run is blocked externally: `run_blocked` → *Blocked*.
 
 ## Data And State Changes
 
@@ -151,9 +164,9 @@ The sink itself is the observability surface; the spec ships tests that hit a mo
 
 ## Acceptance Checks
 
-- `bun test test/linear-state-tracker.test.ts` — 13 tests covering spec schema, event plumbing, and sink dispatch paths.
-- `bun test test/linear-card-builder.test.ts` — the card now exposes a `Tracker:` bullet when the event carries a tracker id.
-- Full suite + lint + typecheck green (253 tests / 1081 expects).
+- `bun test test/linear-state-tracker.test.ts` — 18 tests covering spec schema, event plumbing, and sink dispatch paths for both daemon and run events.
+- `bun test test/linear-card-builder.test.ts` — the card now exposes a `Tracker:` bullet when the event carries a tracker id and surfaces `checkCount`, `exitCode`, and `command` from integration event details.
+- Full suite + lint + typecheck green (263 tests / 1103 expects).
 
 ## Rollout / Migration
 

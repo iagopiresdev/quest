@@ -287,3 +287,158 @@ test("linear sink: state lookup returning no nodes fails the delivery with state
   expect(result.status).toBe("failed");
   expect(result.lastError).toContain("state_not_found:In Progress");
 });
+
+// ── Run-level lifecycle transitions ───────────────────────────────────────
+//
+// The tracker also moves cards on run-level events: testing started, tests passed (in review),
+// tests failed or run blocked (Blocked state). This covers the full pipeline a card should
+// traverse: In Progress → Testing → In Review → Done.
+
+type RunTransitionCase = {
+  eventType:
+    | "run_integration_checks_started"
+    | "run_integration_checks_completed"
+    | "run_integration_checks_failed"
+    | "run_blocked"
+    | "run_created";
+  expectedStateName: string | null;
+  label: string;
+};
+
+async function runRunEventScenario(kase: RunTransitionCase): Promise<MockRequest[] | null> {
+  const captured: MockRequest[] = [];
+  const server = await startTestServer({
+    fetch: async (request) => {
+      const body = (await request.json()) as MockRequest;
+      captured.push(body);
+      if (body.query.includes("commentCreate")) {
+        return new Response(JSON.stringify({ data: { commentCreate: { success: true } } }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (body.query.includes("QuestRunnerResolveStateId")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              issue: {
+                team: {
+                  states: {
+                    nodes: [{ id: `state-id-for-${String(body.variables.stateName)}` }],
+                  },
+                },
+              },
+            },
+          }),
+          { headers: { "content-type": "application/json" }, status: 200 },
+        );
+      }
+      if (body.query.includes("QuestRunnerUpdateIssueState")) {
+        return new Response(JSON.stringify({ data: { issueUpdate: { success: true } } }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      return new Response("unknown", { status: 400 });
+    },
+  });
+  if (!server) {
+    return null;
+  }
+  const typedServer: TestServer = server;
+
+  Bun.env.QUEST_RUNNER_LINEAR_TRACKER_KEY = "linear-test-key";
+  try {
+    const sink = linearSinkSchema.parse({
+      apiBaseUrl: `http://127.0.0.1:${typedServer.port}/graphql`,
+      apiKeyEnv: "QUEST_RUNNER_LINEAR_TRACKER_KEY",
+      enabled: true,
+      eventTypes: [],
+      id: "linear-run-tracker",
+      issueId: "fallback-issue",
+      type: "linear",
+    });
+
+    const event = {
+      details: {},
+      eventId: `run:quest-abc:${kase.eventType}:2026-04-17T00:00:00.000Z`,
+      eventType: kase.eventType,
+      kind: "run" as const,
+      occurredAt: "2026-04-17T00:00:00.000Z",
+      runId: "quest-abc-123",
+      runStatus: "running",
+      sourceRepositoryPath: null,
+      title: "Tracked run",
+      trackerIssueId: "TEAM-99",
+      workspace: "tracked-workspace",
+    };
+
+    const handler = new LinearSinkHandler();
+    const delivery = await handler.deliver(sink, {
+      attempts: 1,
+      event,
+      secretStore: fakeSecretStore(),
+    });
+    expect(delivery.status).toBe("delivered");
+    return captured;
+  } finally {
+    await typedServer.stop();
+    delete Bun.env.QUEST_RUNNER_LINEAR_TRACKER_KEY;
+  }
+}
+
+test("linear sink: run_integration_checks_started moves to default 'Testing'", async () => {
+  const captured = await runRunEventScenario({
+    eventType: "run_integration_checks_started",
+    expectedStateName: "Testing",
+    label: "Testing",
+  });
+  if (!captured) return;
+  const lookup = captured.find((entry) => entry.query.includes("QuestRunnerResolveStateId"));
+  expect(lookup?.variables.stateName).toBe("Testing");
+});
+
+test("linear sink: run_integration_checks_completed moves to default 'In Review'", async () => {
+  const captured = await runRunEventScenario({
+    eventType: "run_integration_checks_completed",
+    expectedStateName: "In Review",
+    label: "In Review",
+  });
+  if (!captured) return;
+  const lookup = captured.find((entry) => entry.query.includes("QuestRunnerResolveStateId"));
+  expect(lookup?.variables.stateName).toBe("In Review");
+});
+
+test("linear sink: run_integration_checks_failed moves to default 'Blocked'", async () => {
+  const captured = await runRunEventScenario({
+    eventType: "run_integration_checks_failed",
+    expectedStateName: "Blocked",
+    label: "Blocked",
+  });
+  if (!captured) return;
+  const lookup = captured.find((entry) => entry.query.includes("QuestRunnerResolveStateId"));
+  expect(lookup?.variables.stateName).toBe("Blocked");
+});
+
+test("linear sink: run_blocked moves to default 'Blocked'", async () => {
+  const captured = await runRunEventScenario({
+    eventType: "run_blocked",
+    expectedStateName: "Blocked",
+    label: "Blocked",
+  });
+  if (!captured) return;
+  const lookup = captured.find((entry) => entry.query.includes("QuestRunnerResolveStateId"));
+  expect(lookup?.variables.stateName).toBe("Blocked");
+});
+
+test("linear sink: run_created (no lifecycle meaning) does NOT move the card", async () => {
+  const captured = await runRunEventScenario({
+    eventType: "run_created",
+    expectedStateName: null,
+    label: "none",
+  });
+  if (!captured) return;
+  // Only the comment should fire; no state lookup / update.
+  expect(captured).toHaveLength(1);
+  expect(captured[0]?.query).toContain("commentCreate");
+});

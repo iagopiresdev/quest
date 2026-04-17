@@ -21,6 +21,10 @@ export const observableRunEventSchema = z
     runStatus: nonEmptyString(80),
     sourceRepositoryPath: nonEmptyString(400).nullable(),
     title: nonEmptyString(160),
+    // Optional external tracker issue id pulled from `run.spec.tracker.linear.issueId` when the
+    // spec opts in. Null for specs without a tracker block. Threaded through run-level events so
+    // testing/review/blocked transitions can move the same Linear card as dispatch/land.
+    trackerIssueId: nonEmptyString(120).nullable().default(null),
     workspace: nonEmptyString(160),
   })
   .strict();
@@ -85,6 +89,7 @@ export function createObservableRunEvent(
     runStatus: run.status,
     sourceRepositoryPath: run.sourceRepositoryPath ?? null,
     title: run.spec.title,
+    trackerIssueId: run.spec.tracker?.linear?.issueId ?? null,
     workspace: run.spec.workspace,
   };
 }

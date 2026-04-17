@@ -114,6 +114,60 @@ test("formatLinearCard: run card exposes title, run id, status, workspace", () =
   expect(card).toContain("- **Run:** `quest-abc-123`");
   expect(card).toContain("- **Status:** completed");
   expect(card).toContain("- **Workspace:** canary-workspace");
+  expect(card).not.toContain("- **Tracker:**");
+});
+
+test("formatLinearCard: run card surfaces trackerIssueId when present", () => {
+  const card = formatLinearCard(buildRunEvent({ trackerIssueId: "TEAM-99" }));
+  expect(card).toContain("- **Tracker:** `TEAM-99`");
+});
+
+test("formatLinearCard: integration_checks_started surfaces checkCount", () => {
+  const card = formatLinearCard(
+    buildRunEvent({
+      details: { checkCount: 3, integrationWorkspacePath: "/tmp/ws" },
+      eventType: "run_integration_checks_started",
+      runStatus: "integrating",
+    }),
+  );
+  expect(card).toContain("## 🔮 Trials Begin");
+  expect(card).toContain("- **Checks:** 3");
+});
+
+test("formatLinearCard: integration_checks_completed surfaces checkCount", () => {
+  const card = formatLinearCard(
+    buildRunEvent({
+      details: { checkCount: 5 },
+      eventType: "run_integration_checks_completed",
+    }),
+  );
+  expect(card).toContain("## ✨ Trials Endured");
+  expect(card).toContain("- **Checks:** 5");
+});
+
+test("formatLinearCard: integration_checks_failed surfaces command + exit code", () => {
+  const card = formatLinearCard(
+    buildRunEvent({
+      details: { command: ["bun", "test", "--bail"], exitCode: 1 },
+      eventType: "run_integration_checks_failed",
+      runStatus: "failed",
+    }),
+  );
+  expect(card).toContain("## 💥 Trials Broke You");
+  expect(card).toContain("- **Exit Code:** 1");
+  expect(card).toContain("- **Command:** `bun test --bail`");
+});
+
+test("formatLinearCard: run card skips unknown detail keys", () => {
+  // Only the whitelisted detail keys (checkCount, exitCode, command, phase) appear on the card.
+  // Random internal fields from the run document stay out of the operator-facing view.
+  const card = formatLinearCard(
+    buildRunEvent({
+      details: { internalScratchpad: "secret", someOtherKey: { nested: 1 } },
+    }),
+  );
+  expect(card).not.toContain("internalScratchpad");
+  expect(card).not.toContain("someOtherKey");
 });
 
 test("formatLinearCard: calibration passed renders masterful-training header", () => {
