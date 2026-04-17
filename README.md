@@ -83,6 +83,12 @@ Daemon observability canary (proves daemon lifecycle events reach a live webhook
 bun ./scripts/canaries/daemon-events.ts
 ```
 
+Concurrent-parties canary (proves two parties with two distinct source repos run independently through a single daemon tick, without cross-contamination):
+
+```sh
+bun ./scripts/canaries/concurrent-parties.ts
+```
+
 ## Open Source Readiness
 
 This repository is intended to be publishable on GitHub as source code, not as a dump of local state.
