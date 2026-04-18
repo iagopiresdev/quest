@@ -151,11 +151,7 @@ function renderBreadcrumb(progress: WizardProgress): string | null {
 
   if (progress.workers.length > 0) {
     const workerRows = progress.workers.map((worker) =>
-      row(
-        true,
-        worker.role,
-        `${worker.name} (${worker.harness}:${worker.model}) · ${worker.archetype}`,
-      ),
+      row(true, worker.role, `${worker.name} (${worker.harness}:${worker.model})`),
     );
     sections.push({ rows: workerRows, title: "Roster" });
   }
@@ -438,13 +434,16 @@ async function promptWorkerForModel(
   page(progress, sectionTitle);
   const role = await askSelect("Role", ["builder", "tester", "hybrid"] as const, "hybrid", {
     builder: "Owns encounters (writes code)",
-    hybrid: "One adventurer runs both encounters and trials",
+    hybrid: "Runs both encounters and trials",
     tester: "Owns trials (runs acceptance checks)",
   });
   const roleClass = renderRoleClass(role);
 
   page(progress, sectionTitle);
-  const defaultName = `${roleClass} (${model})`;
+  // Default name is just the model id. The role class already shows up in the roster column,
+  // and the archetype is invisible machinery derived from role, so prefixing the default with
+  // either would repeat the same word up to three times per worker in the breadcrumb/summary.
+  const defaultName = model;
   const name = await askText("Name", defaultName);
 
   // Archetype is derived from role to keep the wizard short. Power users can edit the worker
@@ -731,7 +730,7 @@ function renderSummaryNote(result: SetupWizardResult): string {
     const roleClass = renderRoleClass(role as "builder" | "tester" | "hybrid");
     const name = readPlanArg(plan, "--name") ?? "Unnamed party member";
     const profile = readPlanArg(plan, "--profile") ?? "default";
-    return `• ${name} (${roleClass}) · ${plan.backend}:${profile} · ${plan.archetypeLabel}`;
+    return `• ${name} (${roleClass}) · ${plan.backend}:${profile}`;
   });
   const calibration =
     result.calibrateWorkerIds.length > 0 ? result.calibrateWorkerIds.join(", ") : "skipped";
