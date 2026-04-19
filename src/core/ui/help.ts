@@ -38,10 +38,6 @@ const HELP_SECTIONS: HelpSection[] = [
         invocation: "quest setup --yes --backend <codex|hermes|openclaw>",
       },
       {
-        comment: "Use detected defaults without walking the wizard",
-        invocation: "quest setup --quick",
-      },
-      {
         comment: "Probe binaries, backends, sinks, and state roots",
         invocation: "quest doctor [--test-sinks]",
       },

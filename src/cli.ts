@@ -57,15 +57,8 @@ import {
   detectOpenClawSetup,
   detectSinkSetup,
 } from "./core/setup/detection";
-import { defaultSetupArchetype } from "./core/setup/presets";
 import { parseTelegramSinkPlan } from "./core/setup/telegram-sink-plan";
-import {
-  runSetupWizard,
-  type SetupWizardHarness,
-  type SetupWizardResult,
-  type SetupWizardSinkPlan,
-  type SetupWizardWorkerPlan,
-} from "./core/setup/wizard";
+import { runSetupWizard } from "./core/setup/wizard";
 import { isRecord } from "./core/shared/type-guards";
 import {
   ensureDirectory,
@@ -951,28 +944,7 @@ function buildSetupWizardDefaults(
   importedSummary: string | undefined,
   sinkDefaults: DetectedSinkSetup,
   testerSelectionStrategy: "balanced" | "prefer-cheapest",
-  existingWorkers: RegisteredWorker[] = [],
 ): Parameters<typeof runSetupWizard>[0]["defaults"] {
-  const importSummaries: Partial<Record<SetupWizardHarness, string>> = {};
-  const codexSummary = importedCodex
-    ? describeImportedBackendDefaults("codex", importedCodex)
-    : undefined;
-  const hermesSummary = importedHermes
-    ? describeImportedBackendDefaults("hermes", importedHermes)
-    : undefined;
-  const openClawSummary = importedOpenClaw
-    ? describeImportedBackendDefaults("openclaw", importedOpenClaw)
-    : undefined;
-  if (codexSummary) {
-    importSummaries.codex = codexSummary;
-  }
-  if (hermesSummary) {
-    importSummaries.hermes = hermesSummary;
-  }
-  if (openClawSummary) {
-    importSummaries.openclaw = openClawSummary;
-  }
-
   return {
     backend: (backend === "hermes" || backend === "openclaw" ? backend : "codex") as
       | "codex"
@@ -981,33 +953,10 @@ function buildSetupWizardDefaults(
     ...(importedCodex?.envVar ? { envVar: importedCodex.envVar } : {}),
     ...(importedHermes?.baseUrl ? { baseUrl: importedHermes.baseUrl } : {}),
     ...(importedHermes?.profile ? { profile: importedHermes.profile } : {}),
-    existingWorkers: existingWorkers
-      .filter(
-        (worker) =>
-          worker.backend.runner === "codex" ||
-          worker.backend.runner === "hermes" ||
-          worker.backend.runner === "openclaw",
-      )
-      .map((worker) => ({
-        backend: worker.backend.runner as SetupWizardHarness,
-        model: worker.backend.profile,
-        name: worker.name,
-      })),
     ...(importedOpenClaw?.agentId ? { agentId: importedOpenClaw.agentId } : {}),
     ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
     ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
-    importSummaries,
     ...(importedSummary ? { importSummary: importedSummary } : {}),
-    modelCatalog: {
-      ...(importedHermes?.models && importedHermes.models.length > 0
-        ? { hermes: importedHermes.models }
-        : {}),
-      ...(importedOpenClaw?.agents && importedOpenClaw.agents.length > 0
-        ? {
-            openclaw: importedOpenClaw.agents.map((agent) => agent.model ?? `openclaw/${agent.id}`),
-          }
-        : {}),
-    },
     sinkDefaults: {
       ...(sinkDefaults.linearApiKeyEnv ? { linearApiKeyEnv: sinkDefaults.linearApiKeyEnv } : {}),
       ...(importedOpenClaw?.agentId ? { openClawAgentId: importedOpenClaw.agentId } : {}),
@@ -1327,44 +1276,6 @@ async function detectSetupImports(args: string[]): Promise<SetupImports> {
   };
 }
 
-async function detectQuickSetupImports(args: string[]): Promise<SetupImports> {
-  const backend = findOptionValue(args, "--backend") ?? "codex";
-  const explicitBackend = findOptionValue(args, "--backend") !== undefined;
-  const [codexDefaults, hermesDefaults, openClawDefaults, sinkDefaults] = await Promise.all([
-    !explicitBackend || backend === "codex" ? detectBackendDefaults("codex", args) : null,
-    !explicitBackend || backend === "hermes" ? detectBackendDefaults("hermes", args) : null,
-    !explicitBackend || backend === "openclaw" ? detectBackendDefaults("openclaw", args) : null,
-    detectSinkSetup(),
-  ]);
-  const importedCodex = asCodexSetup(codexDefaults);
-  const importedHermes = asHermesSetup(hermesDefaults);
-  const importedOpenClaw = asOpenClawSetup(openClawDefaults);
-  let importedDefaults: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null =
-    importedCodex;
-  if (backend === "hermes") {
-    importedDefaults = importedHermes;
-  } else if (backend === "openclaw") {
-    importedDefaults = importedOpenClaw;
-  }
-  const importedSummaries = [
-    importedCodex ? describeImportedBackendDefaults("codex", importedCodex) : undefined,
-    importedHermes ? describeImportedBackendDefaults("hermes", importedHermes) : undefined,
-    importedOpenClaw ? describeImportedBackendDefaults("openclaw", importedOpenClaw) : undefined,
-  ].filter((summary): summary is string => summary !== undefined);
-
-  return {
-    backend,
-    importedCodex,
-    importedDefaults,
-    importedHermes,
-    importedOpenClaw,
-    importedSummary: explicitBackend
-      ? describeImportedBackendDefaults(backend, importedDefaults)
-      : importedSummaries.join("; ") || undefined,
-    sinkDefaults,
-  };
-}
-
 function shouldCreateSetupWorker(
   backend: string,
   args: string[],
@@ -1407,7 +1318,6 @@ async function runInteractiveSetupFlow(
   workerState: SetupWorkerState;
 }> {
   const currentSettings = await settingsStore.readSettings();
-  const existingWorkers = await registry.listWorkers();
   const wizardResult = await runSetupWizard({
     defaults: buildSetupWizardDefaults(
       setupImports.backend,
@@ -1417,32 +1327,8 @@ async function runInteractiveSetupFlow(
       setupImports.importedSummary,
       setupImports.sinkDefaults,
       currentSettings.planner.testerSelectionStrategy,
-      existingWorkers,
     ),
   });
-  return await applySetupWizardResult(
-    calibrator,
-    observabilityStore,
-    registry,
-    secretStore,
-    settingsStore,
-    wizardResult,
-  );
-}
-
-async function applySetupWizardResult(
-  calibrator: WorkerCalibrator,
-  observabilityStore: ObservabilityStore,
-  registry: WorkerRegistry,
-  secretStore: SecretStore,
-  settingsStore: QuestSettingsStore,
-  wizardResult: SetupWizardResult,
-): Promise<{
-  calibrationResults: Array<{ runId: string; status: string; workerId: string }>;
-  configuredSink: Record<string, unknown> | null;
-  settings: Awaited<ReturnType<QuestSettingsStore["writeSettings"]>>;
-  workerState: SetupWorkerState;
-}> {
   const createdWorkers: RegisteredWorker[] = [];
   for (const worker of await buildWorkersFromSetupPlans(wizardResult.workerPlans)) {
     createdWorkers.push(await registry.upsertWorker(worker));
@@ -1465,171 +1351,6 @@ async function applySetupWizardResult(
       createdWorkers,
     },
   };
-}
-
-function removeOptions(args: string[], flags: Set<string>): string[] {
-  const filtered: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-    if (argument && flags.has(argument)) {
-      index += 1;
-      continue;
-    }
-    filtered.push(argument as string);
-  }
-  return filtered;
-}
-
-function importedDefaultsForHarness(
-  harness: SetupWizardHarness,
-  setupImports: SetupImports,
-): DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null {
-  if (harness === "codex") {
-    return setupImports.importedCodex;
-  }
-  if (harness === "hermes") {
-    return setupImports.importedHermes;
-  }
-  return setupImports.importedOpenClaw;
-}
-
-function isQuickHarnessReady(harness: SetupWizardHarness, setupImports: SetupImports): boolean {
-  if (harness === "codex") {
-    const codex = setupImports.importedCodex;
-    return (
-      codex !== null && (codex.loginOk || (codex.envVar !== undefined && codex.version !== null))
-    );
-  }
-  if (harness === "hermes") {
-    return setupImports.importedHermes?.ok === true && !!setupImports.importedHermes.profile;
-  }
-  return setupImports.importedOpenClaw?.ok === true && !!setupImports.importedOpenClaw.agentId;
-}
-
-function selectQuickHarnesses(args: string[], setupImports: SetupImports): SetupWizardHarness[] {
-  if (hasFlag(args, "--skip-worker")) {
-    return [];
-  }
-  const explicitBackend = findOptionValue(args, "--backend");
-  if (
-    explicitBackend === "codex" ||
-    explicitBackend === "hermes" ||
-    explicitBackend === "openclaw"
-  ) {
-    return isQuickHarnessReady(explicitBackend, setupImports) ? [explicitBackend] : [];
-  }
-  return (["codex", "hermes", "openclaw"] as const).filter((harness) =>
-    isQuickHarnessReady(harness, setupImports),
-  );
-}
-
-function buildQuickSinkPlan(setupImports: SetupImports): SetupWizardSinkPlan {
-  void setupImports;
-  // Quick mode is deliberately side-effect light: worker defaults can be inferred safely, while
-  // sinks often need an operator-chosen destination or secret import.
-  return null;
-}
-
-function buildQuickWorkerPlan(
-  args: string[],
-  harness: SetupWizardHarness,
-  setupImports: SetupImports,
-  multiHarness: boolean,
-): SetupWizardWorkerPlan {
-  const role = workerRoleSchema.parse(findOptionValue(args, "--role") ?? "hybrid");
-  const archetype = defaultSetupArchetype(role);
-  const importedDefaults = importedDefaultsForHarness(harness, setupImports);
-  const importedHermes = asHermesSetup(importedDefaults);
-  const importedOpenClaw = asOpenClawSetup(importedDefaults);
-  const workerName =
-    !multiHarness && findOptionValue(args, "--worker-name")
-      ? requireOptionValue(args, "--worker-name", "--worker-name <name>")
-      : defaultSetupWorkerName(harness);
-  const profile =
-    findOptionValue(args, "--profile") ??
-    importedHermes?.profile ??
-    importedOpenClaw?.profile ??
-    defaultSetupProfile(harness);
-  const baseUrl =
-    findOptionValue(args, "--base-url") ??
-    findOptionValue(args, "--hermes-base-url") ??
-    importedHermes?.baseUrl ??
-    importedOpenClaw?.gatewayUrl ??
-    "http://127.0.0.1:8000/v1";
-  const agentId = findOptionValue(args, "--agent-id") ?? importedOpenClaw?.agentId ?? "main";
-  const workerArgs = buildNonInteractiveSetupWorkerArgs(
-    multiHarness ? removeOptions(args, new Set(["--worker-id"])) : args,
-    harness,
-    workerName,
-    profile,
-    baseUrl,
-    agentId,
-    asCodexSetup(importedDefaults),
-  );
-  if (!workerArgs.includes("--role")) {
-    workerArgs.push("--role", role);
-  }
-  return {
-    archetypeLabel: archetype.label,
-    args: workerArgs,
-    backend: harness,
-    update: archetype.update,
-  };
-}
-
-function buildQuickSetupWizardResult(
-  args: string[],
-  setupImports: SetupImports,
-  testerSelectionStrategy: "balanced" | "prefer-cheapest",
-): SetupWizardResult {
-  const selectedTesterSelection = findOptionValue(args, "--tester-selection");
-  const harnesses = selectQuickHarnesses(args, setupImports);
-  const workerPlans = harnesses.map((harness) =>
-    buildQuickWorkerPlan(args, harness, setupImports, harnesses.length > 1),
-  );
-  return {
-    calibrateWorkerIds: [],
-    settingsUpdate: {
-      planner: {
-        testerSelectionStrategy:
-          selectedTesterSelection === "balanced" || selectedTesterSelection === "prefer-cheapest"
-            ? selectedTesterSelection
-            : testerSelectionStrategy,
-      },
-    },
-    sinkPlan: buildQuickSinkPlan(setupImports),
-    workerPlans,
-  };
-}
-
-async function runQuickSetupFlow(
-  args: string[],
-  calibrator: WorkerCalibrator,
-  observabilityStore: ObservabilityStore,
-  registry: WorkerRegistry,
-  secretStore: SecretStore,
-  settingsStore: QuestSettingsStore,
-  setupImports: SetupImports,
-): Promise<{
-  calibrationResults: Array<{ runId: string; status: string; workerId: string }>;
-  configuredSink: Record<string, unknown> | null;
-  settings: Awaited<ReturnType<QuestSettingsStore["writeSettings"]>>;
-  workerState: SetupWorkerState;
-}> {
-  const currentSettings = await settingsStore.readSettings();
-  const wizardResult = buildQuickSetupWizardResult(
-    args,
-    setupImports,
-    currentSettings.planner.testerSelectionStrategy,
-  );
-  return await applySetupWizardResult(
-    calibrator,
-    observabilityStore,
-    registry,
-    secretStore,
-    settingsStore,
-    wizardResult,
-  );
 }
 
 type NonInteractiveSetupInputs = {
@@ -2476,8 +2197,7 @@ async function runSetup(
     ok: boolean;
   };
 
-  const quick = hasFlag(args, "--quick");
-  const setupImports = quick ? await detectQuickSetupImports(args) : await detectSetupImports(args);
+  const setupImports = await detectSetupImports(args);
   const shouldCreateWorker = shouldCreateSetupWorker(
     setupImports.backend,
     args,
@@ -2494,21 +2214,7 @@ async function runSetup(
   let configuredSink: Record<string, unknown> | null = null;
   let settings = await settingsStore.readSettings();
 
-  if (quick) {
-    const quickResult = await runQuickSetupFlow(
-      args,
-      calibrator,
-      observabilityStore,
-      registry,
-      secretStore,
-      settingsStore,
-      setupImports,
-    );
-    calibrationResults = quickResult.calibrationResults;
-    configuredSink = quickResult.configuredSink;
-    settings = quickResult.settings;
-    workerState = quickResult.workerState;
-  } else if (interactive) {
+  if (interactive) {
     const interactiveResult = await runInteractiveSetupFlow(
       calibrator,
       observabilityStore,
@@ -3612,7 +3318,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, calibrator, observabilityStore, registry, settingsStore, secretStore }) =>
       await runSetup(args, calibrator, observabilityStore, registry, settingsStore, secretStore),
     usage:
-      "quest setup [--yes|--quick] [--backend <codex|hermes|openclaw>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",

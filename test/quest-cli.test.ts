@@ -483,28 +483,6 @@ test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   expect(result.workers).toHaveLength(1);
 });
 
-test("quest cli setup quick mode bootstraps from detected defaults", () => {
-  const context = trackContext();
-  const codexExecutable = createCodexMockExecutable(context.stateRoot);
-
-  const setup = runCli(context, [
-    "setup",
-    "--quick",
-    "--backend",
-    "codex",
-    "--codex-executable",
-    codexExecutable,
-    "--worker-name",
-    "Quick Codex",
-  ]);
-
-  expect(setup.code).toBe(0);
-  const result = JSON.parse(setup.stdout);
-  expect(result.createdWorker.id).toBe("quick-codex");
-  expect(result.createdWorker.backend.profile).toBe("gpt-5.4");
-  expect(result.calibrationResults).toHaveLength(0);
-});
-
 test("quest cli setup persists tester routing strategy", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
