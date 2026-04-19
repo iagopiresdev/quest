@@ -7,4 +7,6 @@ node_modules/
 coverage/
 skills/
 FEEDBACK.md
+HANDOFF.md
+AGENTS.md
 docs/internals/

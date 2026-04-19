@@ -101,9 +101,12 @@ This repository is intended to be publishable on GitHub as source code, not as a
 
 Rules:
 - do not commit runtime state, tokens, or local config
+- **never commit personal identifiers**: real Telegram user IDs, emails, usernames, API keys, bot tokens, private hostnames, or location data. Use fake placeholder values (e.g. `123456789` for Telegram chat IDs, `user@example.com` for emails)
 - examples should use clearly fake placeholder values
 - execution-facing changes should ship with both automated coverage and real canaries
 - install/setup changes should be validated through the fresh-install `tmux` canary
+- keep `AGENTS.md`, `HANDOFF.md`, `FEEDBACK.md`, and `.env` in `.gitignore` — these are local-only files
+- if you would not put it on a public GitHub repo, do not commit it
 
 ## Worker Backends
 
