@@ -58,7 +58,11 @@ import {
   detectSinkSetup,
 } from "./core/setup/detection";
 import { parseTelegramSinkPlan } from "./core/setup/telegram-sink-plan";
-import { runSetupWizard } from "./core/setup/wizard";
+import {
+  runSetupWizard,
+  type SetupWizardHarness,
+  type SetupWizardHarnessDefaults,
+} from "./core/setup/wizard";
 import { isRecord } from "./core/shared/type-guards";
 import {
   ensureDirectory,
@@ -920,6 +924,110 @@ async function detectBackendDefaults(
   return null;
 }
 
+function splitCommandLine(value: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+
+  for (const char of value.trim()) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaping) {
+    current += "\\";
+  }
+  if (quote) {
+    throw new Error("Unclosed quote in --command");
+  }
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+  if (tokens.length === 0) {
+    throw new Error("Expected --command <command>");
+  }
+  return tokens;
+}
+
+function buildStandaloneWorker(args: string[]): RegisteredWorker {
+  const name = findOptionValue(args, "--name") ?? "Standalone Worker";
+  const commandArgs = findOptionValues(args, "--command-arg");
+  const command =
+    commandArgs.length > 0
+      ? commandArgs
+      : splitCommandLine(requireOptionValue(args, "--command", "--command <command>"));
+  const runtime = parseWorkerRuntime(args);
+  const baseWorker = registeredWorkerSchema.parse({
+    backend: {
+      adapter: "local-command",
+      command,
+      profile: findOptionValue(args, "--profile") ?? "standalone",
+      ...(runtime ? { runtime } : {}),
+      runner: "custom",
+      toolPolicy: {
+        allow: parseCommaSeparatedValues(findOptionValue(args, "--allow-tools")),
+        deny: parseCommaSeparatedValues(findOptionValue(args, "--deny-tools")),
+      },
+    },
+    calibration: {
+      history: [],
+    },
+    class: "operator",
+    enabled: true,
+    id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "standalone-worker"),
+    name,
+    persona: {
+      approach: "run the configured local command and report only durable changes",
+      prompt: "Consume the quest-runner JSON payload from stdin and make the requested change.",
+      voice: "direct",
+    },
+    progression: { level: 1, xp: 0 },
+    role: workerRoleSchema.parse(findOptionValue(args, "--role") ?? "hybrid"),
+    resources: { cpuCost: 1, gpuCost: 0, maxParallel: 1, memoryCost: 1 },
+    stats: {
+      coding: 70,
+      contextEndurance: 55,
+      docs: 45,
+      mergeSafety: 70,
+      research: 45,
+      speed: 60,
+      testing: 65,
+    },
+    tags: parseCommaSeparatedValues(findOptionValue(args, "--tags") ?? "standalone"),
+    title: "Standalone Worker",
+    trust: { calibratedAt: new Date().toISOString(), rating: 0.7 },
+  });
+  return applyWorkerUpdate(baseWorker, parseWorkerUpdate(args));
+}
+
 function buildWorkerFromDetectedBackend(
   backend: string,
   args: string[],
@@ -933,7 +1041,41 @@ function buildWorkerFromDetectedBackend(
     return buildHermesWorker(args, asHermesSetup(importedDefaults));
   }
 
+  if (backend === "standalone") {
+    return buildStandaloneWorker(args);
+  }
+
   return buildOpenClawWorker(args, asOpenClawSetup(importedDefaults));
+}
+
+function buildSetupHarnessDefaults(
+  importedCodex: DetectedCodexSetup | null,
+  importedHermes: DetectedHermesSetup | null,
+  importedOpenClaw: DetectedOpenClawSetup | null,
+): NonNullable<Parameters<typeof runSetupWizard>[0]["defaults"]["harnessDefaults"]> {
+  const codexSummary = describeImportedBackendDefaults("codex", importedCodex);
+  const hermesSummary = describeImportedBackendDefaults("hermes", importedHermes);
+  const openClawSummary = describeImportedBackendDefaults("openclaw", importedOpenClaw);
+  return {
+    codex: {
+      ...(importedCodex?.envVar ? { envVar: importedCodex.envVar } : {}),
+      ...(importedCodex?.executable ? { executable: importedCodex.executable } : {}),
+      ...(codexSummary ? { importSummary: codexSummary } : {}),
+    },
+    hermes: {
+      ...(importedHermes?.baseUrl ? { baseUrl: importedHermes.baseUrl } : {}),
+      ...(importedHermes?.profile ? { profile: importedHermes.profile } : {}),
+      ...(hermesSummary ? { importSummary: hermesSummary } : {}),
+    },
+    openclaw: {
+      ...(importedOpenClaw?.agentId ? { agentId: importedOpenClaw.agentId } : {}),
+      ...(importedOpenClaw?.executable ? { executable: importedOpenClaw.executable } : {}),
+      ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
+      ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
+      ...(openClawSummary ? { importSummary: openClawSummary } : {}),
+    },
+    standalone: {},
+  };
 }
 
 function buildSetupWizardDefaults(
@@ -941,22 +1083,22 @@ function buildSetupWizardDefaults(
   importedCodex: DetectedCodexSetup | null,
   importedHermes: DetectedHermesSetup | null,
   importedOpenClaw: DetectedOpenClawSetup | null,
-  importedSummary: string | undefined,
   sinkDefaults: DetectedSinkSetup,
   testerSelectionStrategy: "balanced" | "prefer-cheapest",
 ): Parameters<typeof runSetupWizard>[0]["defaults"] {
+  const normalizedBackend = (
+    backend === "hermes" || backend === "openclaw" || backend === "standalone" ? backend : "codex"
+  ) as SetupWizardHarness;
+  const harnessDefaults = buildSetupHarnessDefaults(
+    importedCodex,
+    importedHermes,
+    importedOpenClaw,
+  );
+  const selectedDefaults = harnessDefaults[normalizedBackend] ?? {};
   return {
-    backend: (backend === "hermes" || backend === "openclaw" ? backend : "codex") as
-      | "codex"
-      | "hermes"
-      | "openclaw",
-    ...(importedCodex?.envVar ? { envVar: importedCodex.envVar } : {}),
-    ...(importedHermes?.baseUrl ? { baseUrl: importedHermes.baseUrl } : {}),
-    ...(importedHermes?.profile ? { profile: importedHermes.profile } : {}),
-    ...(importedOpenClaw?.agentId ? { agentId: importedOpenClaw.agentId } : {}),
-    ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
-    ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
-    ...(importedSummary ? { importSummary: importedSummary } : {}),
+    ...selectedDefaults,
+    backend: normalizedBackend,
+    harnessDefaults,
     sinkDefaults: {
       ...(sinkDefaults.linearApiKeyEnv ? { linearApiKeyEnv: sinkDefaults.linearApiKeyEnv } : {}),
       ...(importedOpenClaw?.agentId ? { openClawAgentId: importedOpenClaw.agentId } : {}),
@@ -977,7 +1119,7 @@ function buildSetupWizardDefaults(
 }
 
 async function buildWorkersFromSetupPlans(
-  plans: Array<{ args: string[]; backend: "codex" | "hermes" | "openclaw"; update: WorkerUpdate }>,
+  plans: Array<{ args: string[]; backend: SetupWizardHarness; update: WorkerUpdate }>,
 ): Promise<RegisteredWorker[]> {
   const workers: RegisteredWorker[] = [];
   for (const plan of plans) {
@@ -1134,6 +1276,7 @@ function buildNonInteractiveSetupWorkerArgs(
   pushOption(workerArgs, "--voice", findOptionValue(args, "--voice"));
   pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
   pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
+  pushOption(workerArgs, "--command", findOptionValue(args, "--command"));
   pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
   pushOption(workerArgs, "--gateway-url", findOptionValue(args, "--gateway-url"));
   pushOption(workerArgs, "--session-id", findOptionValue(args, "--session-id"));
@@ -1162,6 +1305,9 @@ function buildNonInteractiveSetupWorkerArgs(
   pushOption(workerArgs, "--xp", findOptionValue(args, "--xp"));
   findOptionValues(args, "--provider-option").forEach((entry) => {
     workerArgs.push("--provider-option", entry);
+  });
+  findOptionValues(args, "--command-arg").forEach((entry) => {
+    workerArgs.push("--command-arg", entry);
   });
   return workerArgs;
 }
@@ -1244,7 +1390,6 @@ async function detectSetupImports(args: string[]): Promise<SetupImports> {
   const shouldImportOpenClawDefaults =
     shouldImportExisting(args) &&
     (backend === "openclaw" ||
-      (stdinIsTty() && !hasFlag(args, "--yes")) ||
       findOptionValue(args, "--agent-id") !== undefined ||
       findOptionValue(args, "--openclaw-executable") !== undefined ||
       findOptionValue(args, "--gateway-url") !== undefined);
@@ -1276,6 +1421,54 @@ async function detectSetupImports(args: string[]): Promise<SetupImports> {
   };
 }
 
+async function detectSetupHarnessDefault(
+  harness: SetupWizardHarness,
+  args: string[],
+): Promise<SetupWizardHarnessDefaults | null> {
+  const importedDefaults = await detectBackendDefaults(harness, args);
+  const defaults = buildSetupHarnessDefaults(
+    asCodexSetup(importedDefaults),
+    asHermesSetup(importedDefaults),
+    asOpenClawSetup(importedDefaults),
+  );
+  return defaults[harness] ?? null;
+}
+
+async function detectSelectedSetupHarnessDefaults(
+  args: string[],
+  setupImports: SetupImports,
+  harnesses: SetupWizardHarness[],
+): Promise<Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>> {
+  if (!shouldImportExisting(args)) {
+    return {};
+  }
+
+  const selectedHarnesses = new Set(harnesses);
+  const detections = await Promise.all(
+    (["codex", "hermes", "openclaw"] as const).map(async (harness) => {
+      if (!selectedHarnesses.has(harness)) {
+        return [harness, null] as const;
+      }
+      if (
+        (harness === "codex" && setupImports.importedCodex) ||
+        (harness === "hermes" && setupImports.importedHermes) ||
+        (harness === "openclaw" && setupImports.importedOpenClaw)
+      ) {
+        return [harness, null] as const;
+      }
+      return [harness, await detectSetupHarnessDefault(harness, args)] as const;
+    }),
+  );
+
+  const updates: Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>> = {};
+  for (const [harness, defaults] of detections) {
+    if (defaults) {
+      updates[harness] = defaults;
+    }
+  }
+  return updates;
+}
+
 function shouldCreateSetupWorker(
   backend: string,
   args: string[],
@@ -1301,10 +1494,18 @@ function shouldCreateSetupWorker(
     return checkOk(doctorChecks, "hermes-api");
   }
 
+  if (backend === "standalone") {
+    return (
+      findOptionValue(args, "--command") !== undefined ||
+      findOptionValues(args, "--command-arg").length > 0
+    );
+  }
+
   return checkOk(doctorChecks, "openclaw-binary") && checkOk(doctorChecks, "openclaw-status");
 }
 
 async function runInteractiveSetupFlow(
+  args: string[],
   calibrator: WorkerCalibrator,
   observabilityStore: ObservabilityStore,
   registry: WorkerRegistry,
@@ -1324,10 +1525,11 @@ async function runInteractiveSetupFlow(
       setupImports.importedCodex,
       setupImports.importedHermes,
       setupImports.importedOpenClaw,
-      setupImports.importedSummary,
       setupImports.sinkDefaults,
       currentSettings.planner.testerSelectionStrategy,
     ),
+    loadHarnessDefaults: (harnesses) =>
+      detectSelectedSetupHarnessDefaults(args, setupImports, harnesses),
   });
   const createdWorkers: RegisteredWorker[] = [];
   for (const worker of await buildWorkersFromSetupPlans(wizardResult.workerPlans)) {
@@ -1617,6 +1819,10 @@ function defaultSetupWorkerName(backend: string): string {
     return "OpenClaw Worker";
   }
 
+  if (backend === "standalone") {
+    return "Standalone Worker";
+  }
+
   return "Codex Worker";
 }
 
@@ -1627,6 +1833,10 @@ function defaultSetupProfile(backend: string): string {
 
   if (backend === "openclaw") {
     return "openclaw/main";
+  }
+
+  if (backend === "standalone") {
+    return "standalone";
   }
 
   return "gpt-5.4";
@@ -2216,6 +2426,7 @@ async function runSetup(
 
   if (interactive) {
     const interactiveResult = await runInteractiveSetupFlow(
+      args,
       calibrator,
       observabilityStore,
       registry,
@@ -3318,7 +3529,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, calibrator, observabilityStore, registry, settingsStore, secretStore }) =>
       await runSetup(args, calibrator, observabilityStore, registry, settingsStore, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes|openclaw>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw|standalone>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--command <cmd>] [--command-arg <arg>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",

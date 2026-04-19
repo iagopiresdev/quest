@@ -557,6 +557,9 @@ quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
 # bootstrap an OpenClaw worker instead
 quest setup --yes --backend openclaw --openclaw-executable /path/to/openclaw
 
+# bootstrap a standalone local-command worker instead
+quest setup --yes --backend standalone --create-worker --command "bun ./worker.ts"
+
 # when flags are omitted, setup imports usable backend defaults from the local machine
 # examples:
 # - Codex native login or OPENAI_API_KEY

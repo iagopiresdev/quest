@@ -35,7 +35,7 @@ const HELP_SECTIONS: HelpSection[] = [
       },
       {
         comment: "Non-interactive bootstrap for scripts and agents",
-        invocation: "quest setup --yes --backend <codex|hermes|openclaw>",
+        invocation: "quest setup --yes --backend <codex|hermes|openclaw|standalone>",
       },
       {
         comment: "Probe binaries, backends, sinks, and state roots",

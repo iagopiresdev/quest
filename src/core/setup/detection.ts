@@ -104,18 +104,20 @@ export async function detectCodexSetup(explicitExecutable?: string): Promise<Det
     Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
     "codex",
   );
-  const versionResult = await runSubprocess({
-    cmd: [executable, "--version"],
-    cwd: Bun.env.PWD ?? ".",
-    env: buildProcessEnv(),
-    timeoutMs: 30_000,
-  });
-  const loginResult = await runSubprocess({
-    cmd: [executable, "login", "status"],
-    cwd: Bun.env.PWD ?? ".",
-    env: buildProcessEnv(),
-    timeoutMs: 30_000,
-  });
+  const [versionResult, loginResult] = await Promise.all([
+    runSubprocess({
+      cmd: [executable, "--version"],
+      cwd: Bun.env.PWD ?? ".",
+      env: buildProcessEnv(),
+      timeoutMs: 30_000,
+    }),
+    runSubprocess({
+      cmd: [executable, "login", "status"],
+      cwd: Bun.env.PWD ?? ".",
+      env: buildProcessEnv(),
+      timeoutMs: 30_000,
+    }),
+  ]);
 
   const openAiEnv = Bun.env.OPENAI_API_KEY?.trim();
   const useEnvVar = loginResult.exitCode !== 0 && !!openAiEnv;
@@ -182,18 +184,20 @@ export async function detectOpenClawSetup(
   const env = buildProcessEnv(
     options.gatewayUrl?.trim() ? { OPENCLAW_GATEWAY_URL: options.gatewayUrl.trim() } : undefined,
   );
-  const statusResult = await runSubprocess({
-    cmd: [executable, "status", "--json"],
-    cwd: Bun.env.PWD ?? ".",
-    env,
-    timeoutMs: 30_000,
-  });
-  const agentsListResult = await runSubprocess({
-    cmd: [executable, "agents", "list", "--json"],
-    cwd: Bun.env.PWD ?? ".",
-    env,
-    timeoutMs: 30_000,
-  });
+  const [statusResult, agentsListResult] = await Promise.all([
+    runSubprocess({
+      cmd: [executable, "status", "--json"],
+      cwd: Bun.env.PWD ?? ".",
+      env,
+      timeoutMs: 30_000,
+    }),
+    runSubprocess({
+      cmd: [executable, "agents", "list", "--json"],
+      cwd: Bun.env.PWD ?? ".",
+      env,
+      timeoutMs: 30_000,
+    }),
+  ]);
 
   const statusPayload =
     statusResult.exitCode === 0

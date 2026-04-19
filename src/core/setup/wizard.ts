@@ -14,13 +14,14 @@ import type { TesterSelectionStrategy } from "../settings";
 import { renderQuestBannerBlock } from "../ui/help";
 import { colorize } from "../ui/terminal";
 import type { WorkerUpdate } from "../workers/management";
+import { slugifyWorkerId } from "../workers/presets";
 import { defaultSetupArchetype, type SetupWizardPartyMode } from "./presets";
 
 // Harness = the runtime CLI/agent that actually executes a worker. The wizard treats this as a
 // presentation concept; the existing worker schema and adapter registry already model it via
 // `worker.backend.adapter`. Renamed from "Backend" because operators recognise this as the
 // industry term used by Anthropic + OpenAI for agent runtimes.
-export type SetupWizardHarness = "codex" | "hermes" | "openclaw";
+export type SetupWizardHarness = "codex" | "hermes" | "openclaw" | "standalone";
 export type SetupWizardHarnessChoice = SetupWizardHarness | "claude-code" | "opencode";
 // Backwards-compatible alias for callers that still spell it "backend" in their type imports
 // (e.g. cli.ts::buildSetupWizardDefaults). Internal call sites should prefer SetupWizardHarness.
@@ -55,6 +56,7 @@ type SetupWizardDefaults = {
   backend: SetupWizardHarness;
   baseUrl?: string;
   envVar?: string;
+  harnessDefaults?: Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>;
   importSummary?: string;
   profile?: string;
   sinkDefaults?: {
@@ -73,8 +75,22 @@ type SetupWizardDefaults = {
   testerSelectionStrategy: TesterSelectionStrategy;
 };
 
+export type SetupWizardHarnessDefaults = {
+  agentId?: string;
+  baseUrl?: string;
+  envVar?: string;
+  executable?: string;
+  importSummary?: string;
+  profile?: string;
+};
+
 type SetupWizardPromptContext = {
   defaults: SetupWizardDefaults;
+  loadHarnessDefaults?: (
+    harnesses: SetupWizardHarness[],
+  ) =>
+    | Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>
+    | Promise<Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>>;
 };
 
 // Live breadcrumb state the wizard mutates as prompts are answered. Each rendered page shows
@@ -85,7 +101,14 @@ type WizardProgress = {
   imports?: string[];
   sink?: string;
   trainingGrounds?: "yes" | "no";
-  workers: Array<{ archetype: string; harness: string; model: string; name: string; role: string }>;
+  workers: Array<{
+    archetype: string;
+    harness: string;
+    id: string;
+    model: string;
+    name: string;
+    role: string;
+  }>;
 };
 
 // Clack returns `symbol('clack.cancel')` when the user hits Ctrl+C. We treat that as a fatal
@@ -223,33 +246,6 @@ async function askConfirm(message: string, initial: boolean): Promise<boolean> {
   return unwrap(answer);
 }
 
-// Variant of askSelect that lets the caller substitute a friendly label per option value. Used
-// when the underlying value carries a sentinel string the operator should never see (e.g.
-// `__done_codex__`). All other options stay value-as-label.
-async function askSelectWithLabels<TValue extends string>(
-  message: string,
-  choices: readonly TValue[],
-  initial: TValue,
-  labels: Partial<Record<TValue, string>>,
-  hints?: Partial<Record<TValue, string>>,
-): Promise<TValue> {
-  const options = choices.map((value) => {
-    const hint = hints?.[value];
-    const label = labels[value] ?? value;
-    const entry: { hint?: string; label: string; value: TValue } = { label, value };
-    if (hint !== undefined) {
-      entry.hint = hint;
-    }
-    return entry;
-  }) as ReadonlyArray<{ hint?: string; label: string; value: TValue }>;
-  const answer = await select<TValue>({
-    initialValue: initial,
-    message,
-    options: options as Parameters<typeof select<TValue>>[0]["options"],
-  });
-  return unwrap(answer);
-}
-
 async function askSelect<TValue extends string>(
   message: string,
   choices: readonly TValue[],
@@ -292,7 +288,41 @@ const HARNESS_MODEL_CATALOG: Record<SetupWizardHarness, readonly string[]> = {
   codex: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.3-codex", "gpt-5.3-codex-spark"],
   hermes: [],
   openclaw: [],
+  standalone: [],
 };
+
+function defaultsForHarness(
+  defaults: SetupWizardDefaults,
+  harness: SetupWizardHarness,
+): SetupWizardHarnessDefaults {
+  const legacyDefaults =
+    defaults.backend === harness
+      ? {
+          ...(defaults.agentId ? { agentId: defaults.agentId } : {}),
+          ...(defaults.baseUrl ? { baseUrl: defaults.baseUrl } : {}),
+          ...(defaults.envVar ? { envVar: defaults.envVar } : {}),
+          ...(defaults.importSummary ? { importSummary: defaults.importSummary } : {}),
+          ...(defaults.profile ? { profile: defaults.profile } : {}),
+        }
+      : {};
+  return { ...legacyDefaults, ...(defaults.harnessDefaults?.[harness] ?? {}) };
+}
+
+function mergeHarnessDefaults(
+  defaults: SetupWizardDefaults,
+  updates: Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>,
+): SetupWizardDefaults {
+  const harnessDefaults: Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>> = {
+    ...(defaults.harnessDefaults ?? {}),
+  };
+  for (const harness of Object.keys(updates) as SetupWizardHarness[]) {
+    harnessDefaults[harness] = {
+      ...(harnessDefaults[harness] ?? {}),
+      ...(updates[harness] ?? {}),
+    };
+  }
+  return { ...defaults, harnessDefaults };
+}
 
 // Detected harness defaults the wizard pulls from `context.defaults`. cli.ts populates these
 // after running detection.ts probes; the wizard then asks per-harness whether to import.
@@ -308,32 +338,43 @@ function buildHarnessImportOffer(
   harness: SetupWizardHarness,
   defaults: SetupWizardDefaults,
 ): HarnessImportOffer | null {
-  if (!defaults.importSummary) {
+  const harnessDefaults = defaultsForHarness(defaults, harness);
+  if (!harnessDefaults.importSummary) {
     return null;
   }
   if (harness === "codex") {
     return {
-      description: defaults.importSummary,
-      importMarker: () =>
-        defaults.envVar ? ["--env-var", defaults.envVar] : ["--use-detected-codex"],
+      description: harnessDefaults.importSummary,
+      importMarker: () => {
+        const args = harnessDefaults.envVar
+          ? ["--auth-mode", "env-var", "--env-var", harnessDefaults.envVar]
+          : ["--auth-mode", "native-login"];
+        if (harnessDefaults.executable) {
+          args.push("--executable", harnessDefaults.executable);
+        }
+        return args;
+      },
     };
   }
-  if (harness === "hermes" && defaults.baseUrl) {
+  if (harness === "hermes" && harnessDefaults.baseUrl) {
     return {
-      description: defaults.importSummary,
-      importMarker: () => ["--base-url", defaults.baseUrl ?? "http://127.0.0.1:8000/v1"],
+      description: harnessDefaults.importSummary,
+      importMarker: () => ["--base-url", harnessDefaults.baseUrl ?? "http://127.0.0.1:8000/v1"],
     };
   }
-  if (harness === "openclaw" && (defaults.agentId || defaults.baseUrl)) {
+  if (harness === "openclaw" && (harnessDefaults.agentId || harnessDefaults.baseUrl)) {
     return {
-      description: defaults.importSummary,
+      description: harnessDefaults.importSummary,
       importMarker: () => {
         const args: string[] = [];
-        if (defaults.agentId) {
-          args.push("--agent-id", defaults.agentId);
+        if (harnessDefaults.agentId) {
+          args.push("--agent-id", harnessDefaults.agentId);
         }
-        if (defaults.baseUrl) {
-          args.push("--gateway-url", defaults.baseUrl);
+        if (harnessDefaults.baseUrl) {
+          args.push("--gateway-url", harnessDefaults.baseUrl);
+        }
+        if (harnessDefaults.executable) {
+          args.push("--executable", harnessDefaults.executable);
         }
         return args;
       },
@@ -348,6 +389,9 @@ function harnessLabel(harness: SetupWizardHarnessChoice): string {
   }
   if (harness === "opencode") {
     return "opencode";
+  }
+  if (harness === "standalone") {
+    return "standalone";
   }
   return harness;
 }
@@ -365,6 +409,9 @@ function harnessHint(harness: SetupWizardHarnessChoice): string {
   if (harness === "openclaw") {
     return "OpenClaw gateway agent";
   }
+  if (harness === "standalone") {
+    return "Standalone local command";
+  }
   return "Self-hosted Hermes endpoint";
 }
 
@@ -372,6 +419,7 @@ function harnessHint(harness: SetupWizardHarnessChoice): string {
 async function promptHarnesses(defaults: SetupWizardDefaults): Promise<SetupWizardHarness[]> {
   const allChoices: SetupWizardHarnessChoice[] = [
     "codex",
+    "standalone",
     "claude-code",
     "opencode",
     "openclaw",
@@ -395,7 +443,7 @@ async function promptHarnesses(defaults: SetupWizardDefaults): Promise<SetupWiza
   });
   const picked = unwrap(answer).filter(
     (value): value is SetupWizardHarness =>
-      value === "codex" || value === "hermes" || value === "openclaw",
+      value === "codex" || value === "hermes" || value === "openclaw" || value === "standalone",
   );
   if (picked.length === 0) {
     bail();
@@ -422,6 +470,8 @@ async function promptHarnessImports(
     if (accept) {
       importedArgs.set(harness, offer.importMarker());
       progress.imports = [...(progress.imports ?? []), harness];
+    } else {
+      importedArgs.set(harness, ["--no-import-existing"]);
     }
   }
   return importedArgs;
@@ -439,13 +489,33 @@ function listModelsForHarness(
   if (catalog.length > 0) {
     return [...catalog];
   }
-  if (defaults.profile) {
-    return [defaults.profile];
+  const harnessDefaults = defaultsForHarness(defaults, harness);
+  if (harnessDefaults.profile) {
+    return [harnessDefaults.profile];
   }
   if (harness === "hermes") {
     return ["hermes"];
   }
   return ["openai-codex/gpt-5.4"];
+}
+
+function uniqueWorkerId(
+  harness: SetupWizardHarness,
+  role: "builder" | "tester" | "hybrid",
+  name: string,
+  progress: WizardProgress,
+): string {
+  const baseId = slugifyWorkerId(`${harness}-${role}-${name}`, `${harness}-${role}-worker`);
+  const existingIds = new Set(progress.workers.map((worker) => worker.id));
+  if (!existingIds.has(baseId)) {
+    return baseId;
+  }
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${baseId}-${suffix}`;
+    if (!existingIds.has(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 // Per-worker registration page. Lands once the operator has picked a model from the harness's
@@ -458,7 +528,8 @@ async function promptWorkerForModel(
   importedArgs: string[],
   progress: WizardProgress,
 ): Promise<SetupWizardWorkerPlan> {
-  const sectionTitle = `Register ${harness}:${model}`;
+  const sectionTitle =
+    harness === "standalone" ? "Register standalone" : `Register ${harness}:${model}`;
 
   page(progress, sectionTitle);
   const role = await askSelect("Role", ["builder", "tester", "hybrid"] as const, "hybrid", {
@@ -472,33 +543,51 @@ async function promptWorkerForModel(
   // Default name is just the model id. The role class already shows up in the roster column,
   // and the archetype is invisible machinery derived from role, so prefixing the default with
   // either would repeat the same word up to three times per worker in the breadcrumb/summary.
-  const defaultName = model;
+  const defaultName = harness === "standalone" ? "Standalone Worker" : model;
   const name = await askText("Name", defaultName);
 
   // Archetype is derived from role to keep the wizard short. Power users can edit the worker
   // JSON post-setup to swap to a different archetype within the same role bucket
   // (`listSetupArchetypesForRole(role)` enumerates the alternatives).
   const archetype = defaultSetupArchetype(role);
+  const id = uniqueWorkerId(harness, role, name, progress);
 
-  const args: string[] = ["--name", name, "--profile", model, "--role", role, ...importedArgs];
+  const args: string[] = [
+    "--id",
+    id,
+    "--name",
+    name,
+    "--profile",
+    model,
+    "--role",
+    role,
+    ...importedArgs,
+  ];
+  const harnessDefaults = defaultsForHarness(defaults, harness);
 
   if (harness === "hermes" && !args.includes("--base-url")) {
     page(progress, sectionTitle);
     const baseUrl = await askText(
       "Hermes base URL",
-      defaults.baseUrl ?? "http://127.0.0.1:8000/v1",
+      harnessDefaults.baseUrl ?? "http://127.0.0.1:8000/v1",
     );
     args.push("--base-url", baseUrl);
   }
   if (harness === "openclaw" && !args.includes("--agent-id")) {
     page(progress, sectionTitle);
-    const agentId = await askText("OpenClaw agent id", defaults.agentId ?? "main");
+    const agentId = await askText("OpenClaw agent id", harnessDefaults.agentId ?? "main");
     args.push("--agent-id", agentId);
+  }
+  if (harness === "standalone") {
+    page(progress, sectionTitle);
+    const command = await askText("Command", "bun ./worker.ts");
+    args.push("--command", command);
   }
 
   progress.workers.push({
     archetype: archetype.label,
     harness,
+    id,
     model,
     name,
     role: roleClass,
@@ -512,57 +601,37 @@ async function promptWorkerForModel(
   };
 }
 
-// Worker registration loop for one harness. Shows the model list with a "Done with <harness>"
-// sentinel; selecting a model registers a new worker and returns to the list. At least one
-// worker per harness is enforced — picking "Done" before registering anything reopens the loop
-// with a hint.
+// Worker registration for one harness. Model-based harnesses use a multiselect so the operator
+// can choose all models in one pass. Standalone registers one local-command worker.
 async function promptWorkersForHarness(
   harness: SetupWizardHarness,
   defaults: SetupWizardDefaults,
   importedArgs: string[],
   progress: WizardProgress,
 ): Promise<SetupWizardWorkerPlan[]> {
-  const models = listModelsForHarness(harness, defaults);
-  // Sentinel value the operator never sees as a model name. We map it to a friendly label
-  // ("Done with <harness>") in the select via the option list below.
-  const doneSentinel = `__done_${harness}__` as const;
-  const doneLabel = `Done with ${harnessLabel(harness)}`;
-  const workers: SetupWizardWorkerPlan[] = [];
-
-  for (;;) {
-    page(progress, `${harnessLabel(harness)} models`);
-    const choices = [...models, doneSentinel];
-    const labels: Record<string, string> = {};
-    const hints: Record<string, string> = {};
-    for (const model of models) {
-      const existing = progress.workers.filter((w) => w.harness === harness && w.model === model);
-      labels[model] = model;
-      hints[model] =
-        existing.length > 0
-          ? `✓ already registered as ${existing.map((w) => w.name).join(", ")}`
-          : "Register a new worker that runs on this model";
-    }
-    labels[doneSentinel] = doneLabel;
-    hints[doneSentinel] =
-      workers.length > 0
-        ? `Move on (${workers.length} worker${workers.length === 1 ? "" : "s"} registered)`
-        : `Need at least one worker for ${harnessLabel(harness)}`;
-    const choice = await askSelectWithLabels(
-      `Pick a model to register (or Done)`,
-      choices as readonly string[],
-      models[0] ?? doneSentinel,
-      labels,
-      hints,
-    );
-    if (choice === doneSentinel) {
-      if (workers.length === 0) {
-        // Force at least one worker before advancing past this harness.
-        continue;
-      }
-      return workers;
-    }
-    workers.push(await promptWorkerForModel(harness, choice, defaults, importedArgs, progress));
+  if (harness === "standalone") {
+    return [await promptWorkerForModel(harness, "standalone", defaults, importedArgs, progress)];
   }
+
+  const models = listModelsForHarness(harness, defaults);
+  const workers: SetupWizardWorkerPlan[] = [];
+  page(progress, `${harnessLabel(harness)} models`);
+  const selectedModels = unwrap(
+    await multiselect<string>({
+      initialValues: models[0] ? [models[0]] : [],
+      message: `Pick one or more ${harnessLabel(harness)} models to register`,
+      options: models.map((model) => ({
+        hint: "Register a worker that runs on this model",
+        label: model,
+        value: model,
+      })),
+      required: true,
+    }),
+  );
+  for (const model of selectedModels) {
+    workers.push(await promptWorkerForModel(harness, model, defaults, importedArgs, progress));
+  }
+  return workers;
 }
 
 async function promptTelegramSinkPlan(
@@ -739,6 +808,10 @@ async function promptSinkPlan(
 
 function deriveCalibrationIds(workerPlans: SetupWizardWorkerPlan[]): string[] {
   return workerPlans.map((plan) => {
+    const id = readPlanArg(plan, "--id");
+    if (id) {
+      return id;
+    }
     const nameIndex = plan.args.indexOf("--name");
     const name = nameIndex >= 0 ? (plan.args[nameIndex + 1] ?? plan.backend) : plan.backend;
     return name
@@ -793,28 +866,36 @@ export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
   const progress: WizardProgress = { workers: [] };
+  let defaults = context.defaults;
 
   // Page 1: Harness multiselect
   page(progress, "Harnesses");
-  const harnesses = await promptHarnesses(context.defaults);
+  const harnesses = await promptHarnesses(defaults);
   progress.harnesses = harnesses;
+  if (context.loadHarnessDefaults) {
+    const harnessesNeedingDefaults = harnesses.filter(
+      (harness) => harness !== "standalone" && !defaultsForHarness(defaults, harness).importSummary,
+    );
+    if (harnessesNeedingDefaults.length > 0) {
+      const loadedDefaults = await withSpinner("Checking selected harness credentials...", () =>
+        context.loadHarnessDefaults?.(harnessesNeedingDefaults),
+      );
+      defaults = mergeHarnessDefaults(defaults, loadedDefaults ?? {});
+    }
+  }
 
   // Page 2..N: Per-harness import confirm
-  const importedArgsByHarness = await withSpinner("Checking detected credentials...", () =>
-    promptHarnessImports(harnesses, context.defaults, progress),
-  );
+  const importedArgsByHarness = await promptHarnessImports(harnesses, defaults, progress);
 
   // Page N+1..M: Worker registration loop, per harness
   const workerPlans: SetupWizardWorkerPlan[] = [];
   for (const harness of harnesses) {
     const importedArgs = importedArgsByHarness.get(harness) ?? [];
-    workerPlans.push(
-      ...(await promptWorkersForHarness(harness, context.defaults, importedArgs, progress)),
-    );
+    workerPlans.push(...(await promptWorkersForHarness(harness, defaults, importedArgs, progress)));
   }
 
   // Page M+1: Observability sink
-  const sinkPlan = await promptSinkPlan(context.defaults, progress);
+  const sinkPlan = await promptSinkPlan(defaults, progress);
 
   // Page M+2: Training Grounds
   page(progress, "Training Grounds");
@@ -831,7 +912,7 @@ export async function runSetupWizard(
         // Trial routing prompt was dropped — operators rarely have multiple testers and the
         // default 'balanced' is a safe choice for the common case. Power users can override
         // post-setup via `quest settings set planner.testerSelectionStrategy prefer-cheapest`.
-        testerSelectionStrategy: context.defaults.testerSelectionStrategy,
+        testerSelectionStrategy: defaults.testerSelectionStrategy,
       },
     },
     sinkPlan,

@@ -483,6 +483,34 @@ test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   expect(result.workers).toHaveLength(1);
 });
 
+test("quest cli setup can bootstrap a standalone local-command worker", () => {
+  const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
+  const workerScript = join(context.stateRoot, "worker.ts");
+  writeFileSync(workerScript, "await Bun.write(Bun.stdout, 'ok');\n", "utf8");
+
+  const setup = runCli(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "standalone",
+    "--create-worker",
+    "--codex-executable",
+    codexExecutable,
+    "--worker-name",
+    "Standalone",
+    "--command",
+    `bun ${workerScript}`,
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.createdWorker.id).toBe("standalone");
+  expect(result.createdWorker.backend.adapter).toBe("local-command");
+  expect(result.createdWorker.backend.runner).toBe("custom");
+  expect(result.createdWorker.backend.command).toEqual(["bun", workerScript]);
+});
+
 test("quest cli setup persists tester routing strategy", () => {
   const context = trackContext();
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
