@@ -7,10 +7,12 @@ import {
   note,
   outro,
   select,
+  spinner,
   text,
 } from "@clack/prompts";
 import type { TesterSelectionStrategy } from "../settings";
 import { renderQuestBannerBlock } from "../ui/help";
+import { colorize } from "../ui/terminal";
 import type { WorkerUpdate } from "../workers/management";
 import { defaultSetupArchetype, type SetupWizardPartyMode } from "./presets";
 
@@ -53,7 +55,10 @@ type SetupWizardDefaults = {
   backend: SetupWizardHarness;
   baseUrl?: string;
   envVar?: string;
+  existingWorkers?: Array<{ backend: SetupWizardHarness; model: string; name: string }>;
+  importSummaries?: Partial<Record<SetupWizardHarness, string>>;
   importSummary?: string;
+  modelCatalog?: Partial<Record<SetupWizardHarness, string[]>>;
   profile?: string;
   sinkDefaults?: {
     linearApiKeyEnv?: string;
@@ -86,6 +91,14 @@ type WizardProgress = {
   workers: Array<{ archetype: string; harness: string; model: string; name: string; role: string }>;
 };
 
+type WizardState = {
+  harnesses: SetupWizardHarness[];
+  importedArgsByHarness: Map<SetupWizardHarness, string[]>;
+  runCalibration: boolean;
+  sinkPlan: SetupWizardSinkPlan;
+  workerPlans: SetupWizardWorkerPlan[];
+};
+
 // Clack returns `symbol('clack.cancel')` when the user hits Ctrl+C. We treat that as a fatal
 // operator decision: emit the clack cancel banner and throw a stable sentinel the CLI entrypoint
 // can catch to exit with a non-zero code without a stack trace.
@@ -106,6 +119,19 @@ function unwrap<T>(value: T | symbol): T {
     bail();
   }
   return value as T;
+}
+
+async function withWizardSpinner<T>(message: string, task: () => Promise<T> | T): Promise<T> {
+  const activity = spinner();
+  activity.start(message);
+  try {
+    const result = await task();
+    activity.stop();
+    return result;
+  } catch (error: unknown) {
+    activity.error("Detection failed.");
+    throw error;
+  }
 }
 
 // Clear screen + move cursor home, then redraw the QUEST banner and a breadcrumb block
@@ -129,10 +155,20 @@ function renderBreadcrumb(progress: WizardProgress): string | null {
   const labelWidth = 16;
   const pad = (label: string): string => label.padEnd(labelWidth, " ");
   const row = (done: boolean, label: string, value: string): string => {
-    const marker = done ? "✓" : "◯";
+    const marker = done ? colorize("✓", "green") : colorize("◯", "dim");
     const shownValue = done ? value : "—";
     return `  ${marker} ${pad(label)}${shownValue}`;
   };
+  const topLevelSteps = [
+    progress.harnesses !== undefined && progress.harnesses.length > 0,
+    progress.workers.length > 0,
+    progress.sink !== undefined,
+    progress.trainingGrounds !== undefined,
+  ];
+  const doneSteps = topLevelSteps.filter(Boolean).length;
+  const barWidth = 18;
+  const filled = Math.round((doneSteps / topLevelSteps.length) * barWidth);
+  const progressBar = `[${"#".repeat(filled)}${"-".repeat(barWidth - filled)}] ${doneSteps}/${topLevelSteps.length}`;
 
   const sections: Array<{ rows: string[]; title: string }> = [];
 
@@ -168,7 +204,7 @@ function renderBreadcrumb(progress: WizardProgress): string | null {
     title: "Training",
   });
 
-  const blocks: string[] = [];
+  const blocks: string[] = [progressBar, ""];
   for (const section of sections) {
     blocks.push(section.title);
     blocks.push(...section.rows);
@@ -279,25 +315,26 @@ function buildHarnessImportOffer(
   harness: SetupWizardHarness,
   defaults: SetupWizardDefaults,
 ): HarnessImportOffer | null {
-  if (!defaults.importSummary) {
+  const importSummary = defaults.importSummaries?.[harness] ?? defaults.importSummary;
+  if (!importSummary) {
     return null;
   }
   if (harness === "codex") {
     return {
-      description: defaults.importSummary,
+      description: importSummary,
       importMarker: () =>
         defaults.envVar ? ["--env-var", defaults.envVar] : ["--use-detected-codex"],
     };
   }
   if (harness === "hermes" && defaults.baseUrl) {
     return {
-      description: defaults.importSummary,
+      description: importSummary,
       importMarker: () => ["--base-url", defaults.baseUrl ?? "http://127.0.0.1:8000/v1"],
     };
   }
   if (harness === "openclaw" && (defaults.agentId || defaults.baseUrl)) {
     return {
-      description: defaults.importSummary,
+      description: importSummary,
       importMarker: () => {
         const args: string[] = [];
         if (defaults.agentId) {
@@ -339,15 +376,15 @@ function harnessHint(harness: SetupWizardHarnessChoice): string {
   return "Self-hosted Hermes endpoint";
 }
 
+function detectHarnessChoices(): SetupWizardHarnessChoice[] {
+  return ["codex", "claude-code", "opencode", "openclaw", "hermes"];
+}
+
 // Multi-select list of all harnesses, with claude-code and opencode disabled until adapters land.
-async function promptHarnesses(defaults: SetupWizardDefaults): Promise<SetupWizardHarness[]> {
-  const allChoices: SetupWizardHarnessChoice[] = [
-    "codex",
-    "claude-code",
-    "opencode",
-    "openclaw",
-    "hermes",
-  ];
+async function promptHarnesses(
+  defaults: SetupWizardDefaults,
+  allChoices: SetupWizardHarnessChoice[],
+): Promise<SetupWizardHarness[]> {
   const options = allChoices.map((value) => {
     const disabled = value === "claude-code" || value === "opencode";
     return {
@@ -406,6 +443,10 @@ function listModelsForHarness(
   harness: SetupWizardHarness,
   defaults: SetupWizardDefaults,
 ): string[] {
+  const detectedModels = defaults.modelCatalog?.[harness] ?? [];
+  if (detectedModels.length > 0) {
+    return [...new Set(detectedModels)];
+  }
   const catalog = HARNESS_MODEL_CATALOG[harness];
   if (catalog.length > 0) {
     return [...catalog];
@@ -417,6 +458,15 @@ function listModelsForHarness(
     return ["hermes"];
   }
   return ["openai-codex/gpt-5.4"];
+}
+
+async function loadModelsForHarness(
+  harness: SetupWizardHarness,
+  defaults: SetupWizardDefaults,
+): Promise<string[]> {
+  return await withWizardSpinner(`Loading ${harnessLabel(harness)} models...`, () =>
+    listModelsForHarness(harness, defaults),
+  );
 }
 
 // Per-worker registration page. Lands once the operator has picked a model from the harness's
@@ -493,7 +543,7 @@ async function promptWorkersForHarness(
   importedArgs: string[],
   progress: WizardProgress,
 ): Promise<SetupWizardWorkerPlan[]> {
-  const models = listModelsForHarness(harness, defaults);
+  const models = await loadModelsForHarness(harness, defaults);
   // Sentinel value the operator never sees as a model name. We map it to a friendly label
   // ("Done with <harness>") in the select via the option list below.
   const doneSentinel = `__done_${harness}__` as const;
@@ -506,8 +556,19 @@ async function promptWorkersForHarness(
     const labels: Record<string, string> = {};
     const hints: Record<string, string> = {};
     for (const model of models) {
+      const registeredNames = [
+        ...(defaults.existingWorkers ?? [])
+          .filter((worker) => worker.backend === harness && worker.model === model)
+          .map((worker) => worker.name),
+        ...progress.workers
+          .filter((worker) => worker.harness === harness && worker.model === model)
+          .map((worker) => worker.name),
+      ];
       labels[model] = model;
-      hints[model] = "Register a new worker that runs on this model";
+      hints[model] =
+        registeredNames.length > 0
+          ? `already registered as ${registeredNames.join(", ")}`
+          : "Register a new worker that runs on this model";
     }
     labels[doneSentinel] = doneLabel;
     hints[doneSentinel] =
@@ -614,12 +675,12 @@ async function promptSinkPlan(
     ["none", "webhook", "telegram", "slack", "linear", "openclaw"] as const,
     "none",
     {
-      linear: "Issue tracker — cards move through workflow",
-      none: "Skip observability",
-      openclaw: "Pipe events into the OpenClaw gateway",
-      slack: "Post to a Slack channel webhook",
-      telegram: "Ping a Telegram chat with run updates",
-      webhook: "POST events to a generic HTTP endpoint",
+      linear: "LIN-123 state=in_review title=Quest update",
+      none: "No sink output",
+      openclaw: "openclaw quest-observability: run_landed",
+      slack: "#quests quest.run_landed status=ok",
+      telegram: "[Quest] run_landed status=ok",
+      webhook: "POST /quest {eventType,runId,status}",
     },
   );
   if (sinkKind === "none") {
@@ -743,6 +804,94 @@ function renderSummaryNote(result: SetupWizardResult): string {
   return lines.join("\n");
 }
 
+function buildWizardResult(
+  workerPlans: SetupWizardWorkerPlan[],
+  sinkPlan: SetupWizardSinkPlan,
+  runCalibration: boolean,
+  defaults: SetupWizardDefaults,
+): SetupWizardResult {
+  return {
+    calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
+    settingsUpdate: {
+      planner: {
+        // Trial routing prompt was dropped — operators rarely have multiple testers and the
+        // default 'balanced' is a safe choice for the common case. Power users can override
+        // post-setup via `quest settings set planner.testerSelectionStrategy prefer-cheapest`.
+        testerSelectionStrategy: defaults.testerSelectionStrategy,
+      },
+    },
+    sinkPlan,
+    workerPlans,
+  };
+}
+
+async function promptWorkerRoster(
+  harnesses: SetupWizardHarness[],
+  defaults: SetupWizardDefaults,
+  importedArgsByHarness: Map<SetupWizardHarness, string[]>,
+  progress: WizardProgress,
+): Promise<SetupWizardWorkerPlan[]> {
+  const workerPlans: SetupWizardWorkerPlan[] = [];
+  progress.workers = [];
+  for (const harness of harnesses) {
+    const importedArgs = importedArgsByHarness.get(harness) ?? [];
+    workerPlans.push(...(await promptWorkersForHarness(harness, defaults, importedArgs, progress)));
+  }
+  return workerPlans;
+}
+
+async function promptTrainingGrounds(progress: WizardProgress): Promise<boolean> {
+  page(progress, "Training Grounds");
+  const runCalibration = await askConfirm(
+    "Send new party members to the Training Grounds now?",
+    true,
+  );
+  progress.trainingGrounds = runCalibration ? "yes" : "no";
+  return runCalibration;
+}
+
+async function promptSummaryAction(
+  result: SetupWizardResult,
+  progress: WizardProgress,
+): Promise<"cancel" | "confirm" | "revise"> {
+  page(progress, "Setup Summary");
+  note(renderSummaryNote(result), "Setup Summary");
+  return await askSelectWithLabels(
+    "Next step",
+    ["confirm", "revise", "cancel"] as const,
+    "confirm",
+    {
+      cancel: "Cancel",
+      confirm: "Confirm and run doctor",
+      revise: "Revise a step",
+    },
+  );
+}
+
+function hasImportOffer(harnesses: SetupWizardHarness[], defaults: SetupWizardDefaults): boolean {
+  return harnesses.some((harness) => buildHarnessImportOffer(harness, defaults) !== null);
+}
+
+async function promptRevisionStep(
+  state: WizardState,
+  defaults: SetupWizardDefaults,
+  progress: WizardProgress,
+): Promise<"harnesses" | "imports" | "sink" | "training" | "workers"> {
+  page(progress, "Revise Setup");
+  const choices = (
+    hasImportOffer(state.harnesses, defaults)
+      ? ["harnesses", "imports", "workers", "sink", "training"]
+      : ["harnesses", "workers", "sink", "training"]
+  ) as Array<"harnesses" | "imports" | "sink" | "training" | "workers">;
+  return await askSelectWithLabels("Which step?", choices, choices[0] ?? "harnesses", {
+    harnesses: "Harnesses",
+    imports: "Credentials import",
+    sink: "Observability sink",
+    training: "Training Grounds",
+    workers: "Worker roster",
+  });
+}
+
 // `partyMode` exists only for backwards compatibility — internal code still references it via
 // SetupWizardPartyMode. The new wizard does not ask the operator; we infer it from the roster
 // (single hybrid → "hybrid", anything else → "split").
@@ -760,51 +909,116 @@ export async function runSetupWizard(
   context: SetupWizardPromptContext,
 ): Promise<SetupWizardResult> {
   const progress: WizardProgress = { workers: [] };
+  const state: WizardState = {
+    harnesses: [],
+    importedArgsByHarness: new Map(),
+    runCalibration: true,
+    sinkPlan: null,
+    workerPlans: [],
+  };
 
   // Page 1: Harness multiselect
+  const harnessChoices = await withWizardSpinner("Detecting harnesses...", () =>
+    detectHarnessChoices(),
+  );
   page(progress, "Harnesses");
-  const harnesses = await promptHarnesses(context.defaults);
-  progress.harnesses = harnesses;
+  state.harnesses = await promptHarnesses(context.defaults, harnessChoices);
+  progress.harnesses = state.harnesses;
 
   // Page 2..N: Per-harness import confirm
-  const importedArgsByHarness = await promptHarnessImports(harnesses, context.defaults, progress);
+  state.importedArgsByHarness = await promptHarnessImports(
+    state.harnesses,
+    context.defaults,
+    progress,
+  );
 
   // Page N+1..M: Worker registration loop, per harness
-  const workerPlans: SetupWizardWorkerPlan[] = [];
-  for (const harness of harnesses) {
-    const importedArgs = importedArgsByHarness.get(harness) ?? [];
-    workerPlans.push(
-      ...(await promptWorkersForHarness(harness, context.defaults, importedArgs, progress)),
+  state.workerPlans = await promptWorkerRoster(
+    state.harnesses,
+    context.defaults,
+    state.importedArgsByHarness,
+    progress,
+  );
+
+  // Page M+1: Observability sink
+  state.sinkPlan = await promptSinkPlan(context.defaults, progress);
+
+  // Page M+2: Training Grounds
+  state.runCalibration = await promptTrainingGrounds(progress);
+
+  let result = buildWizardResult(
+    state.workerPlans,
+    state.sinkPlan,
+    state.runCalibration,
+    context.defaults,
+  );
+  for (;;) {
+    const action = await promptSummaryAction(result, progress);
+    if (action === "cancel") {
+      bail();
+    }
+    if (action === "confirm") {
+      break;
+    }
+    const step = await promptRevisionStep(state, context.defaults, progress);
+    if (step === "harnesses") {
+      delete progress.harnesses;
+      delete progress.imports;
+      const revisedHarnessChoices = await withWizardSpinner("Detecting harnesses...", () =>
+        detectHarnessChoices(),
+      );
+      page(progress, "Harnesses");
+      state.harnesses = await promptHarnesses(context.defaults, revisedHarnessChoices);
+      progress.harnesses = state.harnesses;
+      state.importedArgsByHarness = await promptHarnessImports(
+        state.harnesses,
+        context.defaults,
+        progress,
+      );
+      state.workerPlans = await promptWorkerRoster(
+        state.harnesses,
+        context.defaults,
+        state.importedArgsByHarness,
+        progress,
+      );
+    } else if (step === "imports") {
+      delete progress.imports;
+      state.importedArgsByHarness = await promptHarnessImports(
+        state.harnesses,
+        context.defaults,
+        progress,
+      );
+      state.workerPlans = await promptWorkerRoster(
+        state.harnesses,
+        context.defaults,
+        state.importedArgsByHarness,
+        progress,
+      );
+    } else if (step === "workers") {
+      state.workerPlans = await promptWorkerRoster(
+        state.harnesses,
+        context.defaults,
+        state.importedArgsByHarness,
+        progress,
+      );
+    } else if (step === "sink") {
+      delete progress.sink;
+      state.sinkPlan = await promptSinkPlan(context.defaults, progress);
+    } else {
+      delete progress.trainingGrounds;
+      state.runCalibration = await promptTrainingGrounds(progress);
+    }
+    result = buildWizardResult(
+      state.workerPlans,
+      state.sinkPlan,
+      state.runCalibration,
+      context.defaults,
     );
   }
 
-  // Page M+1: Observability sink
-  const sinkPlan = await promptSinkPlan(context.defaults, progress);
-
-  // Page M+2: Training Grounds
-  page(progress, "Training Grounds");
-  const runCalibration = await askConfirm(
-    "Send new party members to the Training Grounds now?",
-    true,
-  );
-  progress.trainingGrounds = runCalibration ? "yes" : "no";
-
-  const result: SetupWizardResult = {
-    calibrateWorkerIds: runCalibration ? deriveCalibrationIds(workerPlans) : [],
-    settingsUpdate: {
-      planner: {
-        // Trial routing prompt was dropped — operators rarely have multiple testers and the
-        // default 'balanced' is a safe choice for the common case. Power users can override
-        // post-setup via `quest settings set planner.testerSelectionStrategy prefer-cheapest`.
-        testerSelectionStrategy: context.defaults.testerSelectionStrategy,
-      },
-    },
-    sinkPlan,
-    workerPlans,
-  };
   // `partyMode` returned to callers solely for back-compat; cli.ts no longer consumes it but
   // older builds + the on-disk settings schema still reference it. Inferred from the roster.
-  void inferPartyMode(workerPlans);
+  void inferPartyMode(state.workerPlans);
 
   process.stdout.write("\u001B[2J\u001B[H");
   process.stdout.write(renderQuestBannerBlock(72, true));
