@@ -7,10 +7,12 @@ import {
   note,
   outro,
   select,
+  spinner,
   text,
 } from "@clack/prompts";
 import type { TesterSelectionStrategy } from "../settings";
 import { renderQuestBannerBlock } from "../ui/help";
+import { colorize } from "../ui/terminal";
 import type { WorkerUpdate } from "../workers/management";
 import { defaultSetupArchetype, type SetupWizardPartyMode } from "./presets";
 
@@ -108,6 +110,19 @@ function unwrap<T>(value: T | symbol): T {
   return value as T;
 }
 
+async function withSpinner<T>(message: string, task: () => Promise<T> | T): Promise<T> {
+  const s = spinner();
+  s.start(message);
+  try {
+    const result = await task();
+    s.stop(message.replace("...", " done"));
+    return result;
+  } catch (error: unknown) {
+    s.stop(`${colorize("✗", "red")} failed`);
+    throw error;
+  }
+}
+
 // Clear screen + move cursor home, then redraw the QUEST banner and a breadcrumb block
 // summarizing completed steps. Called before every prompt to enforce "page per step" — operator
 // sees one decision at a time with a persistent header + progress panel.
@@ -129,10 +144,24 @@ function renderBreadcrumb(progress: WizardProgress): string | null {
   const labelWidth = 16;
   const pad = (label: string): string => label.padEnd(labelWidth, " ");
   const row = (done: boolean, label: string, value: string): string => {
-    const marker = done ? "✓" : "◯";
-    const shownValue = done ? value : "—";
+    const marker = done ? colorize("✓", "green") : colorize("◯", "dim");
+    const shownValue = done ? value : colorize("—", "dim");
     return `  ${marker} ${pad(label)}${shownValue}`;
   };
+
+  // Progress bar using block characters
+  const steps = [
+    { done: progress.harnesses !== undefined && progress.harnesses.length > 0, label: "Harness" },
+    { done: progress.workers.length > 0, label: "Roster" },
+    { done: progress.sink !== undefined, label: "Sink" },
+    { done: progress.trainingGrounds !== undefined, label: "Train" },
+  ];
+  const doneCount = steps.filter((s) => s.done).length;
+  const barWidth = 20;
+  const filled = Math.round((doneCount / steps.length) * barWidth);
+  const bar =
+    colorize("█".repeat(filled), "green") + colorize("░".repeat(barWidth - filled), "dim");
+  const progressLine = `${bar} ${doneCount}/${steps.length}`;
 
   const sections: Array<{ rows: string[]; title: string }> = [];
 
@@ -168,7 +197,7 @@ function renderBreadcrumb(progress: WizardProgress): string | null {
     title: "Training",
   });
 
-  const blocks: string[] = [];
+  const blocks: string[] = [progressLine, ""];
   for (const section of sections) {
     blocks.push(section.title);
     blocks.push(...section.rows);
@@ -506,8 +535,12 @@ async function promptWorkersForHarness(
     const labels: Record<string, string> = {};
     const hints: Record<string, string> = {};
     for (const model of models) {
+      const existing = progress.workers.filter((w) => w.harness === harness && w.model === model);
       labels[model] = model;
-      hints[model] = "Register a new worker that runs on this model";
+      hints[model] =
+        existing.length > 0
+          ? `✓ already registered as ${existing.map((w) => w.name).join(", ")}`
+          : "Register a new worker that runs on this model";
     }
     labels[doneSentinel] = doneLabel;
     hints[doneSentinel] =
@@ -618,8 +651,8 @@ async function promptSinkPlan(
       none: "Skip observability",
       openclaw: "Pipe events into the OpenClaw gateway",
       slack: "Post to a Slack channel webhook",
-      telegram: "Ping a Telegram chat with run updates",
-      webhook: "POST events to a generic HTTP endpoint",
+      telegram: "RPG cards (⚔️ Quest Accepted, 💀 Party Wiped)",
+      webhook: "POST JSON events to an HTTP endpoint",
     },
   );
   if (sinkKind === "none") {
@@ -767,7 +800,9 @@ export async function runSetupWizard(
   progress.harnesses = harnesses;
 
   // Page 2..N: Per-harness import confirm
-  const importedArgsByHarness = await promptHarnessImports(harnesses, context.defaults, progress);
+  const importedArgsByHarness = await withSpinner("Checking detected credentials...", () =>
+    promptHarnessImports(harnesses, context.defaults, progress),
+  );
 
   // Page N+1..M: Worker registration loop, per harness
   const workerPlans: SetupWizardWorkerPlan[] = [];
