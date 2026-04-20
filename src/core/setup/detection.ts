@@ -75,10 +75,8 @@ export type DetectedOpenClawSetup = {
 
 export type DetectedSinkSetup = {
   linearApiKeyEnv: string | null;
-  // When the local OpenClaw config exposes a Telegram bot token, setup can offer to import it into
-  // the quest secret store so operators avoid double-configuring the same credential. We only
-  // surface the fact that a token exists; the raw value stays in memory until the wizard prompt
-  // accepts the import.
+  // When the local OpenClaw config exposes a Telegram bot token, command-first setup can import it
+  // into the quest secret store so operators avoid double-configuring the same credential.
   openClawTelegramBotToken: string | null;
   openClawTelegramChatId: string | null;
   slackWebhookEnv: string | null;

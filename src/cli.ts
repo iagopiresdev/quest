@@ -2,7 +2,7 @@
 
 import { unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { confirm as clackConfirm, text as clackText, isCancel } from "@clack/prompts";
+import { confirm as clackConfirm, isCancel } from "@clack/prompts";
 import { ZodError } from "zod";
 import { generateRunChronicle, writeRunChronicle } from "./core/chronicles/generator";
 import {
@@ -51,18 +51,10 @@ import {
   type DetectedCodexSetup,
   type DetectedHermesSetup,
   type DetectedOpenClawSetup,
-  type DetectedSinkSetup,
   detectCodexSetup,
   detectHermesSetup,
   detectOpenClawSetup,
-  detectSinkSetup,
 } from "./core/setup/detection";
-import { parseTelegramSinkPlan } from "./core/setup/telegram-sink-plan";
-import {
-  runSetupWizard,
-  type SetupWizardHarness,
-  type SetupWizardHarnessDefaults,
-} from "./core/setup/wizard";
 import { isRecord } from "./core/shared/type-guards";
 import {
   ensureDirectory,
@@ -792,19 +784,6 @@ async function readQuestSpecInput(
   });
 }
 
-async function promptWithDefault(question: string, fallback: string): Promise<string> {
-  const answer = await clackText({
-    initialValue: fallback,
-    message: question,
-    placeholder: fallback,
-  });
-  if (isCancel(answer)) {
-    throw new Error(`Cancelled: ${question}`);
-  }
-  const trimmed = answer.trim();
-  return trimmed.length > 0 ? trimmed : fallback;
-}
-
 async function confirmWithDefault(question: string, fallback: boolean): Promise<boolean> {
   const answer = await clackConfirm({ initialValue: fallback, message: question });
   if (isCancel(answer)) {
@@ -1048,173 +1027,6 @@ function buildWorkerFromDetectedBackend(
   return buildOpenClawWorker(args, asOpenClawSetup(importedDefaults));
 }
 
-function buildSetupHarnessDefaults(
-  importedCodex: DetectedCodexSetup | null,
-  importedHermes: DetectedHermesSetup | null,
-  importedOpenClaw: DetectedOpenClawSetup | null,
-): NonNullable<Parameters<typeof runSetupWizard>[0]["defaults"]["harnessDefaults"]> {
-  const codexSummary = describeImportedBackendDefaults("codex", importedCodex);
-  const hermesSummary = describeImportedBackendDefaults("hermes", importedHermes);
-  const openClawSummary = describeImportedBackendDefaults("openclaw", importedOpenClaw);
-  return {
-    codex: {
-      ...(importedCodex?.envVar ? { envVar: importedCodex.envVar } : {}),
-      ...(importedCodex?.executable ? { executable: importedCodex.executable } : {}),
-      ...(codexSummary ? { importSummary: codexSummary } : {}),
-    },
-    hermes: {
-      ...(importedHermes?.baseUrl ? { baseUrl: importedHermes.baseUrl } : {}),
-      ...(importedHermes?.profile ? { profile: importedHermes.profile } : {}),
-      ...(hermesSummary ? { importSummary: hermesSummary } : {}),
-    },
-    openclaw: {
-      ...(importedOpenClaw?.agentId ? { agentId: importedOpenClaw.agentId } : {}),
-      ...(importedOpenClaw?.executable ? { executable: importedOpenClaw.executable } : {}),
-      ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
-      ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
-      ...(openClawSummary ? { importSummary: openClawSummary } : {}),
-    },
-    standalone: {},
-  };
-}
-
-function buildSetupWizardDefaults(
-  backend: string,
-  importedCodex: DetectedCodexSetup | null,
-  importedHermes: DetectedHermesSetup | null,
-  importedOpenClaw: DetectedOpenClawSetup | null,
-  sinkDefaults: DetectedSinkSetup,
-  testerSelectionStrategy: "balanced" | "prefer-cheapest",
-): Parameters<typeof runSetupWizard>[0]["defaults"] {
-  const normalizedBackend = (
-    backend === "hermes" || backend === "openclaw" || backend === "standalone" ? backend : "codex"
-  ) as SetupWizardHarness;
-  const harnessDefaults = buildSetupHarnessDefaults(
-    importedCodex,
-    importedHermes,
-    importedOpenClaw,
-  );
-  const selectedDefaults = harnessDefaults[normalizedBackend] ?? {};
-  return {
-    ...selectedDefaults,
-    backend: normalizedBackend,
-    harnessDefaults,
-    sinkDefaults: {
-      ...(sinkDefaults.linearApiKeyEnv ? { linearApiKeyEnv: sinkDefaults.linearApiKeyEnv } : {}),
-      ...(importedOpenClaw?.agentId ? { openClawAgentId: importedOpenClaw.agentId } : {}),
-      ...(importedOpenClaw?.gatewayUrl ? { openClawGatewayUrl: importedOpenClaw.gatewayUrl } : {}),
-      ...(sinkDefaults.openClawTelegramBotToken
-        ? { openClawTelegramBotToken: sinkDefaults.openClawTelegramBotToken }
-        : {}),
-      ...(sinkDefaults.openClawTelegramChatId
-        ? { openClawTelegramChatId: sinkDefaults.openClawTelegramChatId }
-        : {}),
-      ...(sinkDefaults.slackWebhookEnv ? { slackWebhookEnv: sinkDefaults.slackWebhookEnv } : {}),
-      ...(sinkDefaults.telegramBotTokenEnv
-        ? { telegramBotTokenEnv: sinkDefaults.telegramBotTokenEnv }
-        : {}),
-    },
-    testerSelectionStrategy,
-  };
-}
-
-async function buildWorkersFromSetupPlans(
-  plans: Array<{ args: string[]; backend: SetupWizardHarness; update: WorkerUpdate }>,
-): Promise<RegisteredWorker[]> {
-  const workers: RegisteredWorker[] = [];
-  for (const plan of plans) {
-    const importedDefaults = await detectBackendDefaults(plan.backend, plan.args);
-    const baseWorker = buildWorkerFromDetectedBackend(plan.backend, plan.args, importedDefaults);
-    workers.push(registeredWorkerSchema.parse(applyWorkerUpdate(baseWorker, plan.update)));
-  }
-  return workers;
-}
-
-async function configureSetupSink(
-  observabilityStore: ObservabilityStore,
-  secretStore: SecretStore,
-  sinkPlan: Awaited<ReturnType<typeof runSetupWizard>>["sinkPlan"],
-): Promise<Record<string, unknown> | null> {
-  if (!sinkPlan) {
-    return null;
-  }
-
-  if (sinkPlan.kind === "webhook") {
-    return await observabilityStore.upsertWebhookSink(
-      webhookSinkSchema.parse({
-        enabled: true,
-        eventTypes: [],
-        id: "setup-webhook",
-        type: "webhook",
-        url: requireOptionValue(sinkPlan.args, "--url", "--url <https://...>"),
-      }),
-    );
-  }
-
-  if (sinkPlan.kind === "telegram") {
-    // Wizard asked whether to render RPG flavor cards and whether to import the bot token from
-    // ~/.openclaw/openclaw.json. Translation from the wizard args is pure and tested in
-    // `telegram-sink-plan.test.ts`; here we just bind it to side effects.
-    const plan = parseTelegramSinkPlan(sinkPlan.args);
-    if (plan.importOpenClawBotToken && plan.botTokenSecretRef) {
-      await secretStore.setSecret(plan.botTokenSecretRef, plan.importOpenClawBotToken);
-    }
-    return await observabilityStore.upsertTelegramSink(
-      telegramSinkSchema.parse({
-        botTokenEnv: plan.botTokenEnv,
-        botTokenSecretRef: plan.botTokenSecretRef,
-        chatId: plan.chatId,
-        enabled: true,
-        eventTypes: [],
-        id: "setup-telegram",
-        ...(plan.parseMode ? { parseMode: plan.parseMode } : {}),
-        type: "telegram",
-      }),
-    );
-  }
-
-  if (sinkPlan.kind === "slack") {
-    return await observabilityStore.upsertSlackSink(
-      slackSinkSchema.parse({
-        enabled: true,
-        eventTypes: [],
-        id: "setup-slack",
-        secretRef: findOptionValue(sinkPlan.args, "--secret-ref"),
-        type: "slack",
-        url: findOptionValue(sinkPlan.args, "--url"),
-        urlEnv: findOptionValue(sinkPlan.args, "--url-env"),
-      }),
-    );
-  }
-
-  if (sinkPlan.kind === "openclaw") {
-    return await observabilityStore.upsertOpenClawSink(
-      openClawSinkSchema.parse({
-        agentId: requireOptionValue(sinkPlan.args, "--agent-id", "--agent-id <id>"),
-        enabled: true,
-        eventTypes: [],
-        executable: findOptionValue(sinkPlan.args, "--openclaw-executable"),
-        gatewayUrl: findOptionValue(sinkPlan.args, "--gateway-url"),
-        id: "setup-openclaw",
-        sessionId: findOptionValue(sinkPlan.args, "--session-id"),
-        type: "openclaw",
-      }),
-    );
-  }
-
-  return await observabilityStore.upsertLinearSink(
-    linearSinkSchema.parse({
-      apiKeyEnv: findOptionValue(sinkPlan.args, "--api-key-env"),
-      apiKeySecretRef: findOptionValue(sinkPlan.args, "--api-key-secret-ref"),
-      enabled: true,
-      eventTypes: [],
-      id: "setup-linear",
-      issueId: requireOptionValue(sinkPlan.args, "--issue-id", "--issue-id <id>"),
-      type: "linear",
-    }),
-  );
-}
-
 async function runSetupCalibrations(
   calibrator: WorkerCalibrator,
   createdWorkers: RegisteredWorker[],
@@ -1330,7 +1142,6 @@ type SetupImports = {
   importedHermes: DetectedHermesSetup | null;
   importedOpenClaw: DetectedOpenClawSetup | null;
   importedSummary: string | undefined;
-  sinkDefaults: DetectedSinkSetup;
 };
 
 type SetupWorkerState = {
@@ -1417,56 +1228,7 @@ async function detectSetupImports(args: string[]): Promise<SetupImports> {
     importedHermes: asHermesSetup(importedDefaults),
     importedOpenClaw,
     importedSummary: describeImportedBackendDefaults(backend, importedDefaults),
-    sinkDefaults: await detectSinkSetup(),
   };
-}
-
-async function detectSetupHarnessDefault(
-  harness: SetupWizardHarness,
-  args: string[],
-): Promise<SetupWizardHarnessDefaults | null> {
-  const importedDefaults = await detectBackendDefaults(harness, args);
-  const defaults = buildSetupHarnessDefaults(
-    asCodexSetup(importedDefaults),
-    asHermesSetup(importedDefaults),
-    asOpenClawSetup(importedDefaults),
-  );
-  return defaults[harness] ?? null;
-}
-
-async function detectSelectedSetupHarnessDefaults(
-  args: string[],
-  setupImports: SetupImports,
-  harnesses: SetupWizardHarness[],
-): Promise<Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>> {
-  if (!shouldImportExisting(args)) {
-    return {};
-  }
-
-  const selectedHarnesses = new Set(harnesses);
-  const detections = await Promise.all(
-    (["codex", "hermes", "openclaw"] as const).map(async (harness) => {
-      if (!selectedHarnesses.has(harness)) {
-        return [harness, null] as const;
-      }
-      if (
-        (harness === "codex" && setupImports.importedCodex) ||
-        (harness === "hermes" && setupImports.importedHermes) ||
-        (harness === "openclaw" && setupImports.importedOpenClaw)
-      ) {
-        return [harness, null] as const;
-      }
-      return [harness, await detectSetupHarnessDefault(harness, args)] as const;
-    }),
-  );
-
-  const updates: Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>> = {};
-  for (const [harness, defaults] of detections) {
-    if (defaults) {
-      updates[harness] = defaults;
-    }
-  }
-  return updates;
 }
 
 function shouldCreateSetupWorker(
@@ -1504,55 +1266,11 @@ function shouldCreateSetupWorker(
   return checkOk(doctorChecks, "openclaw-binary") && checkOk(doctorChecks, "openclaw-status");
 }
 
-async function runInteractiveSetupFlow(
-  args: string[],
-  calibrator: WorkerCalibrator,
-  observabilityStore: ObservabilityStore,
-  registry: WorkerRegistry,
-  secretStore: SecretStore,
-  settingsStore: QuestSettingsStore,
-  setupImports: SetupImports,
-): Promise<{
-  calibrationResults: Array<{ runId: string; status: string; workerId: string }>;
-  configuredSink: Record<string, unknown> | null;
-  settings: Awaited<ReturnType<QuestSettingsStore["writeSettings"]>>;
-  workerState: SetupWorkerState;
-}> {
-  const currentSettings = await settingsStore.readSettings();
-  const wizardResult = await runSetupWizard({
-    defaults: buildSetupWizardDefaults(
-      setupImports.backend,
-      setupImports.importedCodex,
-      setupImports.importedHermes,
-      setupImports.importedOpenClaw,
-      setupImports.sinkDefaults,
-      currentSettings.planner.testerSelectionStrategy,
-    ),
-    loadHarnessDefaults: (harnesses) =>
-      detectSelectedSetupHarnessDefaults(args, setupImports, harnesses),
-  });
-  const createdWorkers: RegisteredWorker[] = [];
-  for (const worker of await buildWorkersFromSetupPlans(wizardResult.workerPlans)) {
-    createdWorkers.push(await registry.upsertWorker(worker));
+function shouldRunSetupCalibration(args: string[]): boolean {
+  if (hasFlag(args, "--skip-calibration")) {
+    return false;
   }
-
-  return {
-    calibrationResults: await runSetupCalibrations(
-      calibrator,
-      createdWorkers,
-      wizardResult.calibrateWorkerIds,
-    ),
-    configuredSink: await configureSetupSink(
-      observabilityStore,
-      secretStore,
-      wizardResult.sinkPlan,
-    ),
-    settings: await settingsStore.writeSettings(wizardResult.settingsUpdate),
-    workerState: {
-      createdWorker: createdWorkers[0] ?? null,
-      createdWorkers,
-    },
-  };
+  return hasFlag(args, "--calibrate") || hasFlag(args, "--training");
 }
 
 type NonInteractiveSetupInputs = {
@@ -1568,41 +1286,25 @@ async function resolveNonInteractiveSetupInputs(
   backend: string,
   importedHermes: DetectedHermesSetup | null,
   importedOpenClaw: DetectedOpenClawSetup | null,
-  interactive: boolean,
 ): Promise<NonInteractiveSetupInputs> {
-  let workerName = findOptionValue(args, "--worker-name") ?? defaultSetupWorkerName(backend);
-  let profile =
+  const workerName = findOptionValue(args, "--worker-name") ?? defaultSetupWorkerName(backend);
+  const profile =
     findOptionValue(args, "--profile") ??
     importedHermes?.profile ??
     importedOpenClaw?.profile ??
     defaultSetupProfile(backend);
-  let baseUrl =
+  const baseUrl =
     findOptionValue(args, "--base-url") ??
     findOptionValue(args, "--hermes-base-url") ??
     importedHermes?.baseUrl ??
     importedOpenClaw?.gatewayUrl ??
     "http://127.0.0.1:8000/v1";
-  let agentId = findOptionValue(args, "--agent-id") ?? importedOpenClaw?.agentId ?? "main";
-  let createWorker = true;
-
-  if (interactive) {
-    createWorker = await confirmWithDefault(`Create a ${backend} worker now?`, true);
-    if (createWorker) {
-      workerName = await promptWithDefault("Worker name", workerName);
-      profile = await promptWithDefault("Worker profile", profile);
-      if (backend === "hermes") {
-        baseUrl = await promptWithDefault("Hermes base URL", baseUrl);
-      }
-      if (backend === "openclaw") {
-        agentId = await promptWithDefault("OpenClaw agent id", agentId);
-      }
-    }
-  }
+  const agentId = findOptionValue(args, "--agent-id") ?? importedOpenClaw?.agentId ?? "main";
 
   return {
     agentId,
     baseUrl,
-    createWorker,
+    createWorker: true,
     profile,
     workerName,
   };
@@ -1615,7 +1317,6 @@ async function runNonInteractiveSetupFlow(
   importedDefaults: DetectedCodexSetup | DetectedHermesSetup | DetectedOpenClawSetup | null,
   importedHermes: DetectedHermesSetup | null,
   importedOpenClaw: DetectedOpenClawSetup | null,
-  interactive: boolean,
   registry: WorkerRegistry,
 ): Promise<SetupWorkerState> {
   const inputs = await resolveNonInteractiveSetupInputs(
@@ -1623,7 +1324,6 @@ async function runNonInteractiveSetupFlow(
     backend,
     importedHermes,
     importedOpenClaw,
-    interactive,
   );
   if (!inputs.createWorker) {
     return {
@@ -2415,48 +2115,37 @@ async function runSetup(
     setupImports.importedCodex,
   );
 
-  const interactive = stdinIsTty() && !hasFlag(args, "--yes");
   let workerState: SetupWorkerState = {
     createdWorker: null,
     createdWorkers: [],
   };
   let calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
-  let configuredSink: Record<string, unknown> | null = null;
+  const configuredSink: Record<string, unknown> | null = null;
   let settings = await settingsStore.readSettings();
 
-  if (interactive) {
-    const interactiveResult = await runInteractiveSetupFlow(
+  const testerSelection = findOptionValue(args, "--tester-selection");
+  if (testerSelection === "balanced" || testerSelection === "prefer-cheapest") {
+    settings = await settingsStore.writeSettings({
+      planner: {
+        testerSelectionStrategy: testerSelection,
+      },
+    });
+  }
+  if (shouldCreateWorker) {
+    workerState = await runNonInteractiveSetupFlow(
       args,
-      calibrator,
-      observabilityStore,
+      setupImports.backend,
+      setupImports.importedCodex,
+      setupImports.importedDefaults,
+      setupImports.importedHermes,
+      setupImports.importedOpenClaw,
       registry,
-      secretStore,
-      settingsStore,
-      setupImports,
     );
-    calibrationResults = interactiveResult.calibrationResults;
-    configuredSink = interactiveResult.configuredSink;
-    settings = interactiveResult.settings;
-    workerState = interactiveResult.workerState;
-  } else {
-    const testerSelection = findOptionValue(args, "--tester-selection");
-    if (testerSelection === "balanced" || testerSelection === "prefer-cheapest") {
-      settings = await settingsStore.writeSettings({
-        planner: {
-          testerSelectionStrategy: testerSelection,
-        },
-      });
-    }
-    if (shouldCreateWorker) {
-      workerState = await runNonInteractiveSetupFlow(
-        args,
-        setupImports.backend,
-        setupImports.importedCodex,
-        setupImports.importedDefaults,
-        setupImports.importedHermes,
-        setupImports.importedOpenClaw,
-        interactive,
-        registry,
+    if (shouldRunSetupCalibration(args)) {
+      calibrationResults = await runSetupCalibrations(
+        calibrator,
+        workerState.createdWorkers,
+        workerState.createdWorkers.map((worker) => worker.id),
       );
     }
   }
@@ -3529,7 +3218,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, calibrator, observabilityStore, registry, settingsStore, secretStore }) =>
       await runSetup(args, calibrator, observabilityStore, registry, settingsStore, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes|openclaw|standalone>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--command <cmd>] [--command-arg <arg>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw|standalone>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--calibrate] [--skip-calibration] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--command <cmd>] [--command-arg <arg>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",

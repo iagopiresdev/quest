@@ -1432,6 +1432,78 @@ test("run executor completes a planned run with the openclaw-cli adapter", async
   }
 });
 
+test("run executor fails openclaw-cli runs when payload reports an API error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry, new SecretStore());
+
+  try {
+    const openClawExecutable = createOpenClawMockExecutable(root, {
+      payloadText:
+        "HTTP 500 api_error: your current token plan not support model, MiniMax-M2.7-highspeed (2061)",
+    });
+
+    await workerRegistry.upsertWorker(
+      createWorker("minimax", "openclaw-cli", undefined, {
+        agentId: "main",
+        executable: openClawExecutable,
+        profile: "minimax/MiniMax-M2.7-highspeed",
+        runner: "openclaw",
+      }),
+    );
+
+    const spec: QuestSpec = {
+      acceptanceChecks: [],
+      execution: {
+        preInstall: false,
+        shareSourceDependencies: true,
+        testerSelectionStrategy: "balanced",
+        timeoutMinutes: 20,
+      },
+      featureDoc: { enabled: false },
+      hotspots: [],
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Validate MiniMax payload error handling",
+          id: "minimax-error",
+          owns: ["status.ts"],
+          preferredRunner: "openclaw",
+          title: "MiniMax error",
+        },
+      ],
+      title: "OpenClaw API error",
+      version: 1,
+      workspace: "command-center",
+    };
+
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+
+    try {
+      await executor.executeRun(run.id);
+      throw new Error("Expected quest_runner_command_failed");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(QuestDomainError);
+      expect((error as QuestDomainError).code).toBe("quest_runner_command_failed");
+      expect((error as QuestDomainError).message).toContain("MiniMax-M2.7-highspeed");
+    }
+
+    const failedRun = await runStore.getRun(run.id);
+    expect(failedRun.status).toBe("failed");
+    expect(failedRun.slices[0]?.status).toBe("failed");
+    expect(failedRun.slices[0]?.lastError).toContain("MiniMax-M2.7-highspeed");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor resolves secret-store auth for codex-cli workers", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");

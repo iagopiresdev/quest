@@ -509,8 +509,8 @@ bun run install:local
 # 2. Sanity check the binary and state root.
 quest doctor --json
 
-# 3. Create the first worker. `--yes` skips the TUI; pass `--backend` explicitly so the agent
-#    doesn't have to parse interactive prompts.
+# 3. Create the first worker. `quest setup` is non-interactive; pass `--backend` explicitly so
+#    agent runs stay deterministic.
 quest setup --yes --backend codex
 
 # 4. (Optional) Wire Telegram observability cards. Import the bot token from OpenClaw's config
@@ -533,12 +533,6 @@ quest observability telegram upsert \
 bun ./scripts/canaries/agent-driven-install.ts
 ```
 
-Same flow with the interactive TUI (the wizard auto-detects the OpenClaw bot token and pre-fills the chat id from `allowFrom[0]`, then asks whether to render RPG flavor cards):
-
-```sh
-quest setup
-```
-
 ### Other commands
 
 ```sh
@@ -548,7 +542,7 @@ bun run install:local
 # bootstrap state paths and optionally create the first Codex worker
 quest setup --yes
 
-# launch the interactive setup TUI
+# same setup path; --yes is accepted for compatibility but no longer changes behavior
 quest setup
 
 # bootstrap a Hermes worker instead
@@ -566,12 +560,7 @@ quest setup --yes --backend standalone --create-worker --command "bun ./worker.t
 # - first reachable Hermes model from /models
 # - preferred OpenClaw agent (codex first, then first listed agent)
 # - sink auth defaults from TELEGRAM_BOT_TOKEN, SLACK_WEBHOOK_URL, and LINEAR_API_KEY when present
-# - Telegram bot token + default chat id imported from ~/.openclaw/openclaw.json when available
-#   (interactive setup offers an `openclaw-import` auth mode that copies the token into the quest
-#    secret store and wires the sink to use it)
-# - interactive setup also asks whether to render observability events as RPG flavor cards
-#   (HTML parse mode) so Telegram notifications arrive as "⚔️ Quest Accepted" cards instead of
-#   plain text
+# - use explicit `quest observability ... upsert` commands for sinks so agent setup is reproducible
 
 # upsert a worker from stdin JSON
 cat worker.json | quest workers upsert --stdin
@@ -807,14 +796,6 @@ quest doctor --check-openclaw --agent-id codex
 quest doctor --test-sinks
 quest doctor --test-sinks --sink-id local-openclaw
 
-# the interactive setup flow lets you choose:
-# - backend
-# - hybrid vs split party mode
-# - builder/tester archetypes and strengths
-# - tester routing strategy
-# - one observability sink
-# - optional Training Grounds calibration
-
 # remove quest-managed workspaces for a run
 # completed source-repo runs must be integrated before cleanup
 # aborted source-repo runs can be cleaned directly
@@ -889,7 +870,7 @@ Do not commit runtime state, tokens, or local config.
 ## Current v0 scope
 
 - typed worker registry
-- interactive setup TUI for Codex, Hermes, or OpenClaw workers with party mode, archetype-based strengths, optional sink wiring, and optional Training Grounds calibration
+- non-interactive setup for Codex, Hermes, OpenClaw, and standalone local-command workers
 - typed quest specs and conservative wave planning
 - explicit worker forcing for plan/run/rerun flows
 - persisted quest runs plus run events

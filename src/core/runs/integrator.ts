@@ -216,7 +216,21 @@ async function listChangedWorkspacePaths(cwd: string): Promise<string[]> {
 }
 
 function isQuestManagedArtifactPath(path: string): boolean {
-  return path === ".quest-runner" || path.startsWith(".quest-runner/");
+  return (
+    path === ".openclaw" ||
+    path.startsWith(".openclaw/") ||
+    path === ".quest-runner" ||
+    path.startsWith(".quest-runner/") ||
+    [
+      "AGENTS.md",
+      "BOOTSTRAP.md",
+      "HEARTBEAT.md",
+      "IDENTITY.md",
+      "SOUL.md",
+      "TOOLS.md",
+      "USER.md",
+    ].includes(path)
+  );
 }
 
 async function directoryHasEntries(path: string): Promise<boolean> {

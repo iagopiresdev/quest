@@ -265,11 +265,10 @@ function renderLogoBlock(): string[] {
   return LOGO_ROWS.map((row, index) => colorizeRgb(row, gradientForRow(index, LOGO_ROWS.length)));
 }
 
-// Exported so interactive entry points (setup wizard, doctor, party create) can open with the
-// same QUEST wordmark + tagline block that `quest help` renders. Non-TTY callers get a plain
-// one-liner so CI logs and pipes stay clean. Interactive entry points that know they are in a
-// TTY (because clack would not otherwise be invoked) can pass `forceInteractive=true` to bypass
-// the ambient `isTTY` check, which is unreliable under compiled binaries + VHS ttyd emulation.
+// Exported so interactive entry points (doctor, party create) can open with the same QUEST
+// wordmark + tagline block that `quest help` renders. Non-TTY callers get a plain one-liner so CI
+// logs and pipes stay clean. Interactive entry points can pass `forceInteractive=true` to bypass
+// the ambient `isTTY` check when needed.
 export function renderQuestBannerBlock(width = 72, forceInteractive = false): string {
   const lines: string[] = [];
   if (!forceInteractive && !isInteractiveOutput()) {

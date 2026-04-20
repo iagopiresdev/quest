@@ -157,6 +157,7 @@ export function createOpenClawMockExecutable(
     noisyAgentsList?: boolean;
     richAgentsList?: boolean;
     noisyStatus?: boolean;
+    payloadText?: string;
     version?: string;
     writeFile?: { content: string; path: string } | undefined;
   } = {},
@@ -176,6 +177,7 @@ export function createOpenClawMockExecutable(
   const noisyAgentsList = options.noisyAgentsList ?? false;
   const richAgentsList = options.richAgentsList ?? false;
   const noisyStatus = options.noisyStatus ?? false;
+  const payloadText = options.payloadText ?? "OpenClaw updated the workspace";
   const writeFile = options.writeFile;
   const mutationBlock = writeFile
     ? [
@@ -252,7 +254,7 @@ export function createOpenClawMockExecutable(
       jsonToStderr ? "  cat >&2 <<'EOF'" : "  cat <<'EOF'",
       JSON.stringify({
         result: {
-          payloads: [{ text: "OpenClaw updated the workspace" }],
+          payloads: [{ text: payloadText }],
           summary: "OpenClaw completed the slice",
         },
       }),

@@ -74,6 +74,43 @@ function resolveOpenClawSummary(responseBody: unknown): string | null {
   return topLevelSummary && topLevelSummary.length > 0 ? topLevelSummary : null;
 }
 
+function isOpenClawApiErrorText(text: string): boolean {
+  return (
+    /\bHTTP\s+\d{3}\b.*\bapi_error\b/i.test(text) ||
+    /\bapi_error:/i.test(text) ||
+    /\bnot support model\b/i.test(text)
+  );
+}
+
+function assertOpenClawResponseSucceeded(
+  responseBody: unknown,
+  command: string[],
+  workerId: string,
+): void {
+  const parsed = openClawAgentResponseSchema.safeParse(responseBody);
+  if (!parsed.success) {
+    return;
+  }
+
+  const errorText = parsed.data.result?.payloads
+    ?.map((payload) => payload.text?.trim() ?? "")
+    .find((text) => text.length > 0 && isOpenClawApiErrorText(text));
+  if (!errorText) {
+    return;
+  }
+
+  throw new QuestDomainError({
+    code: "quest_runner_command_failed",
+    details: {
+      command,
+      summary: errorText,
+      workerId,
+    },
+    message: `OpenClaw reported an API error for ${workerId}: ${errorText}`,
+    statusCode: 1,
+  });
+}
+
 function readProviderOption(
   options: Record<string, string> | undefined,
   ...keys: string[]
@@ -329,9 +366,13 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
     let summary = stdout.trim();
     try {
       const responseBody = parseOpenClawJsonOutput(stdout, stderr);
+      assertOpenClawResponseSucceeded(responseBody, command, context.worker.id);
       summary =
         resolveOpenClawSummary(responseBody) ?? `OpenClaw completed slice ${context.slice.id}`;
-    } catch {
+    } catch (error) {
+      if (error instanceof QuestDomainError) {
+        throw error;
+      }
       if (summary.length === 0) {
         summary = stderr.trim();
       }

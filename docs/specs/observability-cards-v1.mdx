@@ -1,6 +1,6 @@
 ---
 title: Observability Cards v1
-description: Telegram HTML cards with RPG flavor copy for observability events, plus a setup-wizard opt-in and OpenClaw credential import.
+description: Telegram HTML cards with RPG flavor copy for observability events and explicit CLI setup.
 ---
 
 # Observability Cards v1
@@ -16,12 +16,12 @@ Telegram is the only sink on the list with native support for rich presentation 
 - Plain-text messages bury the event type at line 2 instead of the top.
 - No visual distinction between dispatch, success, and failure.
 - User-supplied strings (party names, error messages) are interpolated verbatim, so a hostile repo name would land in the sink unescaped. Not exploited today but a real injection surface once Markdown/HTML formatters arrive.
-- The setup wizard had no way to opt into richer formatting. Operators had to know to re-run `observability telegram upsert --parse-mode HTML` manually.
+- Setup had no single documented command-first path for richer Telegram formatting. Operators had to know to run `observability telegram upsert --parse-mode HTML` manually.
 - When a local OpenClaw config already contains a Telegram bot token, the operator had to re-enter it for Quest Runner.
 
 ## Goal
 
-Ship a Telegram-only HTML card builder with RPG flavor copy, route the Telegram sink through it when `parseMode === "HTML"`, wire an opt-in prompt into the setup wizard, and surface an `openclaw-import` auth mode that reuses the OpenClaw bot token and default chat id.
+Ship a Telegram-only HTML card builder with RPG flavor copy, route the Telegram sink through it when `parseMode === "HTML"`, and document a command-first path that can reuse the OpenClaw bot token and default chat id.
 
 ## Non-Goals
 
@@ -42,25 +42,28 @@ Back-compat: existing Linear sinks with `useRpgCards` unset keep the plain-text 
 ## Domain Impact
 
 - `src/core/observability/` gets one new bounded helper (`sinks/telegram-card-builder.ts`). Existing schemas unchanged except for making `ObservableDaemonEvent.specFile` nullable, which was already broken for `daemon_budget_exhausted` and is a correctness fix.
-- `src/core/setup/` gets one new pure helper (`telegram-sink-plan.ts`) and an `async` signature on `detectSinkSetup`. Wizard prompt complexity is kept under the lint cap by extracting `promptTelegramSinkPlan` from `promptSinkPlan`.
+- `detectSinkSetup` can read sink-related defaults for agent-driven setup and doctor checks.
 - The setup flow now reads `$HOME/.openclaw/openclaw.json` as a side effect of running `quest setup`. Failure modes (missing file, malformed JSON) are handled silently; detection returns `null` fields.
 
 ## User Or Operator Workflow
 
-Interactive path:
+Command-first path:
 
 ```
-$ quest setup
+jq -r '.channels.telegram.botToken' "$HOME/.openclaw/openclaw.json" \
+  | quest secrets set --name quest-telegram-bot-token --stdin
 
-...
+CHAT_ID=$(jq -r '.channels.telegram.allowFrom[0]' "$HOME/.openclaw/openclaw.json")
 
-Observability sink [none] (none/webhook/telegram/slack/linear/openclaw): telegram
-Telegram chat id [123456789]:                                # pre-filled from OpenClaw allowFrom[0]
-Telegram bot token source (openclaw-import pulls from ~/.openclaw/openclaw.json) [openclaw-import] (openclaw-import/env/secret-store):
-Render events as RPG flavor cards (HTML parse mode)? [Y/n]:
+quest observability telegram upsert \
+  --id daemon-telegram \
+  --chat-id "$CHAT_ID" \
+  --bot-token-secret-ref quest-telegram-bot-token \
+  --parse-mode HTML \
+  --events daemon_dispatched,daemon_landed,daemon_failed,daemon_budget_exhausted,daemon_recovered,daemon_party_created,daemon_party_resting,daemon_party_resumed
 ```
 
-The wizard then:
+This sequence:
 
 1. Writes the detected OpenClaw bot token into the secret store under `quest-telegram-bot-token`.
 2. Upserts a Telegram sink with `parseMode: "HTML"`, `botTokenSecretRef: "quest-telegram-bot-token"`, and the imported chat id.
@@ -99,7 +102,6 @@ No new event types or sink types.
 ## Acceptance Checks
 
 - `bun test test/telegram-card-builder.test.ts` covers: daemon card rendering, `(all parties)` label for `partyName: "*"`, specFile/runId/error inclusion, HTML injection escape, distinct header + flavor per event type.
-- `bun test test/telegram-sink-plan.test.ts` covers: env auth, secret-ref auth, OpenClaw import path, unsupported parse mode falls back to `undefined`, missing `--chat-id` throws.
 - `bun test test/setup-detection.test.ts` covers: env-only detection, OpenClaw config import, malformed OpenClaw JSON tolerated.
 - `bun ./scripts/canaries/daemon-events.ts` still passes end-to-end.
 - Manual: `quest party {create,bonfire,resume} --name <temp>` with the HTML sink configured lands three cards in Telegram with distinct headers, flavor lines, and a local clock.

@@ -350,6 +350,65 @@ test("run integrator rejects slice changes outside owned paths", async () => {
   }
 });
 
+test("run integrator ignores workspace-only agent scaffolding outside owned paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+
+  try {
+    writeFileSync(
+      scriptPath,
+      [
+        'import { mkdir } from "node:fs/promises";',
+        "await Bun.write('tracked.txt', 'integrated-change\\n');",
+        "await Bun.write('AGENTS.md', 'workspace instructions\\n');",
+        "await Bun.write('SOUL.md', 'agent identity\\n');",
+        "await mkdir('.openclaw', { recursive: true });",
+        "await Bun.write('.openclaw/workspace-state.json', '{}\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+
+    const integratedRun = await integrator.integrateRun(run.id);
+    const integrationWorkspacePath = integratedRun.integrationWorkspacePath ?? "";
+
+    expect(readFileSync(join(integrationWorkspacePath, "tracked.txt"), "utf8")).toBe(
+      "integrated-change\n",
+    );
+    expect(() => readFileSync(join(integrationWorkspacePath, "AGENTS.md"), "utf8")).toThrow();
+    expect(() =>
+      readFileSync(join(integrationWorkspacePath, ".openclaw", "workspace-state.json"), "utf8"),
+    ).toThrow();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run integrator rejects resuming against a different target ref", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
   const repositoryRoot = createCommittedRepo(root);
