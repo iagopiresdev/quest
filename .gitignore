@@ -3,7 +3,13 @@ node_modules/
 *.log
 .DS_Store
 .env
+.codex/
+.openclaw/
 .quest-runner/
+openclaw.json
+*.db
+*.sqlite
+*.sqlite3
 coverage/
 skills/
 FEEDBACK.md

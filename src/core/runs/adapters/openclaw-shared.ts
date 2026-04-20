@@ -1,4 +1,60 @@
 import { QuestDomainError } from "../../errors";
+import { isRecord } from "../../shared/type-guards";
+
+type OpenClawResponseContext = {
+  command: string[];
+  workerId: string;
+};
+
+function readPayloadTexts(responseBody: unknown): string[] {
+  if (!isRecord(responseBody)) {
+    return [];
+  }
+
+  const result = responseBody.result;
+  if (!isRecord(result) || !Array.isArray(result.payloads)) {
+    return [];
+  }
+
+  return result.payloads
+    .map((payload) =>
+      isRecord(payload) && typeof payload.text === "string" ? payload.text.trim() : "",
+    )
+    .filter((text) => text.length > 0);
+}
+
+export function isOpenClawApiErrorText(text: string): boolean {
+  return (
+    /\bHTTP\s+\d{3}\b.*\bapi_error\b/i.test(text) ||
+    /\bapi_error:/i.test(text) ||
+    /\bnot support model\b/i.test(text)
+  );
+}
+
+export function findOpenClawApiErrorText(responseBody: unknown): string | null {
+  return readPayloadTexts(responseBody).find(isOpenClawApiErrorText) ?? null;
+}
+
+export function assertOpenClawResponseSucceeded(
+  responseBody: unknown,
+  context: OpenClawResponseContext,
+): void {
+  const errorText = findOpenClawApiErrorText(responseBody);
+  if (!errorText) {
+    return;
+  }
+
+  throw new QuestDomainError({
+    code: "quest_runner_command_failed",
+    details: {
+      command: context.command,
+      summary: errorText,
+      workerId: context.workerId,
+    },
+    message: `OpenClaw reported an API error for ${context.workerId}: ${errorText}`,
+    statusCode: 1,
+  });
+}
 
 function tryParseJson(candidate: string): unknown | null {
   try {

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { detectSinkSetup } from "../src/core/setup/detection";
+import { detectOpenClawSetup, detectSinkSetup } from "../src/core/setup/detection";
 
 type EnvSnapshot = Record<string, string | undefined>;
 
@@ -101,5 +101,49 @@ test("setup detection tolerates malformed OpenClaw config without throwing", asy
   } finally {
     restoreEnv(snapshot);
     rmSync(fakeHome, { force: true, recursive: true });
+  }
+});
+
+test("setup detection retries transient OpenClaw gateway status", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-openclaw-detect-"));
+  const executable = join(root, "openclaw-mock.sh");
+  const statusCountPath = join(root, "status-count");
+  writeFileSync(
+    executable,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'if [ "$1" = "status" ] && [ "$2" = "--json" ]; then',
+      `  count_file='${statusCountPath}'`,
+      "  count=0",
+      '  if [ -f "$count_file" ]; then count="$(cat "$count_file")"; fi',
+      "  count=$((count + 1))",
+      '  printf "%s" "$count" > "$count_file"',
+      '  if [ "$count" -eq 1 ]; then',
+      `    printf '%s\\n' '${JSON.stringify({ gateway: { reachable: false } })}'`,
+      "    exit 0",
+      "  fi",
+      `  printf '%s\\n' '${JSON.stringify({ gateway: { reachable: true, url: "http://127.0.0.1:9876" } })}'`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "agents" ] && [ "$2" = "list" ] && [ "$3" = "--json" ]; then',
+      `  printf '%s\\n' '${JSON.stringify([{ id: "codex", model: "zai/glm-5.1" }])}'`,
+      "  exit 0",
+      "fi",
+      "exit 1",
+      "",
+    ].join("\n"),
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  try {
+    const detected = await detectOpenClawSetup({ executable });
+    expect(detected.ok).toBe(true);
+    expect(detected.gatewayReachable).toBe(true);
+    expect(detected.gatewayUrl).toBe("http://127.0.0.1:9876");
+    expect(detected.agentId).toBe("codex");
+    expect(detected.profile).toBe("zai/glm-5.1");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
   }
 });

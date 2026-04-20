@@ -599,6 +599,37 @@ test("quest cli setup bootstraps an openclaw worker from detected gateway", asyn
   expect(result.createdWorker.backend.agentId).toBe("main");
 });
 
+test("quest cli setup retries transient openclaw status before creating worker", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    transientStatusFailures: 1,
+  });
+
+  const setup = await runCliAsync(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "openclaw",
+    "--openclaw-executable",
+    openClawExecutable,
+    "--worker-name",
+    "Retried OpenClaw",
+    "--agent-id",
+    "main",
+    "--profile",
+    "openclaw/main",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(
+    result.doctor.checks.some(
+      (check: { name: string; ok: boolean }) => check.name === "openclaw-status" && check.ok,
+    ),
+  ).toBe(true);
+  expect(result.createdWorker.backend.agentId).toBe("main");
+});
+
 test("quest cli setup imports openclaw agent and profile defaults when omitted", async () => {
   const context = trackContext();
   const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
@@ -624,6 +655,58 @@ test("quest cli setup imports openclaw agent and profile defaults when omitted",
   expect(result.createdWorker.backend.agentId).toBe("codex");
   expect(result.createdWorker.backend.profile).toBe("openai-codex/gpt-5.4");
   expect(result.imports.summary).toContain("OpenClaw agent codex");
+});
+
+test("quest cli setup rejects an openclaw profile that fails the model probe", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    payloadText: "HTTP 400 api_error: not support model openrouter/openai/gpt-5-highspeed",
+  });
+
+  const setup = await runCliAsync(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "openclaw",
+    "--openclaw-executable",
+    openClawExecutable,
+    "--worker-name",
+    "Broken OpenClaw",
+    "--agent-id",
+    "main",
+    "--profile",
+    "openrouter/openai/gpt-5-highspeed",
+  ]);
+
+  expect(setup.code).toBe(1);
+  expect(setup.stderr).toContain("OpenClaw reported an API error");
+});
+
+test("quest cli setup can skip the openclaw model probe for offline registration", async () => {
+  const context = trackContext();
+  const openClawExecutable = createOpenClawMockExecutable(context.stateRoot, {
+    payloadText: "HTTP 400 api_error: not support model openrouter/openai/gpt-5-highspeed",
+  });
+
+  const setup = await runCliAsync(context, [
+    "setup",
+    "--yes",
+    "--backend",
+    "openclaw",
+    "--openclaw-executable",
+    openClawExecutable,
+    "--worker-name",
+    "Offline OpenClaw",
+    "--agent-id",
+    "main",
+    "--profile",
+    "openrouter/openai/gpt-5-highspeed",
+    "--skip-model-probe",
+  ]);
+
+  expect(setup.code).toBe(0);
+  const result = JSON.parse(setup.stdout);
+  expect(result.createdWorker.backend.profile).toBe("openrouter/openai/gpt-5-highspeed");
 });
 
 test("quest cli doctor tolerates noisy openclaw status output", () => {

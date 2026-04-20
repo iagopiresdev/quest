@@ -4,6 +4,17 @@ const projectRoot = new URL("..", import.meta.url);
 const sourceRoot = new URL("../src", import.meta.url);
 const defaultedPolicyParamPattern = /\b(?:phase|role)\s*:\s*[^)=\n]+\s*=\s*["'][A-Za-z0-9_-]+["']/g;
 const recordCastPattern = /\bas\s+Record<string,\s*unknown>/g;
+const forbiddenWireApiChatPattern = /\bwire_api\s*=\s*["']chat["']/;
+const forbiddenConfigFilePattern = /\.(?:cjs|js|json|md|mdx|mjs|sh|toml|ts|tsx|yaml|yml)$/;
+const ignoredProjectPathSegments = new Set([
+  ".codex",
+  ".git",
+  ".openclaw",
+  ".quest-runner",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
 
 async function collectTypeScriptFiles(root: URL): Promise<string[]> {
   const files: string[] = [];
@@ -13,6 +24,43 @@ async function collectTypeScriptFiles(root: URL): Promise<string[]> {
     cwd: Bun.fileURLToPath(root),
     onlyFiles: true,
   })) {
+    files.push(entry);
+  }
+
+  return files.sort();
+}
+
+async function collectProjectConfigFiles(root: URL): Promise<string[]> {
+  const projectPath = Bun.fileURLToPath(root);
+  const visibleFiles = Bun.spawnSync({
+    cmd: ["git", "-C", projectPath, "ls-files", "--cached", "--others", "--exclude-standard"],
+    stderr: "ignore",
+    stdout: "pipe",
+  });
+  if (visibleFiles.exitCode === 0) {
+    return new TextDecoder()
+      .decode(visibleFiles.stdout)
+      .split("\n")
+      .filter((entry) => forbiddenConfigFilePattern.test(entry))
+      .map((entry) => `${projectPath}/${entry}`)
+      .sort();
+  }
+
+  const files: string[] = [];
+
+  for await (const entry of new Bun.Glob("**/*").scan({
+    absolute: true,
+    cwd: projectPath,
+    onlyFiles: true,
+  })) {
+    const relativeSegments = relativeToProject(entry).split("/");
+    if (relativeSegments.some((segment) => ignoredProjectPathSegments.has(segment))) {
+      continue;
+    }
+    if (!forbiddenConfigFilePattern.test(entry)) {
+      continue;
+    }
+
     files.push(entry);
   }
 
@@ -59,9 +107,27 @@ async function lintRecordCastChains(): Promise<void> {
   }
 }
 
+async function lintForbiddenWireApiChat(): Promise<void> {
+  const files = await collectProjectConfigFiles(projectRoot);
+
+  for (const filePath of files) {
+    const sourceText = await Bun.file(filePath).text();
+    if (!forbiddenWireApiChatPattern.test(sourceText)) {
+      continue;
+    }
+
+    architectureRuleViolations.push(
+      `${relativeToProject(filePath)}: forbidden OpenClaw wire API override detected. ` +
+        'Do not write `wire_api = "c' +
+        'hat"`; it breaks compatible OpenClaw agent execution.',
+    );
+  }
+}
+
 async function main(): Promise<void> {
   await lintDefaultedPolicyParameters();
   await lintRecordCastChains();
+  await lintForbiddenWireApiChat();
 
   if (architectureRuleViolations.length === 0) {
     await Bun.write(Bun.stdout, "Architecture checks passed.\n");

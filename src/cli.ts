@@ -54,6 +54,7 @@ import {
   detectCodexSetup,
   detectHermesSetup,
   detectOpenClawSetup,
+  probeOpenClawModelProfile,
 } from "./core/setup/detection";
 import { isRecord } from "./core/shared/type-guards";
 import {
@@ -1318,6 +1319,7 @@ async function runNonInteractiveSetupFlow(
   importedHermes: DetectedHermesSetup | null,
   importedOpenClaw: DetectedOpenClawSetup | null,
   registry: WorkerRegistry,
+  stateRoot: string,
 ): Promise<SetupWorkerState> {
   const inputs = await resolveNonInteractiveSetupInputs(
     args,
@@ -1330,6 +1332,19 @@ async function runNonInteractiveSetupFlow(
       createdWorker: null,
       createdWorkers: [],
     };
+  }
+
+  if (backend === "openclaw" && !hasFlag(args, "--skip-model-probe")) {
+    await probeOpenClawModelProfile({
+      agentId: inputs.agentId,
+      executable:
+        findOptionValue(args, "--executable") ??
+        findOptionValue(args, "--openclaw-executable") ??
+        importedOpenClaw?.executable,
+      gatewayUrl: findOptionValue(args, "--gateway-url") ?? importedOpenClaw?.gatewayUrl,
+      profile: inputs.profile,
+      stateRoot,
+    });
   }
 
   const workerArgs = buildNonInteractiveSetupWorkerArgs(
@@ -1835,14 +1850,56 @@ async function checkOpenClawExecutable(executable: string): Promise<DoctorCheck>
   }
 }
 
-async function checkOpenClawStatus(
+type OpenClawStatusPayload = {
+  agents?: { agents?: Array<{ id?: string }> };
+  gateway?: { reachable?: boolean; url?: string };
+};
+
+function readOpenClawStatusAgentIds(parsed: OpenClawStatusPayload): string[] {
+  return (
+    parsed.agents?.agents
+      ?.map((agent) => (typeof agent.id === "string" ? agent.id : null))
+      .filter((agentId): agentId is string => agentId !== null) ?? []
+  );
+}
+
+function openClawStatusMatchesRequest(
+  parsed: OpenClawStatusPayload | null,
+  agentId: string | undefined,
+): boolean {
+  if (parsed?.gateway?.reachable !== true) {
+    return false;
+  }
+  if (agentId === undefined || agentId.length === 0) {
+    return true;
+  }
+
+  return readOpenClawStatusAgentIds(parsed).includes(agentId);
+}
+
+async function runOpenClawStatusForDoctor(
   executable: string,
   options: {
     agentId?: string | undefined;
     gatewayUrl?: string | undefined;
-  } = {},
-): Promise<DoctorCheck> {
-  try {
+  },
+): Promise<{
+  parseError: Error | null;
+  parsed: OpenClawStatusPayload | null;
+  result: Awaited<ReturnType<typeof runSubprocess>>;
+}> {
+  const delaysMs = [0, 250, 750];
+  let lastStatus: {
+    parseError: Error | null;
+    parsed: OpenClawStatusPayload | null;
+    result: Awaited<ReturnType<typeof runSubprocess>>;
+  } | null = null;
+
+  for (const delayMs of delaysMs) {
+    if (delayMs > 0) {
+      await Bun.sleep(delayMs);
+    }
+
     const result = await runSubprocess({
       cmd: [executable, "status", "--json"],
       cwd: Bun.env.PWD ?? ".",
@@ -1851,6 +1908,38 @@ async function checkOpenClawStatus(
       ),
       timeoutMs: 30_000,
     });
+    let parsed: OpenClawStatusPayload | null = null;
+    let parseError: Error | null = null;
+    if (result.exitCode === 0) {
+      try {
+        parsed = parseOpenClawJsonOutput(result.stdout, result.stderr) as OpenClawStatusPayload;
+      } catch (error) {
+        parseError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    lastStatus = { parseError, parsed, result };
+    if (openClawStatusMatchesRequest(parsed, options.agentId)) {
+      return lastStatus;
+    }
+  }
+
+  if (!lastStatus) {
+    throw new Error("OpenClaw status could not be checked");
+  }
+
+  return lastStatus;
+}
+
+async function checkOpenClawStatus(
+  executable: string,
+  options: {
+    agentId?: string | undefined;
+    gatewayUrl?: string | undefined;
+  } = {},
+): Promise<DoctorCheck> {
+  try {
+    const { parseError, parsed, result } = await runOpenClawStatusForDoctor(executable, options);
     if (result.exitCode !== 0) {
       return {
         details: {
@@ -1863,15 +1952,11 @@ async function checkOpenClawStatus(
         ok: false,
       };
     }
+    if (!parsed) {
+      throw parseError ?? new Error("OpenClaw did not return parseable status JSON");
+    }
 
-    const parsed = parseOpenClawJsonOutput(result.stdout, result.stderr) as {
-      agents?: { agents?: Array<{ id?: string }> };
-      gateway?: { reachable?: boolean; url?: string };
-    };
-    const agentIds =
-      parsed.agents?.agents
-        ?.map((agent) => (typeof agent.id === "string" ? agent.id : null))
-        .filter((agentId): agentId is string => agentId !== null) ?? [];
+    const agentIds = readOpenClawStatusAgentIds(parsed);
     const agentExists =
       options.agentId === undefined ||
       options.agentId.length === 0 ||
@@ -2140,6 +2225,7 @@ async function runSetup(
       setupImports.importedHermes,
       setupImports.importedOpenClaw,
       registry,
+      paths.stateRoot,
     );
     if (shouldRunSetupCalibration(args)) {
       calibrationResults = await runSetupCalibrations(
@@ -3218,7 +3304,7 @@ const commandDefinitions: QuestCliCommandDefinition[] = [
     run: async ({ args, calibrator, observabilityStore, registry, settingsStore, secretStore }) =>
       await runSetup(args, calibrator, observabilityStore, registry, settingsStore, secretStore),
     usage:
-      "quest setup [--yes] [--backend <codex|hermes|openclaw|standalone>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--calibrate] [--skip-calibration] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--command <cmd>] [--command-arg <arg>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
+      "quest setup [--yes] [--backend <codex|hermes|openclaw|standalone>] [--tester-selection <balanced|prefer-cheapest>] [--create-worker] [--skip-worker] [--calibrate] [--skip-calibration] [--skip-model-probe] [--worker-name <name>] [--worker-id <id>] [--profile <model>] [--command <cmd>] [--command-arg <arg>] [--base-url <url>] [--codex-executable <path>] [--openclaw-executable <path>] [--hermes-base-url <url>] [--gateway-url <url>] [--agent-id <id>] [--session-id <id>] [--local] [--role <builder|tester|hybrid>] [--coding <n>] [--testing <n>] [--docs <n>] [--research <n>] [--speed <n>] [--merge-safety <n>] [--context-endurance <n>] [--cpu-cost <n>] [--memory-cost <n>] [--gpu-cost <n>] [--max-parallel <n>] [--reasoning-effort <none|minimal|low|medium|high|xhigh>] [--max-output-tokens <n>] [--temperature <n>] [--top-p <n>] [--context-window <n>] [--provider-option <key=value>] [--state-root <path>]",
   },
   {
     id: "doctor",

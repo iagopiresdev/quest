@@ -158,6 +158,7 @@ export function createOpenClawMockExecutable(
     richAgentsList?: boolean;
     noisyStatus?: boolean;
     payloadText?: string;
+    transientStatusFailures?: number;
     version?: string;
     writeFile?: { content: string; path: string } | undefined;
   } = {},
@@ -178,6 +179,8 @@ export function createOpenClawMockExecutable(
   const richAgentsList = options.richAgentsList ?? false;
   const noisyStatus = options.noisyStatus ?? false;
   const payloadText = options.payloadText ?? "OpenClaw updated the workspace";
+  const statusCountPath = join(root, "openclaw-status-count");
+  const transientStatusFailures = options.transientStatusFailures ?? 0;
   const writeFile = options.writeFile;
   const mutationBlock = writeFile
     ? [
@@ -199,6 +202,20 @@ export function createOpenClawMockExecutable(
       "  exit 0",
       "fi",
       'if [ "$1" = "status" ] && [ "$2" = "--json" ]; then',
+      `  count_file='${statusCountPath}'`,
+      "  status_count=0",
+      '  if [ -f "$count_file" ]; then status_count="$(cat "$count_file")"; fi',
+      "  status_count=$((status_count + 1))",
+      '  printf "%s" "$status_count" > "$count_file"',
+      `  if [ "$status_count" -le ${transientStatusFailures} ]; then`,
+      "    cat <<'EOF'",
+      JSON.stringify({
+        gateway: { reachable: false },
+        agents: { agents: agents.map((agent) => ({ id: agent.id })) },
+      }),
+      "EOF",
+      "    exit 1",
+      "  fi",
       ...(noisyStatus ? ["  printf 'plugins booted\\n'"] : []),
       "  cat <<'EOF'",
       JSON.stringify({

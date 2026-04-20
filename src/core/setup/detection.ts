@@ -1,8 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { parseOpenClawJsonOutput } from "../runs/adapters/openclaw-shared";
+import { QuestDomainError } from "../errors";
+import {
+  assertOpenClawResponseSucceeded,
+  parseOpenClawJsonOutput,
+} from "../runs/adapters/openclaw-shared";
 import { runSubprocess } from "../runs/process";
 import { buildProcessEnv } from "../runs/process-env";
 
@@ -71,6 +76,11 @@ export type DetectedOpenClawSetup = {
   gatewayUrl: string | null;
   ok: boolean;
   profile: string | null;
+};
+
+export type OpenClawModelProbeResult = {
+  agentId: string;
+  model: string;
 };
 
 export type DetectedSinkSetup = {
@@ -171,6 +181,52 @@ function chooseOpenClawAgent(
   return agents.find((agent) => agent.id === "codex") ?? agents[0] ?? null;
 }
 
+async function runOpenClawStatusWithRetry(
+  executable: string,
+  env: Record<string, string>,
+): Promise<{
+  payload: { gateway?: { reachable?: boolean; url?: string } } | null;
+  result: Awaited<ReturnType<typeof runSubprocess>>;
+}> {
+  const delaysMs = [0, 250, 750];
+  let lastResult: Awaited<ReturnType<typeof runSubprocess>> | null = null;
+  let lastPayload: { gateway?: { reachable?: boolean; url?: string } } | null = null;
+
+  for (const delayMs of delaysMs) {
+    if (delayMs > 0) {
+      await Bun.sleep(delayMs);
+    }
+
+    const result = await runSubprocess({
+      cmd: [executable, "status", "--json"],
+      cwd: Bun.env.PWD ?? ".",
+      env,
+      timeoutMs: 30_000,
+    });
+    lastResult = result;
+    lastPayload =
+      result.exitCode === 0
+        ? (parseOpenClawJsonOutput(result.stdout, result.stderr) as {
+            gateway?: { reachable?: boolean; url?: string };
+          })
+        : null;
+
+    if (lastPayload?.gateway?.reachable === true) {
+      return { payload: lastPayload, result };
+    }
+  }
+
+  if (!lastResult) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      message: "OpenClaw status could not be checked",
+      statusCode: 1,
+    });
+  }
+
+  return { payload: lastPayload, result: lastResult };
+}
+
 export async function detectOpenClawSetup(
   options: { agentId?: string; executable?: string; gatewayUrl?: string } = {},
 ): Promise<DetectedOpenClawSetup> {
@@ -182,13 +238,8 @@ export async function detectOpenClawSetup(
   const env = buildProcessEnv(
     options.gatewayUrl?.trim() ? { OPENCLAW_GATEWAY_URL: options.gatewayUrl.trim() } : undefined,
   );
-  const [statusResult, agentsListResult] = await Promise.all([
-    runSubprocess({
-      cmd: [executable, "status", "--json"],
-      cwd: Bun.env.PWD ?? ".",
-      env,
-      timeoutMs: 30_000,
-    }),
+  const [statusCheck, agentsListResult] = await Promise.all([
+    runOpenClawStatusWithRetry(executable, env),
     runSubprocess({
       cmd: [executable, "agents", "list", "--json"],
       cwd: Bun.env.PWD ?? ".",
@@ -197,12 +248,7 @@ export async function detectOpenClawSetup(
     }),
   ]);
 
-  const statusPayload =
-    statusResult.exitCode === 0
-      ? (parseOpenClawJsonOutput(statusResult.stdout, statusResult.stderr) as {
-          gateway?: { reachable?: boolean; url?: string };
-        })
-      : null;
+  const statusPayload = statusCheck.payload;
   const agentsPayload =
     agentsListResult.exitCode === 0
       ? openClawAgentsResponseSchema.parse(
@@ -221,9 +267,114 @@ export async function detectOpenClawSetup(
     executable,
     gatewayReachable: statusPayload?.gateway?.reachable === true,
     gatewayUrl: options.gatewayUrl?.trim() || statusPayload?.gateway?.url?.trim() || null,
-    ok: statusResult.exitCode === 0 && statusPayload?.gateway?.reachable === true,
+    ok: statusCheck.result.exitCode === 0 && statusPayload?.gateway?.reachable === true,
     profile: selectedAgent?.model ?? (selectedAgent ? `openclaw/${selectedAgent.id}` : null),
   };
+}
+
+export async function probeOpenClawModelProfile(options: {
+  agentId?: string | null;
+  executable?: string | undefined;
+  gatewayUrl?: string | null | undefined;
+  profile: string;
+  stateRoot: string;
+}): Promise<OpenClawModelProbeResult | null> {
+  const model = options.profile.trim();
+  if (model.length === 0 || model.startsWith("openclaw/")) {
+    return null;
+  }
+
+  const executable = resolveExecutableCandidate(
+    options.executable,
+    Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
+    "openclaw",
+  );
+  const env = buildProcessEnv(
+    options.gatewayUrl?.trim() ? { OPENCLAW_GATEWAY_URL: options.gatewayUrl.trim() } : undefined,
+  );
+  const agentId = `quest-probe-${randomUUID().slice(0, 8)}`;
+  const agentDir = join(options.stateRoot, "openclaw-probes", agentId, "agent");
+  const addCommand = [
+    executable,
+    "agents",
+    "add",
+    agentId,
+    "--workspace",
+    options.stateRoot,
+    "--model",
+    model,
+    "--agent-dir",
+    agentDir,
+    "--non-interactive",
+    "--json",
+  ];
+
+  const addResult = await runSubprocess({
+    cmd: addCommand,
+    cwd: Bun.env.PWD ?? ".",
+    env,
+    timeoutMs: 60_000,
+  });
+  if (addResult.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_runner_unavailable",
+      details: {
+        agentId,
+        model,
+        stderr: addResult.stderr,
+        stdout: addResult.stdout,
+      },
+      message: `OpenClaw could not create a model probe agent for ${model}`,
+      statusCode: 1,
+    });
+  }
+
+  const probeCommand = [
+    executable,
+    "agent",
+    "--session-id",
+    `${agentId}-session`,
+    "--agent",
+    agentId,
+    "--message",
+    "Reply with exactly OK.",
+    "--json",
+  ];
+  try {
+    const probeResult = await runSubprocess({
+      cmd: probeCommand,
+      cwd: options.stateRoot,
+      env,
+      timeoutMs: 120_000,
+    });
+    if (probeResult.exitCode !== 0) {
+      throw new QuestDomainError({
+        code: "quest_runner_command_failed",
+        details: {
+          command: probeCommand,
+          exitCode: probeResult.exitCode,
+          stderr: probeResult.stderr,
+          stdout: probeResult.stdout,
+        },
+        message: `OpenClaw model probe failed for ${model}`,
+        statusCode: 1,
+      });
+    }
+
+    const responseBody = parseOpenClawJsonOutput(probeResult.stdout, probeResult.stderr);
+    assertOpenClawResponseSucceeded(responseBody, {
+      command: probeCommand,
+      workerId: options.agentId ?? agentId,
+    });
+    return { agentId, model };
+  } finally {
+    await runSubprocess({
+      cmd: [executable, "agents", "delete", agentId, "--json"],
+      cwd: Bun.env.PWD ?? ".",
+      env,
+      timeoutMs: 30_000,
+    });
+  }
 }
 
 const openClawConfigTelegramSchema = z.object({
