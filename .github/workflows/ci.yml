@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  validate:
+  validate-platform:
     name: validate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -32,3 +32,18 @@ jobs:
 
       - name: Check
         run: bun run check
+
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    needs:
+      - validate-platform
+    if: always()
+
+    steps:
+      - name: Require platform validation
+        if: needs.validate-platform.result != 'success'
+        run: exit 1
+
+      - name: Mark validation complete
+        run: echo "platform validation passed"
