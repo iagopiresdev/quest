@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -187,6 +195,120 @@ test("run integrator runs top-level acceptance checks in the integration workspa
     expect(
       integratedRun.events.some((event) => event.type === "run_integration_checks_completed"),
     ).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator disables git hooks during integration commits", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const hooksPath = join(root, "hooks");
+
+  try {
+    mkdirSync(hooksPath, { recursive: true });
+    writeFileSync(join(hooksPath, "pre-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    runCommandOrThrow(["git", "config", "core.hooksPath", hooksPath], repositoryRoot);
+
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+    const integratedRun = await integrator.integrateRun(run.id);
+
+    expect(integratedRun.slices[0]?.integrationStatus).toBe("integrated");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run integrator disables configured git filters during integration git operations", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const filterScriptPath = join(root, "filter.sh");
+  const filterMarkerPath = join(root, "filter-executed");
+
+  try {
+    writeFileSync(join(repositoryRoot, ".gitattributes"), "tracked.txt filter=questevil\n", "utf8");
+    runCommandOrThrow(["git", "add", ".gitattributes"], repositoryRoot);
+    runCommandOrThrow(["git", "commit", "-m", "Add filter attributes"], repositoryRoot);
+    writeFileSync(
+      filterScriptPath,
+      ["#!/bin/sh", `printf executed > ${JSON.stringify(filterMarkerPath)}`, "exit 1", ""].join(
+        "\n",
+      ),
+      { encoding: "utf8", mode: 0o755 },
+    );
+    writeFileSync(
+      scriptPath,
+      [
+        "function runGit(args) {",
+        '  const result = Bun.spawnSync({ cmd: ["git", ...args], stderr: "pipe" });',
+        "  if (result.exitCode !== 0) {",
+        "    throw new Error(new TextDecoder().decode(result.stderr));",
+        "  }",
+        "}",
+        `runGit(["config", "filter.questevil.clean", ${JSON.stringify(filterScriptPath)}]);`,
+        `runGit(["config", "filter.questevil.smudge", ${JSON.stringify(filterScriptPath)}]);`,
+        `runGit(["config", "filter.questevil.process", ${JSON.stringify(filterScriptPath)}]);`,
+        'runGit(["config", "filter.questevil.required", "true"]);',
+        "await Bun.write('tracked.txt', 'integrated-change\\n');",
+      ].join("\n"),
+      "utf8",
+    );
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+    const integratedRun = await integrator.integrateRun(run.id);
+
+    expect(integratedRun.slices[0]?.integrationStatus).toBe("integrated");
+    expect(existsSync(filterMarkerPath)).toBe(false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

@@ -196,9 +196,12 @@ export async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Pr
   return result.stdout.trim();
 }
 
-export async function ensureGitRepositoryIsClean(repositoryRoot: string): Promise<void> {
+export async function ensureGitRepositoryIsClean(
+  repositoryRoot: string,
+  options: { statusCommand?: string[] | undefined } = {},
+): Promise<void> {
   const result = await runSubprocess({
-    cmd: ["git", "status", "--porcelain"],
+    cmd: options.statusCommand ?? ["git", "status", "--porcelain"],
     cwd: repositoryRoot,
     env: buildProcessEnv(),
   });
