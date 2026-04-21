@@ -85,6 +85,14 @@ function runHeader(eventType: ObservableRunEvent["eventType"]): string {
       return "🚫 <b>Quest Halted</b>";
     case "run_started":
       return "⚔️ <b>Quest Begun</b>";
+    case "run_paused":
+      return "⏸️ <b>Quest Paused</b>";
+    case "run_resumed":
+      return "▶️ <b>Quest Resumed</b>";
+    case "run_orphaned":
+      return "🧭 <b>Quest Orphaned</b>";
+    case "run_cancel_requested":
+      return "🛑 <b>Retreat Called</b>";
     case "run_completed":
       return "🏆 <b>Quest Cleared</b>";
     case "run_failed":
@@ -93,6 +101,8 @@ function runHeader(eventType: ObservableRunEvent["eventType"]): string {
       return "🏳️ <b>Quest Abandoned</b>";
     case "run_integration_started":
       return "🧵 <b>Weaving the Branches</b>";
+    case "run_integration_failed":
+      return "💥 <b>Weaving Failed</b>";
     case "run_integration_checks_started":
       return "🔮 <b>Trials Begin</b>";
     case "run_integration_checks_completed":
@@ -101,6 +111,14 @@ function runHeader(eventType: ObservableRunEvent["eventType"]): string {
       return "💥 <b>Trials Broke You</b>";
     case "run_integrated":
       return "🔀 <b>Quest Sealed</b>";
+    case "run_landing_started":
+      return "📦 <b>Turn-in Started</b>";
+    case "run_landed":
+      return "✅ <b>Turn-in Complete</b>";
+    case "run_base_refreshed":
+      return "🔄 <b>Base Refreshed</b>";
+    case "run_rescue_status_updated":
+      return "🛟 <b>Rescue Updated</b>";
     case "run_feature_doc_written":
       return "📚 <b>Lore Inscribed</b>";
     case "run_workspace_cleaned":
@@ -117,6 +135,12 @@ function runHeader(eventType: ObservableRunEvent["eventType"]): string {
       return "💥 <b>Trial Failed</b>";
     case "slice_completed":
       return "🏹 <b>Encounter Cleared</b>";
+    case "slice_skipped":
+      return "⏭️ <b>Encounter Skipped</b>";
+    case "slice_reassigned":
+      return "🔁 <b>Encounter Reassigned</b>";
+    case "slice_retry_queued":
+      return "🔄 <b>Encounter Retried</b>";
     case "slice_failed":
       return "🗡️ <b>Encounter Lost</b>";
     case "slice_aborted":
