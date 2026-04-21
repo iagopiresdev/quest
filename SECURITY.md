@@ -4,9 +4,9 @@
 
 If you find a security issue, do not open a public issue with exploit details or live secrets.
 
-Report it privately to the maintainers through the security contact configured for the repository.
-If that contact does not exist yet, open a minimal public issue that asks for a private reporting path
-without disclosing the vulnerability itself.
+Report it privately through GitHub private vulnerability reporting when it is enabled for this repository.
+If private vulnerability reporting is not enabled yet, open a minimal public issue that asks for a private
+reporting path without disclosing the vulnerability itself.
 
 ## Scope
 

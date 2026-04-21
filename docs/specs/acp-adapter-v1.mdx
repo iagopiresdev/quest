@@ -6,7 +6,7 @@
 
 ## Problem
 
-Quest-runner supports `codex-cli`, `openclaw-cli`, `local-command`, and a broken `hermes-api` adapter. Each CLI-specific adapter duplicates subprocess management and prompt plumbing. The Agent Client Protocol (ACP) is an emerging standard for agent communication over JSON-RPC/stdio. A generic ACP adapter lets Quest use **any** ACP-compatible agent as a worker: Claude Code, Codex, Hermes, or future agents.
+Quest supports `codex-cli`, `openclaw-cli`, `local-command`, and `hermes-api` adapters. Each backend-specific adapter duplicates some subprocess management, transport handling, and prompt plumbing. The Agent Client Protocol (ACP) is an emerging standard for agent communication over JSON-RPC/stdio. A generic ACP adapter lets Quest use **any** ACP-compatible agent as a worker: Claude Code, Codex, Hermes, or future agents.
 
 ## Goals
 
@@ -14,7 +14,7 @@ Quest-runner supports `codex-cli`, `openclaw-cli`, `local-command`, and a broken
 - Full agent capabilities (tool use, file read/write, multi-turn iteration)
 - Subprocess lifecycle management (spawn, timeout, cancel, idle detection)
 - Collect workspace changes + summary from the agent session
-- Replace the current `hermes-api` adapter (which hits a non-existent REST endpoint)
+- Provide a protocol-level alternative to bespoke HTTP or CLI adapters when a backend supports ACP
 
 ## Non-Goals
 

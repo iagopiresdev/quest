@@ -249,8 +249,8 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
     const target = await prepareOpenClawTarget(executable, context, processEnv);
     const command = [executable, "agent", "--session-id", target.sessionId];
 
-    // Grind taught the hard lesson here: shared agent state silently poisons repo-edit turns.
-    // Quest-runner uses temporary workspace-bound OpenClaw agents for quest execution instead of
+    // Shared agent state can silently poison repo-edit turns.
+    // Quest uses temporary workspace-bound OpenClaw agents for quest execution instead of
     // pointing repo work at a long-lived agent workspace.
     if (target.agentId) {
       command.push("--agent", target.agentId);

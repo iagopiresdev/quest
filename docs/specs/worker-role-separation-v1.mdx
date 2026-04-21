@@ -15,7 +15,7 @@ That was acceptable for v0, but it is not enough for the operating model we want
 - explicit tester identity
 - explainable routing for encounters and trials
 
-The Grind history makes the need clear. Grind was correct to distinguish execution, testing, and merge, but it let completion and merge state drift too easily. The fix is not more flavor. The fix is stronger role boundaries backed by durable state.
+Earlier prototypes made the need clear: execution, testing, and merge state need distinct ownership, or completion and merge state can drift too easily. The fix is not more flavor. The fix is stronger role boundaries backed by durable state.
 
 ## Problem
 
@@ -193,4 +193,3 @@ If role assignment introduces regressions:
 - default all workers back to `hybrid`
 - preserve builder alias fields
 - keep execution on the existing single runtime path
-

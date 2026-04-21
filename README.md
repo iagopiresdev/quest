@@ -25,6 +25,20 @@ Contribution guidance lives in [CONTRIBUTING.md](./CONTRIBUTING.md).
 Security guidance lives in [SECURITY.md](./SECURITY.md).
 Community expectations live in [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 
+## Quickstart
+
+From a fresh checkout:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+bun run install:local
+quest setup --yes --backend codex
+quest doctor --json
+```
+
+Use `--backend hermes`, `--backend openclaw`, or `--backend standalone` when that is the worker backend you want to register first. Detailed setup and observability commands are listed below.
+
 Testing rule:
 - mocked coverage is not enough for execution-facing work
 - runner, steering, integration, and sink changes should also be battle-tested through disposable real canaries when the backend exists locally
