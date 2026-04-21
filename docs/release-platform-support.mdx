@@ -1,0 +1,57 @@
+---
+title: Release And Platform Support
+description: Current release status, supported platforms, backend support levels, and validation expectations for Quest.
+---
+
+# Release And Platform Support
+
+Quest is public source software, but it is still pre-1.0 operator tooling.
+
+## Release Status
+
+- Current package version: `0.0.1`.
+- Distribution status: source-first. Clone the repository, install with Bun, then build or install the local wrapper.
+- Package registry status: no public package registry release is guaranteed yet.
+- Compatibility policy: documented CLI JSON output and persisted state formats are treated as compatibility-sensitive, but pre-1.0 releases may still change commands, state shape, and worker backend details when the migration path is documented.
+
+Use the tagged source and lockfile together when reproducing an operator environment.
+
+## Supported Platforms
+
+Quest is validated in CI on:
+
+- Linux through `ubuntu-latest`
+- macOS through `macos-latest`
+
+Required local tools:
+
+- Bun `1.3.9` or newer
+- Git
+- POSIX shell utilities for wrapper install, hooks, and canaries
+
+Windows is not a supported platform yet. Some paths may work under WSL, but native Windows support needs explicit validation because Quest uses POSIX shell scripts, Git worktrees, executable wrappers, and terminal-oriented canaries.
+
+## Backend Support
+
+| Backend | Status | Notes |
+| --- | --- | --- |
+| `dry-run` | Supported | Planning and lifecycle inspection without worker execution. |
+| `local-command` | Supported | Primary hermetic canary backend and useful for smoke tests. |
+| `codex-cli` | Supported | Reuses native Codex login when available and falls back to configured key-backed auth. |
+| `hermes-api` | Supported, compatibility path | OpenAI-compatible HTTP execution. The ACP spec documents the intended longer-term protocol path. |
+| `openclaw-cli` | Supported with local install | Uses the installed OpenClaw CLI and should be validated against real local OpenClaw behavior when adapter detection changes. |
+| `acp` | Proposed | See [ACP Runner Adapter v1](/docs/specs/acp-adapter-v1). |
+
+Backend support means the adapter has a documented command path and automated coverage. Execution-facing backend changes still need the relevant real canary when that dependency is available locally.
+
+## Validation
+
+Use the combined local gate before opening a release or platform-support PR:
+
+```sh
+bun run check
+```
+
+That command runs lint, typecheck, tests, and build in the same order as CI.
+
+For execution, setup, sink, integration, or backend import changes, also run a matching canary from `scripts/canaries/`. The [Operator Guide](/docs/operator-guide#validation) lists the available canaries.
