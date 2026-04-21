@@ -66,8 +66,89 @@ function buildTrackedProcess(
   };
 }
 
-function buildSafeGitCommand(args: string[]): string[] {
-  return ["git", "-c", "core.hooksPath=/dev/null", ...args];
+const gitFilterCommandSuffixes = [".clean", ".smudge", ".process"] as const;
+
+function parseConfiguredGitFilterDrivers(configNames: string): {
+  drivers: string[];
+  unsupportedDrivers: string[];
+} {
+  const drivers = new Set<string>();
+  const unsupportedDrivers = new Set<string>();
+
+  for (const configName of configNames.split("\n")) {
+    const key = configName.trim();
+    const suffix = gitFilterCommandSuffixes.find((entry) => key.endsWith(entry));
+    if (!key.startsWith("filter.") || !suffix) {
+      continue;
+    }
+
+    const driver = key.slice("filter.".length, -suffix.length);
+    if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(driver)) {
+      drivers.add(driver);
+    } else if (driver.length > 0) {
+      unsupportedDrivers.add(driver);
+    }
+  }
+
+  return {
+    drivers: [...drivers].sort(),
+    unsupportedDrivers: [...unsupportedDrivers].sort(),
+  };
+}
+
+async function readConfiguredGitFilterDrivers(cwd: string): Promise<string[]> {
+  const result = await runSubprocess({
+    cmd: ["git", "config", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|smudge|process)$"],
+    cwd,
+    env: buildProcessEnv(),
+  });
+
+  if (result.exitCode === 1) {
+    return [];
+  }
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_integration_failed",
+      details: {
+        cwd,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Failed to inspect git filter configuration for ${cwd}`,
+      statusCode: 1,
+    });
+  }
+
+  const parsed = parseConfiguredGitFilterDrivers(result.stdout);
+  if (parsed.unsupportedDrivers.length > 0) {
+    throw new QuestDomainError({
+      code: "quest_integration_failed",
+      details: {
+        cwd,
+        filterDrivers: parsed.unsupportedDrivers,
+      },
+      message: `Git filter configuration contains unsupported driver names in ${cwd}`,
+      statusCode: 1,
+    });
+  }
+
+  return parsed.drivers;
+}
+
+function buildSafeGitCommand(args: string[], filterDrivers: string[] = []): string[] {
+  const filterConfigArgs = filterDrivers.flatMap((driver) => [
+    "-c",
+    `filter.${driver}.clean=cat`,
+    "-c",
+    `filter.${driver}.smudge=cat`,
+    "-c",
+    `filter.${driver}.process=`,
+    "-c",
+    `filter.${driver}.required=false`,
+  ]);
+
+  return ["git", "-c", "core.hooksPath=/dev/null", ...filterConfigArgs, ...args];
 }
 
 function clearExecutionStateOnRun(run: QuestRunDocument): void {
@@ -340,8 +421,12 @@ async function prepareIntegrationWorkspace(
   }
 
   await ensureDirectory(workspaceRoot);
+  const gitFilterDrivers = await readConfiguredGitFilterDrivers(repositoryRoot);
   const result = await runSubprocess({
-    cmd: ["git", "worktree", "add", "--detach", workspacePath, targetRef],
+    cmd: buildSafeGitCommand(
+      ["worktree", "add", "--detach", workspacePath, targetRef],
+      gitFilterDrivers,
+    ),
     cwd: repositoryRoot,
     env: buildProcessEnv(),
   });
@@ -469,8 +554,9 @@ async function freezeSliceResult(
       };
     }
 
+    const gitFilterDrivers = await readConfiguredGitFilterDrivers(sliceState.workspacePath);
     const addResult = await runSubprocess({
-      cmd: buildSafeGitCommand(["add", "-A", "--", ...stageablePaths]),
+      cmd: buildSafeGitCommand(["add", "-A", "--", ...stageablePaths], gitFilterDrivers),
       cwd: sliceState.workspacePath,
       env: buildProcessEnv(),
     });
@@ -490,18 +576,21 @@ async function freezeSliceResult(
     }
 
     const commitResult = await runSubprocess({
-      cmd: buildSafeGitCommand([
-        "commit",
-        "--no-verify",
-        "-m",
+      cmd: buildSafeGitCommand(
         [
-          `quest: freeze ${sliceState.sliceId}`,
-          "",
-          `Quest-Run-Id: ${run.id}`,
-          `Quest-Slice-Id: ${sliceState.sliceId}`,
-          `Quest-Base-Revision: ${baseRevision}`,
-        ].join("\n"),
-      ]),
+          "commit",
+          "--no-verify",
+          "-m",
+          [
+            `quest: freeze ${sliceState.sliceId}`,
+            "",
+            `Quest-Run-Id: ${run.id}`,
+            `Quest-Slice-Id: ${sliceState.sliceId}`,
+            `Quest-Base-Revision: ${baseRevision}`,
+          ].join("\n"),
+        ],
+        gitFilterDrivers,
+      ),
       cwd: sliceState.workspacePath,
       env: buildProcessEnv(),
     });
@@ -538,21 +627,25 @@ async function commitIntegrationSlice(
   resultRevision: string,
   driftedFromBase: boolean,
 ): Promise<string> {
+  const gitFilterDrivers = await readConfiguredGitFilterDrivers(integrationWorkspacePath);
   const commitResult = await runSubprocess({
-    cmd: buildSafeGitCommand([
-      "commit",
-      "--no-verify",
-      "-m",
+    cmd: buildSafeGitCommand(
       [
-        `quest: integrate ${sliceState.sliceId}`,
-        "",
-        `Quest-Run-Id: ${run.id}`,
-        `Quest-Slice-Id: ${sliceState.sliceId}`,
-        `Quest-Base-Revision: ${baseRevision}`,
-        `Quest-Result-Revision: ${resultRevision}`,
-        `Quest-Drifted: ${driftedFromBase}`,
-      ].join("\n"),
-    ]),
+        "commit",
+        "--no-verify",
+        "-m",
+        [
+          `quest: integrate ${sliceState.sliceId}`,
+          "",
+          `Quest-Run-Id: ${run.id}`,
+          `Quest-Slice-Id: ${sliceState.sliceId}`,
+          `Quest-Base-Revision: ${baseRevision}`,
+          `Quest-Result-Revision: ${resultRevision}`,
+          `Quest-Drifted: ${driftedFromBase}`,
+        ].join("\n"),
+      ],
+      gitFilterDrivers,
+    ),
     cwd: integrationWorkspacePath,
     env: buildProcessEnv(),
   });
@@ -593,8 +686,9 @@ async function integrateSlice(
     return false;
   }
 
+  const gitFilterDrivers = await readConfiguredGitFilterDrivers(integrationWorkspacePath);
   const cherryPickResult = await runSubprocess({
-    cmd: buildSafeGitCommand(["cherry-pick", "--no-commit", resultRevision]),
+    cmd: buildSafeGitCommand(["cherry-pick", "--no-commit", resultRevision], gitFilterDrivers),
     cwd: integrationWorkspacePath,
     env: buildProcessEnv(),
   });
@@ -602,7 +696,7 @@ async function integrateSlice(
   if (cherryPickResult.exitCode !== 0) {
     sliceState.integrationStatus = "failed";
     await runSubprocess({
-      cmd: ["git", "cherry-pick", "--abort"],
+      cmd: buildSafeGitCommand(["cherry-pick", "--abort"], gitFilterDrivers),
       cwd: integrationWorkspacePath,
       env: buildProcessEnv(),
     });
@@ -795,7 +889,10 @@ export class QuestRunIntegrator {
     const idleTimeoutMs = run.spec.execution.idleTimeoutMinutes
       ? run.spec.execution.idleTimeoutMinutes * 60 * 1000
       : undefined;
-    await ensureGitRepositoryIsClean(repositoryRoot);
+    const repositoryGitFilterDrivers = await readConfiguredGitFilterDrivers(repositoryRoot);
+    await ensureGitRepositoryIsClean(repositoryRoot, {
+      statusCommand: buildSafeGitCommand(["status", "--porcelain"], repositoryGitFilterDrivers),
+    });
     await this.runStore.markRunExecutionHost(run.id, "integrate");
 
     try {
