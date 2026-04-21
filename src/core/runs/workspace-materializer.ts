@@ -33,6 +33,74 @@ async function directoryHasEntries(path: string): Promise<boolean> {
   }
 }
 
+async function readRegisteredGitWorktreePaths(repositoryRoot: string): Promise<Set<string>> {
+  const result = await runSubprocess({
+    cmd: ["git", "worktree", "list", "--porcelain"],
+    cwd: repositoryRoot,
+    env: buildProcessEnv(),
+  });
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_workspace_materialization_failed",
+      details: {
+        path: repositoryRoot,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Failed to inspect git worktrees for ${repositoryRoot}`,
+      statusCode: 1,
+    });
+  }
+
+  return new Set(
+    result.stdout
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => resolve(line.slice("worktree ".length))),
+  );
+}
+
+async function pruneAbandonedGitWorktree(
+  repositoryRoot: string,
+  workspacePath: string,
+): Promise<void> {
+  const result = await runSubprocess({
+    cmd: ["git", "worktree", "prune", "--expire=now"],
+    cwd: repositoryRoot,
+    env: buildProcessEnv(),
+  });
+
+  if (result.exitCode !== 0) {
+    throw new QuestDomainError({
+      code: "quest_workspace_materialization_failed",
+      details: {
+        path: workspacePath,
+        sourceRepositoryPath: repositoryRoot,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Failed to prune abandoned git worktree for ${workspacePath}`,
+      statusCode: 1,
+    });
+  }
+
+  const registeredWorktreePaths = await readRegisteredGitWorktreePaths(repositoryRoot);
+  if (registeredWorktreePaths.has(workspacePath)) {
+    throw new QuestDomainError({
+      code: "quest_workspace_materialization_failed",
+      details: {
+        path: workspacePath,
+        sourceRepositoryPath: repositoryRoot,
+        stderr: result.stderr,
+        stdout: result.stdout,
+      },
+      message: `Git still lists abandoned worktree after pruning: ${workspacePath}`,
+      statusCode: 1,
+    });
+  }
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await lstat(path);
@@ -506,6 +574,7 @@ export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise
 
   if (run.sourceRepositoryPath) {
     const repositoryRoot = await resolveGitRepositoryRoot(run.sourceRepositoryPath);
+    let registeredWorktreePaths = await readRegisteredGitWorktreePaths(repositoryRoot);
 
     for (const workspacePath of workspacePaths) {
       const confinedWorkspacePath = await assertWorkspacePathWithinRoot(
@@ -514,7 +583,14 @@ export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise
         "Workspace path",
       );
 
-      if (!(await directoryHasEntries(confinedWorkspacePath))) {
+      const hasWorkspaceEntries = await directoryHasEntries(confinedWorkspacePath);
+      if (!hasWorkspaceEntries && registeredWorktreePaths.has(confinedWorkspacePath)) {
+        await pruneAbandonedGitWorktree(repositoryRoot, confinedWorkspacePath);
+        registeredWorktreePaths = await readRegisteredGitWorktreePaths(repositoryRoot);
+        continue;
+      }
+
+      if (!hasWorkspaceEntries) {
         continue;
       }
 
@@ -537,6 +613,7 @@ export async function cleanupExecutionWorkspaces(run: QuestRunDocument): Promise
           statusCode: 1,
         });
       }
+      registeredWorktreePaths.delete(confinedWorkspacePath);
     }
   }
 

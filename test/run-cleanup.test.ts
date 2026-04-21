@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -154,6 +154,62 @@ test("run cleanup removes aborted source-repo workspaces without integration", a
 
     const cleaned = await cleanup.cleanupRun(run.id);
 
+    expect(existsSync(cleaned.workspaceRoot ?? "")).toBe(false);
+    expect(cleaned.events.some((event) => event.type === "run_workspace_cleaned")).toBe(true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run cleanup prunes empty registered source-repo worktrees", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "quest-run-cleanup-")));
+  const repositoryRoot = createCommittedRepo(root);
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const cleanup = new QuestRunCleanup(runStore);
+
+  try {
+    const run = await runStore.createRun(createSpec(), [createWorker()], {
+      sourceRepositoryPath: repositoryRoot,
+    });
+    const workspaceRoot = join(workspacesRoot, run.id);
+    const sliceWorkspace = join(workspaceRoot, "slices", "parser");
+    await Bun.$`git -C ${repositoryRoot} worktree add --detach ${sliceWorkspace}`.quiet();
+
+    rmSync(sliceWorkspace, { force: true, recursive: true });
+    mkdirSync(sliceWorkspace, { recursive: true });
+
+    run.status = "aborted";
+    run.workspaceRoot = workspaceRoot;
+    if (run.slices[0]) {
+      run.slices[0].status = "aborted";
+      run.slices[0].workspacePath = sliceWorkspace;
+    }
+    const savedRun = await runStore.saveRun(run);
+    const savedWorkspacePath = savedRun.slices[0]?.workspacePath ?? sliceWorkspace;
+
+    const listedBefore = Bun.spawnSync({
+      cmd: ["git", "worktree", "list", "--porcelain"],
+      cwd: repositoryRoot,
+      env: Bun.env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(listedBefore.exitCode).toBe(0);
+    expect(new TextDecoder().decode(listedBefore.stdout)).toContain(savedWorkspacePath);
+
+    const cleaned = await cleanup.cleanupRun(run.id);
+
+    const listedAfter = Bun.spawnSync({
+      cmd: ["git", "worktree", "list", "--porcelain"],
+      cwd: repositoryRoot,
+      env: Bun.env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(listedAfter.exitCode).toBe(0);
+    expect(new TextDecoder().decode(listedAfter.stdout)).not.toContain(savedWorkspacePath);
     expect(existsSync(cleaned.workspaceRoot ?? "")).toBe(false);
     expect(cleaned.events.some((event) => event.type === "run_workspace_cleaned")).toBe(true);
   } finally {
