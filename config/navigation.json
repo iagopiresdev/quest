@@ -6,7 +6,7 @@
     },
     {
       "group": "Core Docs",
-      "pages": ["docs/design-system", "docs/engineering-guide"]
+      "pages": ["docs/operator-guide", "docs/design-system", "docs/engineering-guide"]
     },
     {
       "group": "Specs",

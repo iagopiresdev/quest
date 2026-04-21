@@ -1,0 +1,250 @@
+---
+title: Operator Guide
+description: Practical setup, worker, run, observability, state, and validation commands for Quest operators.
+---
+
+# Operator Guide
+
+Use this guide when you want the command-level details behind the short public README.
+
+## Setup
+
+From a fresh checkout:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+bun run install:local
+quest setup --yes --backend codex
+quest doctor --json
+```
+
+Backend setup targets:
+
+```sh
+quest setup --yes --backend codex
+quest setup --yes --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
+quest setup --yes --backend openclaw
+quest setup --yes --backend standalone
+```
+
+When setup runs without explicit backend detail, it tries to import usable local state:
+
+- Codex native login or `OPENAI_API_KEY`
+- first reachable Hermes model from `/models`
+- preferred OpenClaw agent, with `codex` preferred when present
+- sink auth defaults from `TELEGRAM_BOT_TOKEN`, `SLACK_WEBHOOK_URL`, and `LINEAR_API_KEY`
+
+Use explicit `quest observability ... upsert` commands for reproducible sink setup.
+
+## Worker Backends
+
+Current adapters:
+
+- `dry-run` through `runs execute --dry-run`
+- `local-command` for local subprocess execution
+- `codex-cli` for native Codex CLI execution
+- `hermes-api` for Hermes/OpenAI-compatible HTTP execution
+- `openclaw-cli` for OpenClaw agent execution through the installed `openclaw` CLI
+
+Worker roles:
+
+- `builder` for implementation slices
+- `tester` for validation slices
+- `hybrid` for both roles and safe fallback routing
+
+Create workers from flags:
+
+```sh
+quest workers add codex --id codex --name Codex --role hybrid
+quest workers add hermes --id hermes --name Hermes --base-url http://127.0.0.1:8000/v1 --role hybrid
+quest workers add openclaw --id openclaw --name OpenClaw --role hybrid
+```
+
+Manage the roster:
+
+```sh
+quest workers list
+quest workers inspect --id <worker-id>
+quest workers status --id <worker-id>
+quest workers summary
+quest workers history --id <worker-id>
+quest workers update --id <worker-id> --enable
+quest workers remove --id <worker-id> --yes
+```
+
+Calibration:
+
+```sh
+quest workers calibrate --list-suites
+quest workers calibrate --id <worker-id> --suite training-grounds-v1
+```
+
+## Planning And Runs
+
+Plan a spec without persisting a run:
+
+```sh
+quest plan --file quest.json --pretty
+quest plan --file quest.yaml --json
+quest plan --file quest.json --worker-id <worker-id> --pretty
+quest plan --file quest.json --explain --pretty
+```
+
+Create and inspect runs:
+
+```sh
+quest run --file quest.json --source-repo /absolute/path/to/repo --pretty
+quest runs list
+quest runs status --id <run-id>
+quest runs summary --id <run-id>
+quest runs watch --id <run-id>
+```
+
+Execute, integrate, and land:
+
+```sh
+quest runs execute --id <run-id> --dry-run
+quest runs execute --id <run-id> --auto-integrate --target-ref main
+quest runs execute --id <run-id> --auto-integrate --land --target-ref main
+quest runs integrate --id <run-id> --target-ref main
+quest runs land --id <run-id> --target-ref main
+quest runs refresh-base --id <run-id> --target-ref main
+```
+
+Operational recovery:
+
+```sh
+quest runs pause --id <run-id>
+quest runs resume --id <run-id>
+quest runs cancel --id <run-id>
+quest runs validate --id <run-id>
+quest runs quarantine --id <run-id>
+quest runs chronicle --id <run-id>
+quest runs usage --id <run-id>
+quest runs rescue --id <run-id> --status pending --note "Manual recovery note"
+quest runs rerun --id <run-id>
+```
+
+Party rest and daemon queue controls:
+
+```sh
+quest party status
+quest party bonfire --reason "pause dispatch"
+quest party resume
+```
+
+Slice steering:
+
+```sh
+quest runs slices reassign --id <run-id> --slice <slice-id> --worker-id <worker-id>
+quest runs slices retry --id <run-id> --slice <slice-id>
+quest runs slices skip --id <run-id> --slice <slice-id>
+```
+
+Workspace cleanup:
+
+```sh
+quest workspaces prune
+quest runs cleanup --id <run-id>
+```
+
+Completed source-repo runs should be integrated before cleanup. Aborted runs and failed turn-ins can be cleaned directly because the normal landing path is already broken.
+
+## Observability
+
+Quest stores normalized events and delivery attempts under the state root. Delivery is downstream of persisted events.
+
+Inspect events and deliveries:
+
+```sh
+quest observability sinks list
+quest observability events list --run-id <run-id>
+quest observability deliveries list
+quest observability deliveries retry --sink-id <sink-id>
+```
+
+Configure sinks:
+
+```sh
+quest observability webhook upsert --id local-hook --url http://127.0.0.1:3000/events
+quest observability telegram upsert --id ops --chat-id 123456789 --parse-mode HTML
+quest observability slack upsert --id ops --webhook-url "$SLACK_WEBHOOK_URL"
+quest observability linear upsert --id tracker --issue-id ENG-123 --api-key-env LINEAR_API_KEY
+quest observability openclaw upsert --id agent-feed --agent-id codex
+quest observability sinks test
+quest observability sinks delete --id <sink-id>
+```
+
+Telegram HTML cards are opt-in through setup or `quest observability telegram upsert --parse-mode HTML`.
+
+## State
+
+Default state lives outside the source repo:
+
+```text
+~/.quest/workers.json
+~/.quest/runs/
+~/.quest/workspaces/
+~/.quest/calibrations/
+~/.quest/observability/config.json
+~/.quest/observability/deliveries.json
+~/.quest/settings.json
+~/.quest/party-state.json
+~/.quest/daemon-config.json
+~/.quest/daemon-state.json
+~/.quest/parties/
+```
+
+Useful overrides:
+
+```sh
+QUEST_STATE_ROOT=/tmp/quest-state quest doctor --json
+QUEST_WORKER_REGISTRY_PATH=/tmp/workers.json quest workers list
+QUEST_RUNS_ROOT=/tmp/runs quest runs list
+QUEST_WORKSPACES_ROOT=/tmp/workspaces quest workspaces prune
+QUEST_CALIBRATIONS_ROOT=/tmp/calibrations quest workers calibrate --list-suites
+QUEST_OBSERVABILITY_CONFIG_PATH=/tmp/observability.json quest observability sinks list
+```
+
+Do not commit runtime state, tokens, local config, database files, `.quest/`, `.codex/`, `.openclaw/`, or local operator handoff files.
+
+## Validation
+
+Standard gate:
+
+```sh
+bun run lint
+bun run typecheck
+bun test
+bun run build
+```
+
+Fresh install canaries:
+
+```sh
+bun ./scripts/canaries/fresh-install.ts --backend local-command
+bun ./scripts/canaries/fresh-install.ts --backend codex
+```
+
+Repo edit canaries:
+
+```sh
+bun ./scripts/canaries/repo-edit.ts --backend local-command
+bun ./scripts/canaries/repo-edit.ts --backend codex
+bun ./scripts/canaries/repo-edit.ts --backend openclaw
+bun ./scripts/canaries/repo-edit.ts --backend hermes --hermes-base-url http://127.0.0.1:8000/v1
+```
+
+Other packaged canaries:
+
+```sh
+bun ./scripts/canaries/daemon-events.ts
+bun ./scripts/canaries/concurrent-parties.ts
+bun ./scripts/canaries/yaml-spec-lifecycle.ts
+bun ./scripts/canaries/agent-driven-install.ts
+bun ./scripts/canaries/acp-adapter.ts
+bun ./scripts/canaries/openclaw-one-spec-project.ts
+```
+
+Mocks are necessary but insufficient for execution-facing work. Runner, setup, sink, integration, and backend import changes should include a real canary when the matching dependency exists locally.
