@@ -31,6 +31,8 @@
     "docs/design-system.mdx",
     "docs/engineering-guide.mdx",
     "docs/operator-guide.mdx",
+    "docs/pull-request-workflow.mdx",
+    "docs/release-platform-support.mdx",
     "docs/specs",
     "index.mdx",
     "config",
@@ -46,6 +48,7 @@
   },
   "scripts": {
     "build": "mkdir -p dist && bun build --compile ./src/cli.ts --outfile ./dist/quest",
+    "check": "bun run lint && bun run typecheck && bun run test:ci && bun run build",
     "docs:dev": "npx mint dev --no-open",
     "format": "biome format . --write",
     "hooks:install": "bash ./scripts/install-git-hooks.sh",
