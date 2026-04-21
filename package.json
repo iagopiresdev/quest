@@ -48,6 +48,7 @@
     "build": "mkdir -p dist && bun build --compile ./src/cli.ts --outfile ./dist/quest",
     "docs:dev": "npx mint dev --no-open",
     "format": "biome format . --write",
+    "hooks:install": "bash ./scripts/install-git-hooks.sh",
     "install:local": "bash ./scripts/install-local.sh",
     "lint": "biome check . && bun run lint:cycles && bun run lint:architecture",
     "lint:architecture": "bun ./scripts/lint-architecture.ts",

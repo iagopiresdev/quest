@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+protected_ref_pattern='^refs/heads/(main|master)$'
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [[ "${remote_ref}" =~ ${protected_ref_pattern} ]]; then
+    cat >&2 <<'MSG'
+Direct pushes to main/master are blocked for this repo.
+
+Create a topic branch and open a pull request instead:
+  git switch -c codex/<short-description>
+  git push -u origin codex/<short-description>
+  gh pr create --base main --head codex/<short-description>
+
+GitHub branch protection is the authoritative guard; this hook catches mistakes before the network push.
+MSG
+    exit 1
+  fi
+done

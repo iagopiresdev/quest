@@ -21,6 +21,16 @@ Read these first:
 4. Add automated coverage for happy path and edge cases.
 5. Run a real canary when the change touches execution, setup, integration, steering, or sink delivery.
 
+## Branches
+
+Do not push directly to `main` or `master`. Create a topic branch, push it, and open a pull request.
+
+GitHub branch protection is configured as the authoritative guard for `main`. For a local early warning before a push reaches GitHub, install the tracked pre-push hook:
+
+```sh
+bun run hooks:install
+```
+
 ## Local Validation
 
 Before opening a pull request, run:
