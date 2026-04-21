@@ -338,7 +338,7 @@ test("quest cli imports codex env auth when native login is unavailable", () => 
   const added = runCli(context, ["workers", "add", "codex", "--name", "Imported Codex"], {
     env: {
       OPENAI_API_KEY: "test-openai-key",
-      QUEST_RUNNER_CODEX_EXECUTABLE: codexExecutable,
+      QUEST_CODEX_EXECUTABLE: codexExecutable,
     },
   });
 
@@ -405,7 +405,7 @@ test("quest cli shows worker calibration history", () => {
             suiteId: "training-grounds-v1",
             totalCheckCount: 4,
             totalSliceCount: 3,
-            workspacePath: "/tmp/quest-runner/training",
+            workspacePath: "/tmp/quest/training",
             xpAwarded: 200,
           },
         ],
@@ -1134,7 +1134,7 @@ test("quest cli configures slack sinks and delivers run events", async () => {
       "--events",
       "run_completed",
       "--text-prefix",
-      "[Quest Runner]",
+      "[Quest]",
     ]);
     expect(upsertSink.code).toBe(0);
 
@@ -1155,7 +1155,7 @@ test("quest cli configures slack sinks and delivers run events", async () => {
       throw new Error("Slack sink did not receive a request body");
     }
     expect(typeof body.text).toBe("string");
-    expect(String(body.text)).toContain("[Quest Runner]");
+    expect(String(body.text)).toContain("[Quest]");
     expect(String(body.text)).toContain("run_completed");
   } finally {
     server.stop(true);
@@ -2522,7 +2522,7 @@ test("quest cli doctor reports codex and storage health", () => {
   Bun.spawnSync({ cmd: ["chmod", "+x", fakeCodexPath], cwd: context.stateRoot });
 
   const doctor = runCli(context, ["doctor"], {
-    env: { QUEST_RUNNER_CODEX_EXECUTABLE: fakeCodexPath },
+    env: { QUEST_CODEX_EXECUTABLE: fakeCodexPath },
   });
 
   expect(doctor.code).toBe(0);
@@ -2564,7 +2564,7 @@ test("quest cli doctor dedupes duplicate writable paths", () => {
       join(sharedRoot, "deliveries.json"),
     ],
     {
-      env: { QUEST_RUNNER_CODEX_EXECUTABLE: codexExecutable },
+      env: { QUEST_CODEX_EXECUTABLE: codexExecutable },
     },
   );
 
@@ -2634,11 +2634,11 @@ test("quest cli pretty prints doctor output when requested", () => {
   const codexExecutable = createCodexMockExecutable(context.stateRoot);
 
   const doctor = runCli(context, ["doctor", "--pretty"], {
-    env: { QUEST_RUNNER_CODEX_EXECUTABLE: codexExecutable },
+    env: { QUEST_CODEX_EXECUTABLE: codexExecutable },
   });
 
   expect(doctor.code).toBe(0);
-  expect(doctor.stdout).toContain("Quest Runner Doctor");
+  expect(doctor.stdout).toContain("Quest Doctor");
   expect(doctor.stdout).toContain("codex-binary");
   expect(doctor.stdout).toContain("✓");
   expect(doctor.stdout).not.toContain('"checks"');

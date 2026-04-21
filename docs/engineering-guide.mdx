@@ -1,11 +1,11 @@
 ---
 title: Engineering Guide
-description: Implementation rules, typing expectations, observability constraints, and Bun-first engineering guidance for quest-runner.
+description: Implementation rules, typing expectations, observability constraints, and Bun-first engineering guidance for quest.
 ---
 
 # Engineering Guide
 
-This document sets the baseline for how `quest-runner` should evolve from v0 onward.
+This document sets the baseline for how `quest` should evolve from v0 onward.
 
 The project is small on purpose. The guidance below exists to keep it small, typed, observable, and extractable as the feature surface grows.
 
@@ -14,7 +14,7 @@ Read [Design System](/docs/design-system) first when the question is about proje
 ## Design Principles
 
 1. Keep the correctness boundary local.
-   `quest-runner` must remain usable from a single CLI process against local state. Optional services, dashboards, or remote adapters are secondary surfaces, not correctness dependencies.
+   `quest` must remain usable from a single CLI process against local state. Optional services, dashboards, or remote adapters are secondary surfaces, not correctness dependencies.
 
 2. Prefer explicit state over hidden behavior.
    Runs, slices, workers, and events should be persisted and typed. Avoid implicit transitions spread across unrelated modules.
@@ -126,7 +126,7 @@ If a future change makes these rules harder to see, the design is getting worse.
 
 ## Validation Strategy
 
-Quest Runner is an orchestration tool. That means the dangerous bugs often live in the seams between typed state and real backends.
+Quest is an orchestration tool. That means the dangerous bugs often live in the seams between typed state and real backends.
 
 Rules:
 
@@ -171,7 +171,7 @@ Minimum edge cases to consider for execution-facing work:
 For runner adapters specifically:
 
 - verify the exact prompt or request payload sent to the backend
-- verify workspace context artifacts like `.quest-runner/workspace-manifest.md` when prompt shape depends on them
+- verify workspace context artifacts like `.quest/workspace-manifest.md` when prompt shape depends on them
 - verify the persisted run state after a real run
 - verify that a disposable repo or workspace reflects the expected post-run result
 - verify that sensitive data still stays out of prompts, logs, and argv when a safer path exists
@@ -266,10 +266,10 @@ Rules:
 
 Examples:
 
-- `quest_runner_unavailable`
+- `quest_unavailable`
   adapter missing or unsupported
 
-- `quest_runner_command_failed`
+- `quest_command_failed`
   worker command ran and returned non-zero
 
 - `quest_acceptance_check_failed`

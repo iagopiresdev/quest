@@ -219,8 +219,8 @@ function isQuestManagedArtifactPath(path: string): boolean {
   return (
     path === ".openclaw" ||
     path.startsWith(".openclaw/") ||
-    path === ".quest-runner" ||
-    path.startsWith(".quest-runner/") ||
+    path === ".quest" ||
+    path.startsWith(".quest/") ||
     [
       "AGENTS.md",
       "BOOTSTRAP.md",
@@ -491,7 +491,7 @@ async function freezeSliceResult(
         "commit",
         "-m",
         [
-          `quest-runner: freeze ${sliceState.sliceId}`,
+          `quest: freeze ${sliceState.sliceId}`,
           "",
           `Quest-Run-Id: ${run.id}`,
           `Quest-Slice-Id: ${sliceState.sliceId}`,
@@ -540,7 +540,7 @@ async function commitIntegrationSlice(
       "commit",
       "-m",
       [
-        `quest-runner: integrate ${sliceState.sliceId}`,
+        `quest: integrate ${sliceState.sliceId}`,
         "",
         `Quest-Run-Id: ${run.id}`,
         `Quest-Slice-Id: ${sliceState.sliceId}`,

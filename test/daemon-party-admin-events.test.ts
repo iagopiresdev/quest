@@ -28,7 +28,7 @@ function createHarness() {
       stdoutTruncated: false,
       timedOut: false,
     }),
-    serviceName: `quest-runner-tests-${crypto.randomUUID()}`,
+    serviceName: `quest-tests-${crypto.randomUUID()}`,
   });
   return { cleanup: () => rmSync(root, { force: true, recursive: true }), secretStore, store };
 }

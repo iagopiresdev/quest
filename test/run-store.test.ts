@@ -220,7 +220,7 @@ test("run store still surfaces tampered workspace paths when listing summaries",
       integrationWorkspacePath?: string;
       workspaceRoot?: string;
     };
-    tampered.workspaceRoot = "/tmp/not-quest-runner";
+    tampered.workspaceRoot = "/tmp/not-quest";
     writeFileSync(runPath, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
 
     await expect(store.listRuns()).rejects.toBeInstanceOf(QuestDomainError);
@@ -495,10 +495,10 @@ test("run store rejects tampered workspace paths outside the configured workspac
       workspaceRoot: string;
     };
 
-    rawRun.workspaceRoot = "/tmp/quest-runner-evil";
+    rawRun.workspaceRoot = "/tmp/quest-evil";
     rawRun.slices[0] = {
       ...rawRun.slices[0],
-      workspacePath: "/tmp/quest-runner-evil/slices/parser",
+      workspacePath: "/tmp/quest-evil/slices/parser",
     };
     writeFileSync(runPath, `${JSON.stringify(rawRun, null, 2)}\n`, "utf8");
 
@@ -527,7 +527,7 @@ test("run store rejects tampered integration workspaces outside the run root", a
     const runPath = join(runsRoot, `${run.id}.json`);
     const rawRun = JSON.parse(readFileSync(runPath, "utf8")) as Record<string, unknown>;
 
-    rawRun.integrationWorkspacePath = "/tmp/quest-runner-evil/integration";
+    rawRun.integrationWorkspacePath = "/tmp/quest-evil/integration";
     writeFileSync(runPath, `${JSON.stringify(rawRun, null, 2)}\n`, "utf8");
 
     try {

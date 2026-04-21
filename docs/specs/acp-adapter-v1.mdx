@@ -244,7 +244,7 @@ The old `hermes-api` adapter can be removed in a future release.
 1. **ACP version**: Pin to 0.9.0 or negotiate? Recommendation: advertise 0.9.0, accept whatever the server responds with.
 2. **Streaming vs batch**: Read events line-by-line (streaming) or wait for process exit then parse everything? Recommendation: streaming for idle detection and cancellation.
 3. **Workspace diff strategy**: After agent finishes, diff against git index or compare timestamps? Git diff is cleaner but requires a git repo. Recommendation: git diff with timestamp fallback.
-4. **acpx dependency**: Import `acpx` npm package for protocol types, or re-implement the JSON-RPC messages (they're simple)? Recommendation: re-implement. ACP messages are ~5 JSON-RPC calls. Adding a dependency for that is overkill and keeps quest-runner dependency-light.
+4. **acpx dependency**: Import `acpx` npm package for protocol types, or re-implement the JSON-RPC messages (they're simple)? Recommendation: re-implement. ACP messages are ~5 JSON-RPC calls. Adding a dependency for that is overkill and keeps quest dependency-light.
 
 ## File Manifest
 

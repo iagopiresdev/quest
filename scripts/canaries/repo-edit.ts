@@ -78,12 +78,12 @@ function createCommittedRepo(root: string): string {
   mkdirSync(repositoryRoot, { recursive: true });
   runCommandOrThrow(["git", "init"], repositoryRoot, Bun.env as Record<string, string>);
   runCommandOrThrow(
-    ["git", "config", "user.name", "Quest Runner Canary"],
+    ["git", "config", "user.name", "Quest Canary"],
     repositoryRoot,
     Bun.env as Record<string, string>,
   );
   runCommandOrThrow(
-    ["git", "config", "user.email", "quest-runner-canary@example.com"],
+    ["git", "config", "user.email", "quest-canary@example.com"],
     repositoryRoot,
     Bun.env as Record<string, string>,
   );
@@ -164,7 +164,7 @@ function registerWorker(
 ): void {
   const questEnv = {
     ...Bun.env,
-    QUEST_RUNNER_STATE_ROOT: stateRoot,
+    QUEST_STATE_ROOT: stateRoot,
   } as Record<string, string>;
 
   if (backend === "local-command") {
@@ -281,7 +281,7 @@ function main(): void {
   const specPath = createSpecFile(scratchRoot);
   const questEnv = {
     ...Bun.env,
-    QUEST_RUNNER_STATE_ROOT: stateRoot,
+    QUEST_STATE_ROOT: stateRoot,
   } as Record<string, string>;
 
   try {

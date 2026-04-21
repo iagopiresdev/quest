@@ -64,7 +64,7 @@ function parseArgs(args: string[]): CanaryOptions {
     keep: hasFlag(args, "--keep"),
     openClawExecutable:
       findOptionValue(args, "--openclaw-executable") ??
-      Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE ??
+      Bun.env.QUEST_OPENCLAW_EXECUTABLE ??
       Bun.which("openclaw") ??
       "openclaw",
     root: findOptionValue(args, "--root")
@@ -109,18 +109,18 @@ function createCommittedRepo(root: string): string {
   mkdirSync(repositoryRoot, { recursive: true });
   runCommandOrThrow(["git", "init"], repositoryRoot, Bun.env as Record<string, string>);
   runCommandOrThrow(
-    ["git", "config", "user.name", "Quest Runner Canary"],
+    ["git", "config", "user.name", "Quest Canary"],
     repositoryRoot,
     Bun.env as Record<string, string>,
   );
   runCommandOrThrow(
-    ["git", "config", "user.email", "quest-runner-canary@example.com"],
+    ["git", "config", "user.email", "quest-canary@example.com"],
     repositoryRoot,
     Bun.env as Record<string, string>,
   );
   writeFileSync(
     join(repositoryRoot, "README.md"),
-    "# Score Package Canary\n\nQuest Runner should build this from one spec.\n",
+    "# Score Package Canary\n\nQuest should build this from one spec.\n",
     "utf8",
   );
   runCommandOrThrow(["git", "add", "README.md"], repositoryRoot, Bun.env as Record<string, string>);
@@ -185,7 +185,7 @@ function createSpecFile(root: string): string {
 function registerOpenClawWorkers(options: CanaryOptions, stateRoot: string): void {
   const questEnv = {
     ...Bun.env,
-    QUEST_RUNNER_STATE_ROOT: stateRoot,
+    QUEST_STATE_ROOT: stateRoot,
   } as Record<string, string>;
   const gatewayArgs = options.gatewayUrl ? ["--gateway-url", options.gatewayUrl] : [];
 
@@ -264,7 +264,7 @@ function main(): void {
   const processEnv = Bun.env as Record<string, string>;
   const questEnv = {
     ...Bun.env,
-    QUEST_RUNNER_STATE_ROOT: stateRoot,
+    QUEST_STATE_ROOT: stateRoot,
   } as Record<string, string>;
 
   try {

@@ -335,7 +335,7 @@ function buildCanaryScript(options: {
     "set -euo pipefail",
     `export PATH=${shellQuote(`${options.binDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`)}:$PATH`,
     `export STATE_ROOT=${shellQuote(options.stateRoot)}`,
-    `export QUEST_RUNNER_INSTALL_BIN_DIR=${shellQuote(options.wrapperInstallDir)}`,
+    `export QUEST_INSTALL_BIN_DIR=${shellQuote(options.wrapperInstallDir)}`,
     options.codexHome ? `export CODEX_HOME=${shellQuote(options.codexHome)}` : "",
     `cd ${shellQuote(repoRoot)}`,
     "bun install --frozen-lockfile",
@@ -387,7 +387,7 @@ function buildLauncherScript(options: {
     `bash ${shellQuote(options.canaryScriptPath)} > ${shellQuote(options.logPath)} 2>&1`,
     "STATUS=$?",
     `printf '%s' "$STATUS" > ${shellQuote(options.exitCodePath)}`,
-    `printf '\\n[quest-runner fresh-install canary exit=%s]\\n' "$STATUS" >> ${shellQuote(options.logPath)}`,
+    `printf '\\n[quest fresh-install canary exit=%s]\\n' "$STATUS" >> ${shellQuote(options.logPath)}`,
     options.keepSession ? `exec ${"${" + "SHELL:-/bin/zsh}"} -i` : `exit "$STATUS"`,
   ].join("\n");
 }

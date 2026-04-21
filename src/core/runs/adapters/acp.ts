@@ -95,7 +95,7 @@ export function parseExecutableCommand(command: string): string[] {
   const trimmed = command.trim();
   if (trimmed.length === 0) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: { command },
       message: "ACP executable command is empty",
       statusCode: 1,
@@ -171,7 +171,7 @@ export function parseExecutableCommand(command: string): string[] {
 
   if (escaping || quote !== null) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: { command },
       message: `ACP executable command has invalid quoting: ${command}`,
       statusCode: 1,
@@ -185,7 +185,7 @@ export function parseExecutableCommand(command: string): string[] {
 function buildInitializeRequest(): JsonRpcRequest {
   return makeRequest("initialize", {
     clientCapabilities: {},
-    clientInfo: { name: "quest-runner", version: "0.1.0" },
+    clientInfo: { name: "quest", version: "0.1.0" },
     protocolVersion: 1,
   });
 }
@@ -419,7 +419,7 @@ async function waitForResponse(
   }
 
   throw new QuestDomainError({
-    code: "quest_runner_unavailable",
+    code: "quest_unavailable",
     details: { expectedId, workerId },
     message: `ACP agent closed before responding to request ${expectedId}`,
     statusCode: 1,
@@ -439,7 +439,7 @@ async function driveAcpSession(
     const initResp = await waitForResponse(initReq.id, queue, context.worker.id, state);
     if (initResp.error) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: initResp.error,
         message: `ACP initialize failed for ${context.worker.id}: ${initResp.error.message}`,
         statusCode: 1,
@@ -456,7 +456,7 @@ async function driveAcpSession(
     const newSessResp = await waitForResponse(newSessReq.id, queue, context.worker.id, state);
     if (newSessResp.error) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: newSessResp.error,
         message: `ACP session/new failed for ${context.worker.id}: ${newSessResp.error.message}`,
         statusCode: 1,
@@ -468,7 +468,7 @@ async function driveAcpSession(
     state.sessionId = typeof rawSessionId === "string" ? rawSessionId : "";
     if (!state.sessionId) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { response: newSessResp.result, workerId: context.worker.id },
         message: `ACP session/new did not return a session ID for ${context.worker.id}`,
         statusCode: 1,
@@ -480,7 +480,7 @@ async function driveAcpSession(
     const promptResp = await waitForResponse(promptReq.id, queue, context.worker.id, state);
     if (promptResp.error) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: promptResp.error,
         message: `ACP session/prompt failed for ${context.worker.id}: ${promptResp.error.message}`,
         statusCode: 1,
@@ -552,7 +552,7 @@ export class AcpRunnerAdapter implements RunnerAdapter {
     const executable = context.worker.backend.executable;
     if (!executable) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { workerId: context.worker.id },
         message: `ACP adapter requires backend.executable for worker ${context.worker.id}`,
         statusCode: 1,
@@ -588,7 +588,7 @@ export class AcpRunnerAdapter implements RunnerAdapter {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { executable, message, workerId: context.worker.id },
         message: `Failed to spawn ACP agent for worker ${context.worker.id}: ${message}`,
         statusCode: 1,
@@ -672,7 +672,7 @@ export class AcpRunnerAdapter implements RunnerAdapter {
 
     if (exitCode !== 0) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: {
           command: agentCmdParts,
           exitCode,

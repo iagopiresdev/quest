@@ -296,7 +296,7 @@ async function writeQuestContext(
   sliceState: QuestRunSliceState,
   cwd: string,
 ): Promise<void> {
-  const questStateDir = `${cwd}/.quest-runner`;
+  const questStateDir = `${cwd}/.quest`;
   await ensureDirectory(questStateDir);
   await writeFile(
     `${questStateDir}/context.json`,
@@ -323,7 +323,7 @@ async function writeQuestContext(
 }
 
 export async function refreshWorkspaceManifest(cwd: string): Promise<void> {
-  const questStateDir = `${cwd}/.quest-runner`;
+  const questStateDir = `${cwd}/.quest`;
   await ensureDirectory(questStateDir);
   await writeFile(
     `${questStateDir}/workspace-manifest.md`,

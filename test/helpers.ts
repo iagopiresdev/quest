@@ -49,8 +49,8 @@ export function createCommittedRepo(root: string): string {
   const repositoryRoot = join(root, "source-repo");
   mkdirSync(repositoryRoot, { recursive: true });
   runCommandOrThrow(["git", "init"], repositoryRoot);
-  runCommandOrThrow(["git", "config", "user.name", "Quest Runner"], repositoryRoot);
-  runCommandOrThrow(["git", "config", "user.email", "quest-runner@example.com"], repositoryRoot);
+  runCommandOrThrow(["git", "config", "user.name", "Quest"], repositoryRoot);
+  runCommandOrThrow(["git", "config", "user.email", "quest@example.com"], repositoryRoot);
   writeFileSync(join(repositoryRoot, "tracked.txt"), "from-source-repo\n", "utf8");
   runCommandOrThrow(["git", "add", "tracked.txt"], repositoryRoot);
   runCommandOrThrow(["git", "commit", "-m", "Initial commit"], repositoryRoot);
@@ -59,7 +59,7 @@ export function createCommittedRepo(root: string): string {
 
 export function createCliContext(): CliTestContext {
   return {
-    secretServiceName: `quest-runner-test-${crypto.randomUUID()}`,
+    secretServiceName: `quest-test-${crypto.randomUUID()}`,
     stateRoot: createTempRoot("quest-cli-"),
   };
 }
@@ -73,7 +73,7 @@ export function createCalibrationCommandScript(root: string): string {
       "const workspace = Bun.env.QUEST_SLICE_WORKSPACE;",
       "",
       "if (!sliceId || !workspace) {",
-      '  throw new Error("missing quest runner slice context");',
+      '  throw new Error("missing quest slice context");',
       "}",
       "",
       "switch (sliceId) {",
@@ -298,9 +298,9 @@ export function runCli(
     env: {
       ...Bun.env,
       ...options.env,
-      QUEST_RUNNER_STATE_ROOT: context.stateRoot,
-      QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
-      QUEST_RUNNER_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
+      QUEST_STATE_ROOT: context.stateRoot,
+      QUEST_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
+      QUEST_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
     },
     stdin: options.input ? textEncoder.encode(options.input) : null,
     stdout: "pipe",
@@ -325,9 +325,9 @@ export async function runCliAsync(
     env: {
       ...Bun.env,
       ...options.env,
-      QUEST_RUNNER_STATE_ROOT: context.stateRoot,
-      QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
-      QUEST_RUNNER_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
+      QUEST_STATE_ROOT: context.stateRoot,
+      QUEST_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
+      QUEST_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
     },
     stdin: options.input ? textEncoder.encode(options.input) : "ignore",
     stdout: "pipe",
@@ -358,9 +358,9 @@ export function spawnCli(
     env: {
       ...Bun.env,
       ...options.env,
-      QUEST_RUNNER_STATE_ROOT: context.stateRoot,
-      QUEST_RUNNER_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
-      QUEST_RUNNER_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
+      QUEST_STATE_ROOT: context.stateRoot,
+      QUEST_WORKER_REGISTRY_PATH: join(context.stateRoot, "workers.json"),
+      QUEST_SECRET_STORE_SERVICE_NAME: context.secretServiceName,
     },
     stdin: options.input ? textEncoder.encode(options.input) : "ignore",
     stdout: "pipe",

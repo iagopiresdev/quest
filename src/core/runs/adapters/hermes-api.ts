@@ -133,7 +133,7 @@ function extractAssistantContent(responseBody: unknown): string {
 
   if (!parsed.success) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: parsed.error.flatten(),
       message: "Hermes response is not a valid chat completion payload",
       statusCode: 1,
@@ -147,7 +147,7 @@ function extractAssistantContent(responseBody: unknown): string {
 
   if (!content) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: parsed.data.choices[0],
       message: "Hermes response did not include message content",
       statusCode: 1,
@@ -165,7 +165,7 @@ function parseHermesResponse(rawContent: string): z.infer<typeof hermesResponseS
   const parsed = hermesResponseSchema.safeParse(parsedJson);
   if (!parsed.success) {
     throw new QuestDomainError({
-      code: "quest_runner_command_failed",
+      code: "quest_command_failed",
       details: parsed.error.flatten(),
       message: "Hermes returned an invalid write plan",
       statusCode: 1,
@@ -184,7 +184,7 @@ async function applyHermesWrites(
     const normalizedPath = file.path.replaceAll("\\", "/");
     if (!matchesOwnedPath(normalizedPath, ownedPatterns)) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: { path: normalizedPath },
         message: `Hermes attempted to write outside owned paths: ${normalizedPath}`,
         statusCode: 1,
@@ -201,7 +201,7 @@ async function applyHermesWrites(
       );
     } catch (error: unknown) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: {
           cause: isQuestDomainError(error) ? error.details : error,
           path: normalizedPath,
@@ -249,8 +249,7 @@ function buildHermesRequestBody(
   const body: Record<string, unknown> = {
     messages: [
       {
-        content:
-          "You are Hermes running inside quest-runner. Return strict JSON only, no markdown.",
+        content: "You are Hermes running inside quest. Return strict JSON only, no markdown.",
         role: "system",
       },
       { content: prompt, role: "user" },
@@ -302,7 +301,7 @@ export class HermesApiRunnerAdapter implements RunnerAdapter {
     const baseUrl = context.worker.backend.baseUrl;
     if (!baseUrl) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { workerId: context.worker.id },
         message: `Worker ${context.worker.id} has no Hermes base URL configured`,
         statusCode: 1,
@@ -334,7 +333,7 @@ export class HermesApiRunnerAdapter implements RunnerAdapter {
     const responseText = await response.text();
     if (!response.ok) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: { body: responseText, status: response.status, workerId: context.worker.id },
         message: `Hermes request failed for ${context.worker.id}`,
         statusCode: 1,

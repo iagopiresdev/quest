@@ -109,7 +109,7 @@ function resolveExecutableCandidate(
 export async function detectCodexSetup(explicitExecutable?: string): Promise<DetectedCodexSetup> {
   const executable = resolveExecutableCandidate(
     explicitExecutable,
-    Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
+    Bun.env.QUEST_CODEX_EXECUTABLE,
     "codex",
   );
   const [versionResult, loginResult] = await Promise.all([
@@ -142,9 +142,7 @@ export async function detectCodexSetup(explicitExecutable?: string): Promise<Det
 
 export async function detectHermesSetup(explicitBaseUrl?: string): Promise<DetectedHermesSetup> {
   const baseUrl =
-    explicitBaseUrl?.trim() ||
-    Bun.env.QUEST_RUNNER_HERMES_BASE_URL?.trim() ||
-    "http://127.0.0.1:8000/v1";
+    explicitBaseUrl?.trim() || Bun.env.QUEST_HERMES_BASE_URL?.trim() || "http://127.0.0.1:8000/v1";
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/models`);
     const body = await response.json();
@@ -218,7 +216,7 @@ async function runOpenClawStatusWithRetry(
 
   if (!lastResult) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       message: "OpenClaw status could not be checked",
       statusCode: 1,
     });
@@ -232,7 +230,7 @@ export async function detectOpenClawSetup(
 ): Promise<DetectedOpenClawSetup> {
   const executable = resolveExecutableCandidate(
     options.executable,
-    Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
+    Bun.env.QUEST_OPENCLAW_EXECUTABLE,
     "openclaw",
   );
   const env = buildProcessEnv(
@@ -286,7 +284,7 @@ export async function probeOpenClawModelProfile(options: {
 
   const executable = resolveExecutableCandidate(
     options.executable,
-    Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
+    Bun.env.QUEST_OPENCLAW_EXECUTABLE,
     "openclaw",
   );
   const env = buildProcessEnv(
@@ -317,7 +315,7 @@ export async function probeOpenClawModelProfile(options: {
   });
   if (addResult.exitCode !== 0) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: {
         agentId,
         model,
@@ -349,7 +347,7 @@ export async function probeOpenClawModelProfile(options: {
     });
     if (probeResult.exitCode !== 0) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: {
           command: probeCommand,
           exitCode: probeResult.exitCode,

@@ -132,7 +132,7 @@ async function createTemporaryAgent(
   const model = configuredModel ?? fallbackModel;
   if (!model) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: {
         agentId: context.worker.backend.agentId ?? null,
         profile: context.worker.backend.profile,
@@ -146,7 +146,7 @@ async function createTemporaryAgent(
   const agentId = buildQuestAgentId(context.run.id, context.slice.id, context.phase);
   const agentDir = join(
     context.run.workspaceRoot ?? context.cwd,
-    ".quest-runner",
+    ".quest",
     "openclaw-agents",
     agentId,
     "agent",
@@ -172,7 +172,7 @@ async function createTemporaryAgent(
   });
   if (addResult.exitCode !== 0) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: {
         agentDir,
         agentId,
@@ -199,7 +199,7 @@ async function prepareOpenClawTarget(
     buildQuestSessionId(context.run.id, context.slice.id, context.phase);
   if (context.worker.backend.local) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: {
         workerId: context.worker.id,
       },
@@ -271,7 +271,7 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
       command.push("--timeout", timeoutSeconds);
     }
 
-    // OpenClaw agent deletion prunes the agent workspace, so quest-runner leaves these temporary
+    // OpenClaw agent deletion prunes the agent workspace, so quest leaves these temporary
     // agents in place until a later cleanup layer can remove them without deleting live slice data.
     const { aborted, exitCode, stderr, stderrTruncated, stdout, stdoutTruncated, timedOut } =
       await runSubprocess({
@@ -311,7 +311,7 @@ export class OpenClawCliRunnerAdapter implements RunnerAdapter {
 
     if (exitCode !== 0) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: {
           command,
           exitCode,

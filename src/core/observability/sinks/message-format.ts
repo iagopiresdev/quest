@@ -7,7 +7,7 @@ import type {
 
 function formatRunMessage(event: ObservableRunEvent): string {
   return [
-    "quest-runner event",
+    "quest event",
     `event: ${event.eventType}`,
     `run: ${event.runId}`,
     `title: ${event.title}`,
@@ -18,7 +18,7 @@ function formatRunMessage(event: ObservableRunEvent): string {
 
 function formatCalibrationMessage(event: ObservableCalibrationEvent): string {
   return [
-    "quest-runner calibration",
+    "quest calibration",
     `event: ${event.eventType}`,
     `worker: ${event.workerName} (${event.workerId})`,
     `suite: ${event.suiteId}`,
@@ -30,7 +30,7 @@ function formatCalibrationMessage(event: ObservableCalibrationEvent): string {
 }
 
 function formatDaemonMessage(event: ObservableDaemonEvent): string {
-  const lines = ["quest-runner daemon", `event: ${event.eventType}`, `party: ${event.partyName}`];
+  const lines = ["quest daemon", `event: ${event.eventType}`, `party: ${event.partyName}`];
   if (event.specFile) {
     lines.push(`spec: ${event.specFile}`);
   }

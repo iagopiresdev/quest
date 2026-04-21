@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Quest Runner are tracked here. The format follows a compact Keep-a-Changelog shape until tagged releases begin.
+All notable changes to Quest are tracked here. The format follows a compact Keep-a-Changelog shape until tagged releases begin.
 
 ## Unreleased
 

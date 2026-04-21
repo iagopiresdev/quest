@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Canary: "AI agent installs Quest Runner on a machine that already runs OpenClaw / Hermes".
+// Canary: "AI agent installs Quest on a machine that already runs OpenClaw / Hermes".
 //
 // Verifies the non-interactive install flow an AI assistant would follow end-to-end:
 //   1. `quest doctor --json` reports healthy binary + writable state root.
@@ -92,7 +92,7 @@ async function main(): Promise<CanaryResult> {
 
   try {
     const env: Record<string, string> = {
-      QUEST_RUNNER_STATE_ROOT: stateRoot,
+      QUEST_STATE_ROOT: stateRoot,
       QUEST_AGENT_CANARY_TOKEN: "999:AGENT-CANARY-TOKEN",
     };
 

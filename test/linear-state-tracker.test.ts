@@ -20,7 +20,7 @@ function fakeSecretStore(): SecretStore {
       stdoutTruncated: false,
       timedOut: false,
     }),
-    serviceName: "quest-runner-test-linear-tracker",
+    serviceName: "quest-test-linear-tracker",
   });
 }
 
@@ -151,11 +151,11 @@ async function runDispatchScenario(options: {
   }
   const typedServer: TestServer = server;
 
-  Bun.env.QUEST_RUNNER_LINEAR_TRACKER_KEY = "linear-test-key";
+  Bun.env.QUEST_LINEAR_TRACKER_KEY = "linear-test-key";
   try {
     const sink = linearSinkSchema.parse({
       apiBaseUrl: `http://127.0.0.1:${typedServer.port}/graphql`,
-      apiKeyEnv: "QUEST_RUNNER_LINEAR_TRACKER_KEY",
+      apiKeyEnv: "QUEST_LINEAR_TRACKER_KEY",
       enabled: true,
       eventTypes: [],
       id: "linear-tracker",
@@ -181,7 +181,7 @@ async function runDispatchScenario(options: {
     return { captured, lastError: delivery.lastError, status: delivery.status };
   } finally {
     await typedServer.stop();
-    delete Bun.env.QUEST_RUNNER_LINEAR_TRACKER_KEY;
+    delete Bun.env.QUEST_LINEAR_TRACKER_KEY;
   }
 }
 
@@ -347,11 +347,11 @@ async function runRunEventScenario(kase: RunTransitionCase): Promise<MockRequest
   }
   const typedServer: TestServer = server;
 
-  Bun.env.QUEST_RUNNER_LINEAR_TRACKER_KEY = "linear-test-key";
+  Bun.env.QUEST_LINEAR_TRACKER_KEY = "linear-test-key";
   try {
     const sink = linearSinkSchema.parse({
       apiBaseUrl: `http://127.0.0.1:${typedServer.port}/graphql`,
-      apiKeyEnv: "QUEST_RUNNER_LINEAR_TRACKER_KEY",
+      apiKeyEnv: "QUEST_LINEAR_TRACKER_KEY",
       enabled: true,
       eventTypes: [],
       id: "linear-run-tracker",
@@ -383,7 +383,7 @@ async function runRunEventScenario(kase: RunTransitionCase): Promise<MockRequest
     return captured;
   } finally {
     await typedServer.stop();
-    delete Bun.env.QUEST_RUNNER_LINEAR_TRACKER_KEY;
+    delete Bun.env.QUEST_LINEAR_TRACKER_KEY;
   }
 }
 

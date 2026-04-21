@@ -4,7 +4,7 @@ import { buildProcessEnv } from "../src/core/runs/process-env";
 
 const originalEnv = {
   PATH: Bun.env.PATH,
-  QUEST_RUNNER_SECRET_TEST: Bun.env.QUEST_RUNNER_SECRET_TEST,
+  QUEST_SECRET_TEST: Bun.env.QUEST_SECRET_TEST,
   TERM: Bun.env.TERM,
 };
 
@@ -15,10 +15,10 @@ afterEach(() => {
     Bun.env.PATH = originalEnv.PATH;
   }
 
-  if (originalEnv.QUEST_RUNNER_SECRET_TEST === undefined) {
-    delete Bun.env.QUEST_RUNNER_SECRET_TEST;
+  if (originalEnv.QUEST_SECRET_TEST === undefined) {
+    delete Bun.env.QUEST_SECRET_TEST;
   } else {
-    Bun.env.QUEST_RUNNER_SECRET_TEST = originalEnv.QUEST_RUNNER_SECRET_TEST;
+    Bun.env.QUEST_SECRET_TEST = originalEnv.QUEST_SECRET_TEST;
   }
 
   if (originalEnv.TERM === undefined) {
@@ -31,13 +31,13 @@ afterEach(() => {
 test("buildProcessEnv filters ambient secrets while preserving allowlisted vars", () => {
   Bun.env.PATH = "/usr/bin:/bin";
   Bun.env.TERM = "xterm-256color";
-  Bun.env.QUEST_RUNNER_SECRET_TEST = "top-secret";
+  Bun.env.QUEST_SECRET_TEST = "top-secret";
 
   const env = buildProcessEnv();
 
   expect(env.PATH).toBe("/usr/bin:/bin");
   expect(env.TERM).toBe("xterm-256color");
-  expect(env.QUEST_RUNNER_SECRET_TEST).toBeUndefined();
+  expect(env.QUEST_SECRET_TEST).toBeUndefined();
 });
 
 test("buildProcessEnv allows explicit overrides for subprocess contracts", () => {

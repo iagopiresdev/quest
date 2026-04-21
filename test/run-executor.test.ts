@@ -136,8 +136,7 @@ test("run executor completes a planned run in dry-run mode", async () => {
     expect(existsSync(workspaceRoot)).toBe(true);
     expect(existsSync(workspacePath)).toBe(true);
     expect(
-      JSON.parse(readFileSync(join(workspacePath, ".quest-runner", "context.json"), "utf8"))
-        .sliceId,
+      JSON.parse(readFileSync(join(workspacePath, ".quest", "context.json"), "utf8")).sliceId,
     ).toBe("parser");
     expect(executed.events.some((event) => event.type === "run_started")).toBe(true);
     expect(executed.events.some((event) => event.type === "run_completed")).toBe(true);
@@ -363,7 +362,7 @@ test("run executor persists builder output when a dedicated tester fails", async
     const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
 
     await expect(executor.executeRun(run.id)).rejects.toMatchObject({
-      code: "quest_runner_command_failed",
+      code: "quest_command_failed",
     });
 
     const failedRun = await runStore.getRun(run.id);
@@ -499,7 +498,7 @@ test("run executor links source dependencies into slice and integration workspac
     writeFileSync(
       scriptPath,
       [
-        "const manifest = await Bun.file('.quest-runner/workspace-manifest.md').text();",
+        "const manifest = await Bun.file('.quest/workspace-manifest.md').text();",
         "const linked = await Bun.file('node_modules/.keep').text();",
         "await Bun.write('tracked.txt', linked);",
         "await Bun.write(Bun.stdout, manifest.includes('Dependencies linked: yes') ? 'linked' : 'missing-manifest');",
@@ -737,10 +736,10 @@ test("run executor records failure for a failing local-command adapter", async (
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_command_failed");
+      throw new Error("Expected quest_command_failed");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(QuestDomainError);
-      expect((error as QuestDomainError).code).toBe("quest_runner_command_failed");
+      expect((error as QuestDomainError).code).toBe("quest_command_failed");
     }
 
     const failedRun = await runStore.getRun(run.id);
@@ -886,15 +885,15 @@ test("run executor filters ambient env for workers but preserves explicit worker
   const workerRegistry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
-  const previousSecret = Bun.env.QUEST_RUNNER_SECRET_TEST;
+  const previousSecret = Bun.env.QUEST_SECRET_TEST;
 
   try {
-    Bun.env.QUEST_RUNNER_SECRET_TEST = "top-secret";
+    Bun.env.QUEST_SECRET_TEST = "top-secret";
     const scriptPath = join(root, "worker-env.ts");
     Bun.write(
       scriptPath,
       [
-        "const inherited = process.env.QUEST_RUNNER_SECRET_TEST ?? 'missing';",
+        "const inherited = process.env.QUEST_SECRET_TEST ?? 'missing';",
         "const explicit = process.env.WORKER_FLAG ?? 'missing';",
         "await Bun.write(Bun.stdout, inherited + ':' + explicit);",
       ].join("\n"),
@@ -909,9 +908,9 @@ test("run executor filters ambient env for workers but preserves explicit worker
     expect(executed.slices[0]?.lastOutput?.stdout).toBe("missing:enabled");
   } finally {
     if (previousSecret === undefined) {
-      delete Bun.env.QUEST_RUNNER_SECRET_TEST;
+      delete Bun.env.QUEST_SECRET_TEST;
     } else {
-      Bun.env.QUEST_RUNNER_SECRET_TEST = previousSecret;
+      Bun.env.QUEST_SECRET_TEST = previousSecret;
     }
     rmSync(root, { force: true, recursive: true });
   }
@@ -924,10 +923,10 @@ test("run executor passes explicit env into acceptance checks without leaking am
   const workerRegistry = new WorkerRegistry(registryPath);
   const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
   const executor = new QuestRunExecutor(runStore, workerRegistry);
-  const previousSecret = Bun.env.QUEST_RUNNER_SECRET_TEST;
+  const previousSecret = Bun.env.QUEST_SECRET_TEST;
 
   try {
-    Bun.env.QUEST_RUNNER_SECRET_TEST = "top-secret";
+    Bun.env.QUEST_SECRET_TEST = "top-secret";
     const scriptPath = join(root, "worker-success.ts");
     Bun.write(
       scriptPath,
@@ -956,7 +955,7 @@ test("run executor passes explicit env into acceptance checks without leaking am
               [
                 "bun",
                 "-e",
-                "process.exit(process.env.CHECK_FLAG === 'yes' && process.env.QUEST_RUNNER_SECRET_TEST === undefined ? 0 : 6)",
+                "process.exit(process.env.CHECK_FLAG === 'yes' && process.env.QUEST_SECRET_TEST === undefined ? 0 : 6)",
               ],
               { CHECK_FLAG: "yes" },
             ),
@@ -982,9 +981,9 @@ test("run executor passes explicit env into acceptance checks without leaking am
     expect(executed.slices[0]?.lastChecks?.[0]?.exitCode).toBe(0);
   } finally {
     if (previousSecret === undefined) {
-      delete Bun.env.QUEST_RUNNER_SECRET_TEST;
+      delete Bun.env.QUEST_SECRET_TEST;
     } else {
-      Bun.env.QUEST_RUNNER_SECRET_TEST = previousSecret;
+      Bun.env.QUEST_SECRET_TEST = previousSecret;
     }
     rmSync(root, { force: true, recursive: true });
   }
@@ -1329,7 +1328,7 @@ test("run executor surfaces ACP initialize failures", async () => {
     );
 
     await expect(executor.executeRun(run.id)).rejects.toMatchObject({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       message: "ACP initialize failed for ember: init failed",
     });
   } finally {
@@ -1411,7 +1410,7 @@ test("run executor rejects Hermes writes through symlinked owned paths", async (
     );
 
     await expect(executor.executeRun(run.id)).rejects.toMatchObject({
-      code: "quest_runner_command_failed",
+      code: "quest_command_failed",
     });
     expect(existsSync(join(externalRoot, "pwned.txt"))).toBe(false);
   } finally {
@@ -1566,10 +1565,10 @@ test("run executor fails openclaw-cli runs when payload reports an API error", a
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_command_failed");
+      throw new Error("Expected quest_command_failed");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(QuestDomainError);
-      expect((error as QuestDomainError).code).toBe("quest_runner_command_failed");
+      expect((error as QuestDomainError).code).toBe("quest_command_failed");
       expect((error as QuestDomainError).message).toContain("MiniMax-M2.7-highspeed");
     }
 
@@ -1599,7 +1598,7 @@ test("run executor resolves secret-store auth for codex-cli workers", async () =
       stdoutTruncated: false,
       timedOut: false,
     }),
-    serviceName: "quest-runner-tests",
+    serviceName: "quest-tests",
   });
   const executor = new QuestRunExecutor(runStore, workerRegistry, secretStore);
 
@@ -1671,10 +1670,10 @@ test("run executor fails codex-cli workers when env-var auth is missing", async 
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_unavailable");
+      throw new Error("Expected quest_unavailable");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(QuestDomainError);
-      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+      expect((error as QuestDomainError).code).toBe("quest_unavailable");
     }
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -1717,10 +1716,10 @@ test("run executor fails codex-cli workers when native login status is unavailab
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_unavailable");
+      throw new Error("Expected quest_unavailable");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(QuestDomainError);
-      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+      expect((error as QuestDomainError).code).toBe("quest_unavailable");
     }
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -1783,10 +1782,10 @@ test("run executor fails explicitly when no adapter is available", async () => {
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_unavailable");
+      throw new Error("Expected quest_unavailable");
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(QuestDomainError);
-      expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+      expect((error as QuestDomainError).code).toBe("quest_unavailable");
     }
 
     const failedRun = await runStore.getRun(run.id);
@@ -1814,7 +1813,7 @@ test("run executor refuses to re-execute a failed run", async () => {
 
     try {
       await executor.executeRun(run.id);
-      throw new Error("Expected quest_runner_command_failed");
+      throw new Error("Expected quest_command_failed");
     } catch {}
 
     try {

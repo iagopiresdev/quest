@@ -1,4 +1,4 @@
-// Linear markdown cards for Quest Runner observability events.
+// Linear markdown cards for Quest observability events.
 //
 // Linear issue comments render GitHub-flavored Markdown. Unlike Telegram (tight HTML cards
 // optimized for mobile), Linear comments are read on desktop alongside the full issue thread,

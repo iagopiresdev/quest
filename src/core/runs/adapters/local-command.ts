@@ -51,7 +51,7 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
     const command = context.worker.backend.command;
     if (!command || command.length === 0) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { workerId: context.worker.id },
         message: `Worker ${context.worker.id} has no command configured`,
         statusCode: 1,
@@ -108,7 +108,7 @@ export class LocalCommandRunnerAdapter implements RunnerAdapter {
 
     if (exitCode !== 0) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: {
           command,
           exitCode,

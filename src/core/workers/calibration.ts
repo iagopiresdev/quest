@@ -103,7 +103,7 @@ async function createTrainingGroundsFixture(root: string): Promise<CalibrationFi
     join(repositoryPath, "package.json"),
     JSON.stringify(
       {
-        name: "quest-runner-training-grounds",
+        name: "quest-training-grounds",
         private: true,
         type: "module",
       },
@@ -161,13 +161,13 @@ async function createTrainingGroundsFixture(root: string): Promise<CalibrationFi
     { repositoryPath },
   );
   await runCheckedSubprocess(
-    ["git", "config", "user.name", "Quest Runner Calibration"],
+    ["git", "config", "user.name", "Quest Calibration"],
     repositoryPath,
     "Failed to configure the calibration fixture repository",
     { repositoryPath },
   );
   await runCheckedSubprocess(
-    ["git", "config", "user.email", "quest-runner-calibration@example.com"],
+    ["git", "config", "user.email", "quest-calibration@example.com"],
     repositoryPath,
     "Failed to configure the calibration fixture repository",
     { repositoryPath },

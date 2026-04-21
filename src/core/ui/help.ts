@@ -249,7 +249,7 @@ const GRADIENT_TOP: RgbColor = [245, 158, 66]; // amber / hot blade
 const GRADIENT_MID: RgbColor = [220, 60, 100]; // crimson / cooling steel
 const GRADIENT_BOT: RgbColor = [118, 75, 190]; // deep violet / shadow
 
-// Cached tagline rendered below the logo. The three-beat cadence maps to Quest Runner's core
+// Cached tagline rendered below the logo. The three-beat cadence maps to Quest's core
 // primitives: a party of workers, a spec that becomes a quest, and landing work back on main.
 const TAGLINE = "pick a party. draft a quest. clear the board.";
 

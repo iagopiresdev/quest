@@ -7,7 +7,7 @@ description: Separate builder and tester assignment in quest planning without re
 
 ## Context
 
-`quest-runner` currently treats one assigned worker as the owner of both implementation and testing by implication. The slice state has one assigned worker, and the execution engine moves that slice into a built-in testing phase after the worker finishes.
+`quest` currently treats one assigned worker as the owner of both implementation and testing by implication. The slice state has one assigned worker, and the execution engine moves that slice into a built-in testing phase after the worker finishes.
 
 That was acceptable for v0, but it is not enough for the operating model we want:
 - party-like worker composition

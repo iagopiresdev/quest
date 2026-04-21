@@ -4,12 +4,12 @@ import { dirname, join, resolve } from "node:path";
 
 import { QuestDomainError } from "./errors";
 
-const DEFAULT_STATE_ROOT = join(homedir(), ".quest-runner");
+const DEFAULT_STATE_ROOT = join(homedir(), ".quest");
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 
 export function resolveQuestStateRoot(explicitPath?: string | undefined): string {
-  const configuredPath = explicitPath?.trim() || Bun.env.QUEST_RUNNER_STATE_ROOT?.trim();
+  const configuredPath = explicitPath?.trim() || Bun.env.QUEST_STATE_ROOT?.trim();
   return configuredPath ? resolve(configuredPath) : DEFAULT_STATE_ROOT;
 }
 
@@ -17,7 +17,7 @@ export function resolveWorkerRegistryPath(
   options: { explicitRegistryPath?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
-    options.explicitRegistryPath?.trim() || Bun.env.QUEST_RUNNER_WORKER_REGISTRY_PATH?.trim();
+    options.explicitRegistryPath?.trim() || Bun.env.QUEST_WORKER_REGISTRY_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -28,7 +28,7 @@ export function resolveWorkerRegistryPath(
 export function resolveQuestRunsRoot(
   options: { explicitRunsRoot?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
-  const configuredPath = options.explicitRunsRoot?.trim() || Bun.env.QUEST_RUNNER_RUNS_ROOT?.trim();
+  const configuredPath = options.explicitRunsRoot?.trim() || Bun.env.QUEST_RUNS_ROOT?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -40,7 +40,7 @@ export function resolveQuestWorkspacesRoot(
   options: { explicitWorkspacesRoot?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
-    options.explicitWorkspacesRoot?.trim() || Bun.env.QUEST_RUNNER_WORKSPACES_ROOT?.trim();
+    options.explicitWorkspacesRoot?.trim() || Bun.env.QUEST_WORKSPACES_ROOT?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -52,7 +52,7 @@ export function resolveQuestCalibrationsRoot(
   options: { explicitCalibrationsRoot?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
-    options.explicitCalibrationsRoot?.trim() || Bun.env.QUEST_RUNNER_CALIBRATIONS_ROOT?.trim();
+    options.explicitCalibrationsRoot?.trim() || Bun.env.QUEST_CALIBRATIONS_ROOT?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -68,7 +68,7 @@ export function resolveQuestObservabilityConfigPath(
 ): string {
   const configuredPath =
     options.explicitObservabilityConfigPath?.trim() ||
-    Bun.env.QUEST_RUNNER_OBSERVABILITY_CONFIG_PATH?.trim();
+    Bun.env.QUEST_OBSERVABILITY_CONFIG_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -84,7 +84,7 @@ export function resolveQuestObservabilityDeliveriesPath(
 ): string {
   const configuredPath =
     options.explicitObservabilityDeliveriesPath?.trim() ||
-    Bun.env.QUEST_RUNNER_OBSERVABILITY_DELIVERIES_PATH?.trim();
+    Bun.env.QUEST_OBSERVABILITY_DELIVERIES_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -96,7 +96,7 @@ export function resolveQuestSettingsPath(
   options: { explicitSettingsPath?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
-    options.explicitSettingsPath?.trim() || Bun.env.QUEST_RUNNER_SETTINGS_PATH?.trim();
+    options.explicitSettingsPath?.trim() || Bun.env.QUEST_SETTINGS_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }
@@ -108,7 +108,7 @@ export function resolveQuestPartyStatePath(
   options: { explicitPartyStatePath?: string | undefined; stateRoot?: string | undefined } = {},
 ): string {
   const configuredPath =
-    options.explicitPartyStatePath?.trim() || Bun.env.QUEST_RUNNER_PARTY_STATE_PATH?.trim();
+    options.explicitPartyStatePath?.trim() || Bun.env.QUEST_PARTY_STATE_PATH?.trim();
   if (configuredPath) {
     return resolve(configuredPath);
   }

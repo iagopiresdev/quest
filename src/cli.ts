@@ -278,11 +278,11 @@ function printCategorizedHelp(): void {
 }
 
 function stdinIsTty(): boolean {
-  return Bun.env.QUEST_RUNNER_FORCE_INTERACTIVE === "1" || process.stdin.isTTY === true;
+  return Bun.env.QUEST_FORCE_INTERACTIVE === "1" || process.stdin.isTTY === true;
 }
 
 function stdoutIsTty(): boolean {
-  return Bun.env.QUEST_RUNNER_FORCE_INTERACTIVE === "1" || process.stdout.isTTY === true;
+  return Bun.env.QUEST_FORCE_INTERACTIVE === "1" || process.stdout.isTTY === true;
 }
 
 function findOptionValue(args: string[], flag: string): string | undefined {
@@ -994,7 +994,7 @@ function buildStandaloneWorker(args: string[]): RegisteredWorker {
     name,
     persona: {
       approach: "run the configured local command and report only durable changes",
-      prompt: "Consume the quest-runner JSON payload from stdin and make the requested change.",
+      prompt: "Consume the quest JSON payload from stdin and make the requested change.",
       voice: "direct",
     },
     progression: { level: 1, xp: 0 },
@@ -1654,7 +1654,7 @@ function buildCodexWorker(args: string[], detected?: DetectedCodexSetup | null):
     executable:
       findOptionValue(args, "--executable") ??
       detected?.executable ??
-      Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE,
+      Bun.env.QUEST_CODEX_EXECUTABLE,
     id: findOptionValue(args, "--id") ?? slugifyWorkerId(name, "codex-worker"),
     name,
     runtime: parseWorkerRuntime(args),
@@ -1754,7 +1754,7 @@ function buildOpenClawWorker(
     executable:
       findOptionValue(args, "--executable") ??
       detected?.executable ??
-      Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE,
+      Bun.env.QUEST_OPENCLAW_EXECUTABLE,
     gatewayUrl:
       findOptionValue(args, "--gateway-url") ??
       detected?.gatewayUrl ??
@@ -2297,12 +2297,12 @@ async function runDoctor(
   registryPath: string,
 ): Promise<Record<string, unknown>> {
   const codexExecutable =
-    findOptionValue(args, "--codex-executable") ?? Bun.env.QUEST_RUNNER_CODEX_EXECUTABLE ?? "codex";
+    findOptionValue(args, "--codex-executable") ?? Bun.env.QUEST_CODEX_EXECUTABLE ?? "codex";
   const hermesBaseUrl =
-    findOptionValue(args, "--hermes-base-url") ?? Bun.env.QUEST_RUNNER_HERMES_BASE_URL ?? null;
+    findOptionValue(args, "--hermes-base-url") ?? Bun.env.QUEST_HERMES_BASE_URL ?? null;
   const openClawExecutable =
     findOptionValue(args, "--openclaw-executable") ??
-    Bun.env.QUEST_RUNNER_OPENCLAW_EXECUTABLE ??
+    Bun.env.QUEST_OPENCLAW_EXECUTABLE ??
     "openclaw";
   const openClawGatewayUrl =
     findOptionValue(args, "--gateway-url") ?? Bun.env.OPENCLAW_GATEWAY_URL ?? null;
@@ -3029,7 +3029,7 @@ function formatSetupPretty(candidate: Record<string, unknown>): string {
   const paths = (candidate.paths as Record<string, string> | undefined) ?? {};
 
   return [
-    "Quest Runner Setup",
+    "Quest Setup",
     `status: ${doctor?.ok === true ? "ok" : "fail"}`,
     `imported defaults: ${imports?.summary ?? "none"}`,
     createdWorker ? `created worker: ${formatWorkerLine(createdWorker)}` : "created worker: none",
@@ -3192,9 +3192,7 @@ function formatPrettyOutput(commandId: QuestCliCommand, value: unknown): string 
     case "doctor": {
       const checks = (candidate.checks as DoctorCheck[] | undefined) ?? [];
       const ok = candidate.ok === true ? "ok" : "fail";
-      return ["Quest Runner Doctor", `status: ${ok}`, "", ...checks.map(formatDoctorCheck)].join(
-        "\n",
-      );
+      return ["Quest Doctor", `status: ${ok}`, "", ...checks.map(formatDoctorCheck)].join("\n");
     }
     case "setup": {
       return formatSetupPretty(candidate);

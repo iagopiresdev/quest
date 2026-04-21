@@ -23,7 +23,7 @@ function createObservabilityHarness() {
       stdoutTruncated: false,
       timedOut: false,
     }),
-    serviceName: `quest-runner-tests-${crypto.randomUUID()}`,
+    serviceName: `quest-tests-${crypto.randomUUID()}`,
   });
   const cleanup = () => rmSync(root, { force: true, recursive: true });
 

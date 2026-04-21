@@ -16,7 +16,7 @@ SOURCE_CLI="${PROJECT_ROOT}/src/cli.ts"
 # Prefer source execution inside the repo because the compiled Bun binary still
 # has subprocess portability gaps on this machine. The compiled artifact stays
 # available behind an explicit opt-in for targeted validation.
-if [[ "${QUEST_RUNNER_USE_DIST:-0}" == "1" && -x "${COMPILED_BIN}" ]]; then
+if [[ "${QUEST_USE_DIST:-0}" == "1" && -x "${COMPILED_BIN}" ]]; then
   exec "${COMPILED_BIN}" "$@"
 fi
 

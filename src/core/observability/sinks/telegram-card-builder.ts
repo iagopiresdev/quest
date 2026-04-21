@@ -1,4 +1,4 @@
-// Telegram HTML cards for Quest Runner observability events.
+// Telegram HTML cards for Quest observability events.
 //
 // Card builder: emoji + bold title, separator, structured fields with
 // emoji prefixes, optional blockquote for error detail, and a local clock footer. HTML

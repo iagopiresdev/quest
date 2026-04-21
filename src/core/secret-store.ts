@@ -44,14 +44,13 @@ export class SecretStore {
   constructor(options: SecretStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.runCommand = options.runCommand ?? runSubprocess;
-    this.serviceName =
-      options.serviceName ?? Bun.env.QUEST_RUNNER_SECRET_STORE_SERVICE_NAME ?? "quest-runner";
+    this.serviceName = options.serviceName ?? Bun.env.QUEST_SECRET_STORE_SERVICE_NAME ?? "quest";
   }
 
   private requireSupportedPlatform(): void {
     if (this.platform !== "darwin") {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { platform: this.platform },
         message: `Secret storage is not implemented for platform ${this.platform}`,
         statusCode: 1,
@@ -90,7 +89,7 @@ export class SecretStore {
 
     if (this.isMissingSecretResult(result)) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { name: secretName, stderr: result.stderr, stdout: result.stdout },
         message: `Secret ${secretName} was not found in the keychain`,
         statusCode: 1,
@@ -151,7 +150,7 @@ export class SecretStore {
 
     if (this.isMissingSecretResult(result)) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { name: secretName, stderr: result.stderr, stdout: result.stdout },
         message: `Secret ${secretName} was not found in the keychain`,
         statusCode: 1,

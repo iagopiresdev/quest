@@ -60,7 +60,7 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
 
   async execute(context: RunnerExecutionContext): Promise<RunnerExecutionResult> {
     const executable = context.worker.backend.executable ?? "codex";
-    const outputPath = `${context.cwd}/.quest-runner/codex-last-message.txt`;
+    const outputPath = `${context.cwd}/.quest/codex-last-message.txt`;
     const prompt = buildRunnerPrompt(context);
     if (!context.worker.backend.auth || context.worker.backend.auth.mode === "native-login") {
       await verifyCodexNativeLogin(executable, context.worker);
@@ -162,7 +162,7 @@ export class CodexCliRunnerAdapter implements RunnerAdapter {
 
     if (exitCode !== 0) {
       throw new QuestDomainError({
-        code: "quest_runner_command_failed",
+        code: "quest_command_failed",
         details: {
           command: [executable, "exec"],
           exitCode,

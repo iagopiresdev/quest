@@ -19,7 +19,7 @@ test("secret store issues macOS keychain commands through the configured service
         timedOut: false,
       };
     },
-    serviceName: "quest-runner-tests",
+    serviceName: "quest-tests",
   });
 
   await store.setSecret("codex.api", "stored-secret");
@@ -35,36 +35,19 @@ test("secret store issues macOS keychain commands through the configured service
   });
   expect(calls).toEqual([
     {
-      cmd: [
-        "security",
-        "add-generic-password",
-        "-a",
-        "codex.api",
-        "-s",
-        "quest-runner-tests",
-        "-U",
-        "-w",
-      ],
+      cmd: ["security", "add-generic-password", "-a", "codex.api", "-s", "quest-tests", "-U", "-w"],
       stdin: "stored-secret\nstored-secret\n",
     },
     {
-      cmd: [
-        "security",
-        "find-generic-password",
-        "-a",
-        "codex.api",
-        "-s",
-        "quest-runner-tests",
-        "-w",
-      ],
+      cmd: ["security", "find-generic-password", "-a", "codex.api", "-s", "quest-tests", "-w"],
       stdin: undefined,
     },
     {
-      cmd: ["security", "find-generic-password", "-a", "codex.api", "-s", "quest-runner-tests"],
+      cmd: ["security", "find-generic-password", "-a", "codex.api", "-s", "quest-tests"],
       stdin: undefined,
     },
     {
-      cmd: ["security", "delete-generic-password", "-a", "codex.api", "-s", "quest-runner-tests"],
+      cmd: ["security", "delete-generic-password", "-a", "codex.api", "-s", "quest-tests"],
       stdin: undefined,
     },
   ]);
@@ -75,10 +58,10 @@ test("secret store rejects unsupported platforms", async () => {
 
   try {
     await store.getStatus("codex.api");
-    throw new Error("Expected quest_runner_unavailable");
+    throw new Error("Expected quest_unavailable");
   } catch (error: unknown) {
     expect(error).toBeInstanceOf(QuestDomainError);
-    expect((error as QuestDomainError).code).toBe("quest_runner_unavailable");
+    expect((error as QuestDomainError).code).toBe("quest_unavailable");
   }
 });
 

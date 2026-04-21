@@ -17,7 +17,7 @@ Telegram is the only sink on the list with native support for rich presentation 
 - No visual distinction between dispatch, success, and failure.
 - User-supplied strings (party names, error messages) are interpolated verbatim, so a hostile repo name would land in the sink unescaped. Not exploited today but a real injection surface once Markdown/HTML formatters arrive.
 - Setup had no single documented command-first path for richer Telegram formatting. Operators had to know to run `observability telegram upsert --parse-mode HTML` manually.
-- When a local OpenClaw config already contains a Telegram bot token, the operator had to re-enter it for Quest Runner.
+- When a local OpenClaw config already contains a Telegram bot token, the operator had to re-enter it for Quest.
 
 ## Goal
 
@@ -123,7 +123,7 @@ quest observability telegram upsert --id daemon-telegram --chat-id <chat-id> --b
 # omitting --parse-mode clears it, falling back to formatSinkTextMessage
 ```
 
-If the OpenClaw credential import path misbehaves (e.g., hostile JSON), delete the detected fields manually from `~/.quest-runner/observability/config.json` and re-run `quest observability telegram upsert` with explicit flags. Detection is idempotent; subsequent setup runs re-offer the import.
+If the OpenClaw credential import path misbehaves (e.g., hostile JSON), delete the detected fields manually from `~/.quest/observability/config.json` and re-run `quest observability telegram upsert` with explicit flags. Detection is idempotent; subsequent setup runs re-offer the import.
 
 ## Related Docs
 

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible defect in quest-runner
+about: Report a reproducible defect in quest
 title: "[bug] "
 labels: bug
 assignees: ""
@@ -29,7 +29,7 @@ Describe the problem directly.
 - OS:
 - Bun version:
 - Backend(s): Codex / Hermes / OpenClaw / local-command
-- Quest Runner version/commit:
+- Quest version/commit:
 
 ## Logs or Output
 

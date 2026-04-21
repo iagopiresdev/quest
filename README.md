@@ -1,8 +1,8 @@
-# quest-runner
+# quest
 
 CLI-first orchestration for running, validating, and integrating spec-driven agent work.
 
-`quest-runner` is designed around local, inspectable execution:
+`quest` is designed around local, inspectable execution:
 - machine-readable JSON input and output
 - no daemon required for correctness
 - local state stored outside the repo
@@ -85,7 +85,7 @@ Rules:
 - examples should use clearly fake placeholder values
 - execution-facing changes should ship with both automated coverage and real canaries
 - install/setup changes should be validated through the fresh-install `tmux` canary
-- keep `AGENTS.md`, `HANDOFF.md`, `FEEDBACK.md`, `.env`, `.codex/`, `.openclaw/`, `.quest-runner/`, and local database files in `.gitignore`
+- keep `AGENTS.md`, `HANDOFF.md`, `FEEDBACK.md`, `.env`, `.codex/`, `.openclaw/`, `.quest/`, and local database files in `.gitignore`
 - if you would not put it on a public GitHub repo, do not commit it
 
 ## Worker Backends
@@ -202,7 +202,7 @@ Quest specs can now persist execution policy explicitly under `execution`, for e
 }
 ```
 
-When a run materializes from `--source-repo`, Quest Runner also writes `.quest-runner/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally. If a repo needs a real prep step before honest checks can run, add `execution.prepareCommands` and Quest Runner will execute those commands inside each slice workspace before the builder starts, and again in the integration workspace before top-level acceptance checks. If a repo needs a conventional dependency bootstrap first, set `execution.preInstall: true`; Quest Runner will infer safe install commands from the workspace contents, run them before custom preparation, and avoid shared dependency linking for that workspace.
+When a run materializes from `--source-repo`, Quest also writes `.quest/workspace-manifest.md` into each slice workspace and, by default, links source-repo `node_modules` into the isolated worktree when that dependency tree already exists locally. If a repo needs a real prep step before honest checks can run, add `execution.prepareCommands` and Quest will execute those commands inside each slice workspace before the builder starts, and again in the integration workspace before top-level acceptance checks. If a repo needs a conventional dependency bootstrap first, set `execution.preInstall: true`; Quest will infer safe install commands from the workspace contents, run them before custom preparation, and avoid shared dependency linking for that workspace.
 
 Example `codex-cli` worker:
 
@@ -266,7 +266,7 @@ Example `codex-cli` worker:
 
 `codex-cli` runs `codex exec` inside the slice workspace, persists Codex stdout/stderr, and captures the final response through `--output-last-message`.
 The prompt includes owned paths, dependencies, and acceptance-check summaries. It shows exact argv for known safe test and build tools so runners do not have to guess common commands, while still redacting generic command payloads and all env override values.
-Common runtime controls such as reasoning effort, output-token limits, sampling, and context window live under `backend.runtime`, and Quest Runner translates them into Codex `-c key=value` overrides when it starts `codex exec`.
+Common runtime controls such as reasoning effort, output-token limits, sampling, and context window live under `backend.runtime`, and Quest translates them into Codex `-c key=value` overrides when it starts `codex exec`.
 If a Codex-specific knob does not have a first-class runtime field yet, put it in `backend.runtime.providerOptions`.
 
 Auth modes for `codex-cli`:
@@ -274,7 +274,7 @@ Auth modes for `codex-cli`:
 - `env-var`: copy a named env var into the target subprocess env
 - `secret-store`: load a named secret from the OS keychain backend
 
-For `native-login`, Quest Runner probes `codex login status` before execution so a missing or broken local session fails fast as a runner-availability problem instead of surfacing later as a partial run failure.
+For `native-login`, Quest probes `codex login status` before execution so a missing or broken local session fails fast as a runner-availability problem instead of surfacing later as a partial run failure.
 
 Example `hermes-api` worker:
 
@@ -398,15 +398,15 @@ Example `openclaw-cli` worker:
 
 Operational notes:
 - the installed OpenClaw CLI may print plugin banners and even its structured `--json` payload on `stderr`, not just `stdout`
-- Quest Runner parses structured OpenClaw output from either stream instead of assuming clean JSON on stdout
-- Quest Runner creates workspace-bound temporary OpenClaw agents for quest execution so repo-edit runs do not inherit a persistent agent workspace
+- Quest parses structured OpenClaw output from either stream instead of assuming clean JSON on stdout
+- Quest creates workspace-bound temporary OpenClaw agents for quest execution so repo-edit runs do not inherit a persistent agent workspace
 - OpenClaw `--local` mode is currently not supported for quest execution; gateway-backed runs are the supported path because they preserve workspace isolation reliably
 - those temporary OpenClaw agents are intentionally kept past the slice turn so they do not delete a live quest workspace before trials or turn-in complete
 - `runs cleanup` now reaps those temporary OpenClaw agents after the quest workspace is no longer needed
 - real OpenClaw code-edit canaries should always include acceptance checks, because the backend can still report success before a file change is proven on disk
 
-If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error that includes the changed-path count and the underlying `git status --short` output instead of silently forking from stale or partial state.
-Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
+If the run has `--source-repo <path>`, Quest materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error that includes the changed-path count and the underlying `git status --short` output instead of silently forking from stale or partial state.
+Workspace cleanup is explicit through `runs cleanup`; Quest does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
 If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into integration automatically after all slice trials pass.
 If you want full landing in the same command, `runs execute --auto-integrate --land` advances from execution through integration into a fast-forward landing step on the current clean source checkout.
@@ -429,9 +429,9 @@ Acceptance checks are structured argv commands, not shell strings. Example:
 
 ## Tester Lane
 
-Each slice can define `acceptanceChecks`. After the worker command succeeds, Quest Runner executes those argv-defined checks in order and persists their results into slice logs.
+Each slice can define `acceptanceChecks`. After the worker command succeeds, Quest executes those argv-defined checks in order and persists their results into slice logs.
 
-If a slice has a distinct assigned tester worker, Quest Runner now runs that tester on the built workspace before the raw checks execute. The tester can validate or minimally correct the slice result, but the structured acceptance checks still decide pass/fail.
+If a slice has a distinct assigned tester worker, Quest now runs that tester on the built workspace before the raw checks execute. The tester can validate or minimally correct the slice result, but the structured acceptance checks still decide pass/fail.
 
 If any check exits non-zero:
 - the slice becomes `failed`
@@ -463,13 +463,13 @@ Daemon tick emits its own lifecycle events: `daemon_dispatched`, `daemon_landed`
 
 This matters because webhook delivery is only the first consumer. The same event stream should support future sinks such as Telegram, Linear, Slack, or metrics without changing the run model itself.
 
-Delivery records keep the observable payload snapshot that was sent to the sink. That gives operators a stable audit trail and lets Quest Runner retry failed deliveries without needing to reconstruct the original event from a possibly-mutated local state tree. Every sink should also be probeable from the operator surface; `quest observability sinks test` and `quest doctor --test-sinks` send a synthetic event through the configured sink path so wiring can be checked without waiting for a real quest.
+Delivery records keep the observable payload snapshot that was sent to the sink. That gives operators a stable audit trail and lets Quest retry failed deliveries without needing to reconstruct the original event from a possibly-mutated local state tree. Every sink should also be probeable from the operator surface; `quest observability sinks test` and `quest doctor --test-sinks` send a synthetic event through the configured sink path so wiring can be checked without waiting for a real quest.
 
 ## Worker Calibration
 
 `quest workers calibrate` reuses the normal run planner and executor against a throwaway fixture repo under the calibrations root. The current built-in suite is `training-grounds-v1`.
 
-The suite is intentionally made of independent slices. Calibration slices must be solvable from a clean base because Quest Runner isolates slice workspaces; later slices do not inherit file changes from earlier ones unless integration happens.
+The suite is intentionally made of independent slices. Calibration slices must be solvable from a clean base because Quest isolates slice workspaces; later slices do not inherit file changes from earlier ones unless integration happens.
 
 Calibration results are written back onto the worker record:
 - calibration history entry with suite id, run id, score, and per-discipline scores
@@ -480,7 +480,7 @@ Calibration results are written back onto the worker record:
 
 ### Agent-driven install
 
-A canonical non-interactive flow an AI assistant can follow to install Quest Runner on a machine that already runs OpenClaw or Hermes:
+A canonical non-interactive flow an AI assistant can follow to install Quest on a machine that already runs OpenClaw or Hermes:
 
 ```sh
 # 1. Build + install the binary.
@@ -808,10 +808,10 @@ quest runs rerun --id quest-abc12345-deadbeef --worker-id quest-codex
 
 # optional: compile a standalone Bun executable
 bun run build
-QUEST_RUNNER_USE_DIST=1 ./bin/quest runs list
+QUEST_USE_DIST=1 ./bin/quest runs list
 
 # repo-local wrapper defaults to source execution for reliability;
-# set QUEST_RUNNER_USE_DIST=1 if you want to validate the compiled artifact explicitly
+# set QUEST_USE_DIST=1 if you want to validate the compiled artifact explicitly
 ./bin/quest runs list
 
 # JSON and YAML quest specs are both supported
@@ -821,24 +821,24 @@ yq -o=json spec.yaml | quest run --stdin
 ## State
 
 Defaults:
-- state root: `~/.quest-runner`
-- worker registry: `~/.quest-runner/workers.json`
-- runs root: `~/.quest-runner/runs`
-- workspaces root: `~/.quest-runner/workspaces`
-- calibrations root: `~/.quest-runner/calibrations`
-- observability config: `~/.quest-runner/observability/config.json`
-- observability deliveries: `~/.quest-runner/observability/deliveries.json`
-- secret-store service name: `quest-runner`
+- state root: `~/.quest`
+- worker registry: `~/.quest/workers.json`
+- runs root: `~/.quest/runs`
+- workspaces root: `~/.quest/workspaces`
+- calibrations root: `~/.quest/calibrations`
+- observability config: `~/.quest/observability/config.json`
+- observability deliveries: `~/.quest/observability/deliveries.json`
+- secret-store service name: `quest`
 
 Overrides:
-- `QUEST_RUNNER_STATE_ROOT`
-- `QUEST_RUNNER_WORKER_REGISTRY_PATH`
-- `QUEST_RUNNER_RUNS_ROOT`
-- `QUEST_RUNNER_WORKSPACES_ROOT`
-- `QUEST_RUNNER_CALIBRATIONS_ROOT`
-- `QUEST_RUNNER_OBSERVABILITY_CONFIG_PATH`
-- `QUEST_RUNNER_OBSERVABILITY_DELIVERIES_PATH`
-- `QUEST_RUNNER_SECRET_STORE_SERVICE_NAME`
+- `QUEST_STATE_ROOT`
+- `QUEST_WORKER_REGISTRY_PATH`
+- `QUEST_RUNS_ROOT`
+- `QUEST_WORKSPACES_ROOT`
+- `QUEST_CALIBRATIONS_ROOT`
+- `QUEST_OBSERVABILITY_CONFIG_PATH`
+- `QUEST_OBSERVABILITY_DELIVERIES_PATH`
+- `QUEST_SECRET_STORE_SERVICE_NAME`
 - `--registry <path>`
 - `--runs-root <path>`
 - `--workspaces-root <path>`

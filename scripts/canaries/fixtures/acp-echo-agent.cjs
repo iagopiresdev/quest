@@ -2,7 +2,7 @@
 
 // Minimal ACP echo agent for canary testing.
 // Implements enough of the JSON-RPC protocol over stdio to satisfy
-// quest-runner's AcpRunnerAdapter lifecycle:
+// quest's AcpRunnerAdapter lifecycle:
 //   initialize → notifications/initialized → session/new → session/prompt → session/close
 //
 // On session/prompt, writes "fixed" into status.ts and returns a text summary.

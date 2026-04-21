@@ -7,7 +7,7 @@ description: Future design for installable benchmark packs, user-defined workflo
 
 This document describes the intended future version of worker calibration beyond the current built-in `training-grounds-v1` suite.
 
-The current system proves that `quest-runner` can score a worker on real throwaway tasks. v2 should turn that into a configurable training ground that users can extend to match their own workflows.
+The current system proves that `quest` can score a worker on real throwaway tasks. v2 should turn that into a configurable training ground that users can extend to match their own workflows.
 
 ## Why v2 Exists
 
@@ -104,11 +104,11 @@ Examples of external packs:
 
 Important constraint:
 
-Installing a pack must not silently run untrusted code inside the main repo. Packs should install into quest-runner-managed state, and any fixture/build steps must be explicit and inspectable.
+Installing a pack must not silently run untrusted code inside the main repo. Packs should install into quest-managed state, and any fixture/build steps must be explicit and inspectable.
 
 ### 3. User-Authored Tests
 
-Users should be able to create their own test packs without editing quest-runner source.
+Users should be able to create their own test packs without editing quest source.
 
 The minimum user-authored pack should support:
 
@@ -254,7 +254,7 @@ That means:
 
 - install or download happens through a benchmark pack installer
 - dataset handling stays outside the core worker schema
-- fixture generation produces normal quest-runner source repos/workspaces
+- fixture generation produces normal quest source repos/workspaces
 - scoring maps benchmark-specific results back into normal calibration records
 
 This matters because SWE-bench is only one benchmark family. The architecture should be general enough to support:
@@ -272,7 +272,7 @@ Required guardrails:
 
 - explicit install step
 - inspectable pack metadata
-- managed install root under quest-runner state
+- managed install root under quest state
 - no implicit execution during install
 - fixture creation isolated from the user’s main checkout
 - no secret leakage into pack manifests, prompts, or logs
@@ -302,7 +302,7 @@ These should be resolved before implementation:
 
 v2 is successful if:
 
-- a user can install a benchmark pack without editing quest-runner code
+- a user can install a benchmark pack without editing quest code
 - a user can author a custom suite for their own workflow
 - a user can run a multi-suite training session from the TUI
 - results are inspectable through normal run/session state

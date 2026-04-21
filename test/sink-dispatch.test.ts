@@ -59,7 +59,7 @@ function createHarnessSecretStore(root: string): SecretStore {
       stdoutTruncated: false,
       timedOut: false,
     }),
-    serviceName: `quest-runner-sink-tests-${root.slice(-8)}`,
+    serviceName: `quest-sink-tests-${root.slice(-8)}`,
   });
 }
 
@@ -238,7 +238,7 @@ test("slack sink fails when no URL is resolvable", async () => {
       eventTypes: [],
       id: "slack-no-url",
       type: "slack",
-      urlEnv: "QUEST_RUNNER_SLACK_URL_DEFINITELY_NOT_SET",
+      urlEnv: "QUEST_SLACK_URL_DEFINITELY_NOT_SET",
     },
     {
       attempts: 1,
@@ -270,20 +270,20 @@ test("linear sink posts a GraphQL commentCreate mutation and records success", a
   if (!server) return;
   activeServers.push(server);
 
-  const originalKey = Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY;
-  Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY = "linear-test-key";
+  const originalKey = Bun.env.QUEST_LINEAR_TEST_KEY;
+  Bun.env.QUEST_LINEAR_TEST_KEY = "linear-test-key";
 
   try {
     const handler = new LinearSinkHandler();
     const delivery = await handler.deliver(
       {
         apiBaseUrl: `http://127.0.0.1:${server.port}/graphql`,
-        apiKeyEnv: "QUEST_RUNNER_LINEAR_TEST_KEY",
+        apiKeyEnv: "QUEST_LINEAR_TEST_KEY",
         enabled: true,
         eventTypes: [],
         id: "linear-1",
         issueId: "ISSUE-1",
-        titlePrefix: "quest-runner",
+        titlePrefix: "quest",
         type: "linear",
       },
       {
@@ -301,12 +301,12 @@ test("linear sink posts a GraphQL commentCreate mutation and records success", a
     };
     expect(payload.query).toContain("commentCreate");
     expect(payload.variables.issueId).toBe("ISSUE-1");
-    expect(payload.variables.body.startsWith("quest-runner")).toBe(true);
+    expect(payload.variables.body.startsWith("quest")).toBe(true);
   } finally {
     if (originalKey === undefined) {
-      delete Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY;
+      delete Bun.env.QUEST_LINEAR_TEST_KEY;
     } else {
-      Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY = originalKey;
+      Bun.env.QUEST_LINEAR_TEST_KEY = originalKey;
     }
   }
 });
@@ -325,14 +325,14 @@ test("linear sink renders RPG markdown cards when useRpgCards is enabled", async
   if (!server) return;
   activeServers.push(server);
 
-  Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY = "linear-test-key";
+  Bun.env.QUEST_LINEAR_TEST_KEY = "linear-test-key";
 
   try {
     const handler = new LinearSinkHandler();
     const delivery = await handler.deliver(
       {
         apiBaseUrl: `http://127.0.0.1:${server.port}/graphql`,
-        apiKeyEnv: "QUEST_RUNNER_LINEAR_TEST_KEY",
+        apiKeyEnv: "QUEST_LINEAR_TEST_KEY",
         enabled: true,
         eventTypes: [],
         id: "linear-cards",
@@ -356,9 +356,9 @@ test("linear sink renders RPG markdown cards when useRpgCards is enabled", async
     expect(payload.variables.body).toContain("_A new fellowship forms._");
     expect(payload.variables.body).toContain("- **Party:** alpha");
     // Plain-text formatter fingerprints must NOT appear when cards are on.
-    expect(payload.variables.body).not.toContain("quest-runner daemon");
+    expect(payload.variables.body).not.toContain("quest daemon");
   } finally {
-    delete Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY;
+    delete Bun.env.QUEST_LINEAR_TEST_KEY;
   }
 });
 
@@ -373,14 +373,14 @@ test("linear sink records failure when the API returns GraphQL errors", async ()
   if (!server) return;
   activeServers.push(server);
 
-  Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY = "linear-test-key";
+  Bun.env.QUEST_LINEAR_TEST_KEY = "linear-test-key";
 
   try {
     const handler = new LinearSinkHandler();
     const delivery = await handler.deliver(
       {
         apiBaseUrl: `http://127.0.0.1:${server.port}/graphql`,
-        apiKeyEnv: "QUEST_RUNNER_LINEAR_TEST_KEY",
+        apiKeyEnv: "QUEST_LINEAR_TEST_KEY",
         enabled: true,
         eventTypes: [],
         id: "linear-errors",
@@ -397,7 +397,7 @@ test("linear sink records failure when the API returns GraphQL errors", async ()
     expect(delivery.status).toBe("failed");
     expect(delivery.lastError).toContain("invalid issue id");
   } finally {
-    delete Bun.env.QUEST_RUNNER_LINEAR_TEST_KEY;
+    delete Bun.env.QUEST_LINEAR_TEST_KEY;
   }
 });
 
@@ -406,7 +406,7 @@ test("linear sink fails when no API key is resolvable", async () => {
   const delivery = await handler.deliver(
     {
       apiBaseUrl: "http://127.0.0.1:1/graphql",
-      apiKeyEnv: "QUEST_RUNNER_LINEAR_KEY_NOT_SET",
+      apiKeyEnv: "QUEST_LINEAR_KEY_NOT_SET",
       enabled: true,
       eventTypes: [],
       id: "linear-no-key",
@@ -440,15 +440,15 @@ test("telegram sink delivers an HTML card when parseMode is HTML", async () => {
   if (!server) return;
   activeServers.push(server);
 
-  const originalToken = Bun.env.QUEST_RUNNER_TG_TEST_TOKEN;
-  Bun.env.QUEST_RUNNER_TG_TEST_TOKEN = "tg-test-token";
+  const originalToken = Bun.env.QUEST_TG_TEST_TOKEN;
+  Bun.env.QUEST_TG_TEST_TOKEN = "tg-test-token";
 
   try {
     const handler = new TelegramSinkHandler();
     const delivery = await handler.deliver(
       {
         apiBaseUrl: `http://127.0.0.1:${server.port}`,
-        botTokenEnv: "QUEST_RUNNER_TG_TEST_TOKEN",
+        botTokenEnv: "QUEST_TG_TEST_TOKEN",
         chatId: "123456789",
         disableNotification: false,
         enabled: true,
@@ -476,9 +476,9 @@ test("telegram sink delivers an HTML card when parseMode is HTML", async () => {
     expect(payload.text).toContain("<i>A new fellowship forms.</i>");
   } finally {
     if (originalToken === undefined) {
-      delete Bun.env.QUEST_RUNNER_TG_TEST_TOKEN;
+      delete Bun.env.QUEST_TG_TEST_TOKEN;
     } else {
-      Bun.env.QUEST_RUNNER_TG_TEST_TOKEN = originalToken;
+      Bun.env.QUEST_TG_TEST_TOKEN = originalToken;
     }
   }
 });
@@ -497,14 +497,14 @@ test("telegram sink falls back to plain-text formatter when parseMode is unset",
   if (!server) return;
   activeServers.push(server);
 
-  Bun.env.QUEST_RUNNER_TG_TEST_TOKEN = "tg-test-token";
+  Bun.env.QUEST_TG_TEST_TOKEN = "tg-test-token";
 
   try {
     const handler = new TelegramSinkHandler();
     const delivery = await handler.deliver(
       {
         apiBaseUrl: `http://127.0.0.1:${server.port}`,
-        botTokenEnv: "QUEST_RUNNER_TG_TEST_TOKEN",
+        botTokenEnv: "QUEST_TG_TEST_TOKEN",
         chatId: "123456789",
         disableNotification: false,
         enabled: true,
@@ -524,7 +524,7 @@ test("telegram sink falls back to plain-text formatter when parseMode is unset",
     expect(payload.text).toContain("event: daemon_party_created");
     expect(payload.text).not.toContain("<b>");
   } finally {
-    delete Bun.env.QUEST_RUNNER_TG_TEST_TOKEN;
+    delete Bun.env.QUEST_TG_TEST_TOKEN;
   }
 });
 
@@ -533,7 +533,7 @@ test("telegram sink records failure when the bot token cannot be resolved", asyn
   const delivery = await handler.deliver(
     {
       apiBaseUrl: "http://127.0.0.1:1",
-      botTokenEnv: "QUEST_RUNNER_TG_MISSING_TOKEN",
+      botTokenEnv: "QUEST_TG_MISSING_TOKEN",
       chatId: "123456789",
       disableNotification: false,
       enabled: true,

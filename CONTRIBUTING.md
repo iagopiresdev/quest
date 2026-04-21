@@ -2,7 +2,7 @@
 
 ## Scope
 
-`quest-runner` is a spec-driven orchestration tool. Contributions should preserve:
+`quest` is a spec-driven orchestration tool. Contributions should preserve:
 - explicit domain boundaries
 - schema-first persisted state
 - battle-tested execution behavior
@@ -55,7 +55,7 @@ Include:
 ## Secrets And State
 
 Do not commit:
-- runtime state under `.quest-runner/`
+- runtime state under `.quest/`
 - secrets, API keys, or local auth material
 - machine-specific config
 

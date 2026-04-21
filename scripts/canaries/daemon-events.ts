@@ -225,7 +225,7 @@ async function main(): Promise<void> {
 
   const env = {
     ...Bun.env,
-    QUEST_RUNNER_STATE_ROOT: stateRoot,
+    QUEST_STATE_ROOT: stateRoot,
   } as Record<string, string>;
 
   const captured: CapturedEvent[] = [];

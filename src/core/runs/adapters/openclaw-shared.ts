@@ -45,7 +45,7 @@ export function assertOpenClawResponseSucceeded(
   }
 
   throw new QuestDomainError({
-    code: "quest_runner_command_failed",
+    code: "quest_command_failed",
     details: {
       command: context.command,
       summary: errorText,
@@ -170,7 +170,7 @@ export function parseOpenClawJsonOutput(...outputs: string[]): unknown {
   }
 
   throw new QuestDomainError({
-    code: "quest_runner_command_failed",
+    code: "quest_command_failed",
     details: {
       outputs: outputs
         .map((output) => output.trim())

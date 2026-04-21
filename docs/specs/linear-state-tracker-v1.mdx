@@ -9,7 +9,7 @@ description: Move Linear issues through workflow states (Todo â†’ In Progress â†
 
 Before this spec, the Linear sink was comment-only. Every observability event for every spec posted one new comment on a single pinned Linear issue configured via `--issue-id`. Useful as a chat-log-in-Linear, useless as a project tracker.
 
-Symphony (OpenClaw's Elixir orchestrator) treats each Linear issue as a work item and moves it through workflow states as the runtime makes progress. Quest Runner now does the same, on top of the existing comment stream. The comment path is unchanged (operators who only want observability comments get them); the state-transition path is a per-spec opt-in.
+Symphony (OpenClaw's Elixir orchestrator) treats each Linear issue as a work item and moves it through workflow states as the runtime makes progress. Quest now does the same, on top of the existing comment stream. The comment path is unchanged (operators who only want observability comments get them); the state-transition path is a per-spec opt-in.
 
 ## Problem
 

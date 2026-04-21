@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "quest-runner",
+  "name": "quest",
   "colors": {
     "primary": "#0f766e"
   },

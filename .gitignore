@@ -5,7 +5,7 @@ node_modules/
 .env
 .codex/
 .openclaw/
-.quest-runner/
+.quest/
 openclaw.json
 *.db
 *.sqlite

@@ -89,7 +89,7 @@ function buildBuilderPrompt(context: RunnerExecutionContext): string {
     "- Work only within the owned paths for this slice unless a generated file is strictly required.",
     "- Leave code changes in the current workspace; do not describe hypothetical diffs only.",
     "- Keep the final response short and focused on completed work and residual risks.",
-    "- This slice runs in an isolated workspace. Check .quest-runner/workspace-manifest.md before searching for conventions.",
+    "- This slice runs in an isolated workspace. Check .quest/workspace-manifest.md before searching for conventions.",
     "- Do not assume files like RTK.md or AGENTS.md exist unless the manifest or filesystem shows them.",
     "- Prefer `node --import tsx/loader --test` over `tsx --test` in Node test runs. If Bun-native tests exist, prefer `bun test`.",
     "",
@@ -109,7 +109,7 @@ function buildBuilderPrompt(context: RunnerExecutionContext): string {
     globalAcceptanceChecks,
     "",
     "Workspace manifest:",
-    "- .quest-runner/workspace-manifest.md",
+    "- .quest/workspace-manifest.md",
   ].join("\n");
 }
 
@@ -154,7 +154,7 @@ function buildTesterPrompt(context: RunnerExecutionContext): string {
     "- Inspect the current workspace result and make only minimal corrections needed for the trial to pass.",
     "- Do not expand the scope beyond validating and stabilizing this slice.",
     "- Keep the final response short and focused on validation and residual risks.",
-    "- This slice runs in an isolated workspace. Check .quest-runner/workspace-manifest.md before searching for conventions.",
+    "- This slice runs in an isolated workspace. Check .quest/workspace-manifest.md before searching for conventions.",
     "- Prefer `node --import tsx/loader --test` over `tsx --test` in Node test runs. If Bun-native tests exist, prefer `bun test`.",
     "",
     "Owned paths:",
@@ -170,7 +170,7 @@ function buildTesterPrompt(context: RunnerExecutionContext): string {
     sliceAcceptanceChecks,
     "",
     "Workspace manifest:",
-    "- .quest-runner/workspace-manifest.md",
+    "- .quest/workspace-manifest.md",
   ].join("\n");
 }
 
@@ -191,7 +191,7 @@ export async function resolveAuthEnv(
     const value = auth.envVar ? Bun.env[auth.envVar] : undefined;
     if (!value) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { envVar: auth.envVar, workerId: worker.id },
         message: `Environment variable ${auth.envVar} is not set for worker ${worker.id}`,
         statusCode: 1,
@@ -203,7 +203,7 @@ export async function resolveAuthEnv(
 
   if (!auth.secretRef) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: { workerId: worker.id },
       message: `Worker ${worker.id} is missing a secret-store reference`,
       statusCode: 1,
@@ -226,7 +226,7 @@ export async function verifyCodexNativeLogin(
 
   if (result.exitCode !== 0) {
     throw new QuestDomainError({
-      code: "quest_runner_unavailable",
+      code: "quest_unavailable",
       details: {
         command: [executable, "login", "status"],
         exitCode: result.exitCode,

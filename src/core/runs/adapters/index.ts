@@ -26,7 +26,7 @@ export class RunnerRegistry {
       const dryRun = this.adapters.find((adapter) => adapter.name === "dry-run");
       if (!dryRun) {
         throw new QuestDomainError({
-          code: "quest_runner_unavailable",
+          code: "quest_unavailable",
           details: { adapter: "dry-run" },
           message: "Dry-run adapter is not configured",
           statusCode: 1,
@@ -41,7 +41,7 @@ export class RunnerRegistry {
     );
     if (!adapter) {
       throw new QuestDomainError({
-        code: "quest_runner_unavailable",
+        code: "quest_unavailable",
         details: { adapter: worker.backend.adapter, workerId: worker.id },
         message: `No runner adapter is available for worker ${worker.id}`,
         statusCode: 1,

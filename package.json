@@ -1,5 +1,5 @@
 {
-  "name": "quest-runner",
+  "name": "quest",
   "version": "0.0.1",
   "private": true,
   "license": "MIT",
@@ -12,7 +12,7 @@
     "cli",
     "orchestration",
     "parallel-execution",
-    "quest-runner"
+    "quest"
   ],
   "files": [
     "LICENSE",

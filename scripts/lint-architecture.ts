@@ -10,7 +10,7 @@ const ignoredProjectPathSegments = new Set([
   ".codex",
   ".git",
   ".openclaw",
-  ".quest-runner",
+  ".quest",
   "coverage",
   "dist",
   "node_modules",
