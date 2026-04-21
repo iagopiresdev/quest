@@ -372,15 +372,98 @@ function removeUnassignedSlice(run: QuestRunDocument, sliceId: string): void {
   run.plan.unassigned = run.plan.unassigned.filter((slice) => slice.id !== sliceId);
 }
 
-function appendBlockedSliceToWave(
+function findDependencySliceState(
+  run: QuestRunDocument,
+  sliceId: string,
+  dependencyId: string,
+): QuestRunSliceState {
+  const dependencyState = run.slices.find((slice) => slice.sliceId === dependencyId);
+  if (!dependencyState) {
+    throw new QuestDomainError({
+      code: "invalid_quest_run",
+      details: { dependencyId, runId: run.id, sliceId },
+      message: `Quest run ${run.id} is missing dependency state ${dependencyId} for slice ${sliceId}`,
+      statusCode: 1,
+    });
+  }
+
+  return dependencyState;
+}
+
+function resolveBlockedSliceInsertWaveIndex(run: QuestRunDocument, sliceId: string): number {
+  const specSlice = findSpecSlice(run, sliceId);
+  if (specSlice.dependsOn.length === 0) {
+    return (run.plan.waves.at(-1)?.index ?? 0) + 1;
+  }
+
+  let latestDependencyWave = 0;
+  const unresolvedDependencies: string[] = [];
+
+  for (const dependencyId of specSlice.dependsOn) {
+    const dependencyState = findDependencySliceState(run, sliceId, dependencyId);
+    if (dependencyState.status === "skipped") {
+      continue;
+    }
+
+    if (
+      dependencyState.status === "blocked" ||
+      dependencyState.status === "failed" ||
+      dependencyState.status === "aborted" ||
+      dependencyState.wave === 0
+    ) {
+      unresolvedDependencies.push(dependencyId);
+      continue;
+    }
+
+    latestDependencyWave = Math.max(latestDependencyWave, dependencyState.wave);
+  }
+
+  if (unresolvedDependencies.length > 0) {
+    throw new QuestDomainError({
+      code: "quest_slice_not_steerable",
+      details: {
+        dependencyIds: unresolvedDependencies,
+        runId: run.id,
+        sliceId,
+      },
+      message: `Slice ${sliceId} cannot be reassigned until prerequisite(s) ${unresolvedDependencies.join(", ")} are scheduled`,
+      statusCode: 1,
+    });
+  }
+
+  return latestDependencyWave + 1;
+}
+
+function shiftWavesAtOrAfter(run: QuestRunDocument, startingWaveIndex: number): void {
+  run.plan.waves.forEach((wave) => {
+    if (wave.index < startingWaveIndex) {
+      return;
+    }
+
+    wave.index += 1;
+    wave.slices.forEach((slice) => {
+      slice.wave = wave.index;
+    });
+  });
+
+  run.slices.forEach((slice) => {
+    if (slice.wave >= startingWaveIndex) {
+      slice.wave += 1;
+    }
+  });
+}
+
+function insertBlockedSliceIntoWave(
   run: QuestRunDocument,
   sliceId: string,
   worker: RegisteredWorker,
 ): number {
   const specSlice = findSpecSlice(run, sliceId);
+  const nextWaveIndex = resolveBlockedSliceInsertWaveIndex(run, sliceId);
   removeUnassignedSlice(run, sliceId);
-  const nextWaveIndex = (run.plan.waves.at(-1)?.index ?? 0) + 1;
-  run.plan.waves.push({
+  shiftWavesAtOrAfter(run, nextWaveIndex);
+
+  const nextWave = {
     index: nextWaveIndex,
     slices: [
       {
@@ -398,7 +481,13 @@ function appendBlockedSliceToWave(
         wave: nextWaveIndex,
       },
     ],
-  });
+  };
+  const insertAt = run.plan.waves.findIndex((wave) => wave.index > nextWaveIndex);
+  if (insertAt === -1) {
+    run.plan.waves.push(nextWave);
+  } else {
+    run.plan.waves.splice(insertAt, 0, nextWave);
+  }
   return nextWaveIndex;
 }
 
@@ -1058,7 +1147,7 @@ export class QuestRunStore {
     sliceState.assignedTesterWorkerId ??= worker.id;
     sliceState.assignedTesterRunner ??= worker.backend.runner;
     if (sliceState.status === "blocked") {
-      const assignedWave = appendBlockedSliceToWave(run, sliceId, worker);
+      const assignedWave = insertBlockedSliceIntoWave(run, sliceId, worker);
       sliceState.wave = assignedWave;
       removeWarningsForSlice(run, sliceId);
       setSliceStatus(sliceState, "pending");

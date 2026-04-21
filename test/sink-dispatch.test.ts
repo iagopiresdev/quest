@@ -14,11 +14,12 @@ import { join } from "node:path";
 
 import { createObservableDaemonEvent } from "../src/core/observability/observable-events";
 import { LinearSinkHandler } from "../src/core/observability/sinks/linear-sink";
+import { OpenClawSinkHandler } from "../src/core/observability/sinks/openclaw-sink";
 import { SlackSinkHandler } from "../src/core/observability/sinks/slack-sink";
 import { TelegramSinkHandler } from "../src/core/observability/sinks/telegram-sink";
 import { WebhookSinkHandler } from "../src/core/observability/sinks/webhook-sink";
 import { SecretStore } from "../src/core/secret-store";
-import { startTestServer } from "./helpers";
+import { createOpenClawMockExecutable, startTestServer } from "./helpers";
 
 type TestServer = NonNullable<Awaited<ReturnType<typeof startTestServer>>>;
 
@@ -70,6 +71,35 @@ function sampleEvent() {
     reason: "target_ref:main",
   });
 }
+
+// -- OpenClaw ---------------------------------------------------------------
+
+test("openclaw sink records API errors embedded in JSON payloads", async () => {
+  const root = trackRoot();
+  const executable = createOpenClawMockExecutable(root, {
+    payloadText: "HTTP 400 api_error: model is not supported",
+  });
+  const handler = new OpenClawSinkHandler();
+
+  const delivery = await handler.deliver(
+    {
+      agentId: "codex",
+      enabled: true,
+      eventTypes: [],
+      executable,
+      id: "openclaw-errors",
+      type: "openclaw",
+    },
+    {
+      attempts: 1,
+      event: sampleEvent(),
+      secretStore: createHarnessSecretStore(root),
+    },
+  );
+
+  expect(delivery.status).toBe("failed");
+  expect(delivery.lastError).toContain("OpenClaw reported an API error");
+});
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 

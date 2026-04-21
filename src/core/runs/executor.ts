@@ -556,6 +556,7 @@ export class QuestRunExecutor {
             });
           }
 
+          sliceState.lastOutput = toSliceOutput(result);
           const hasDedicatedTester =
             sliceState.assignedTesterWorkerId !== null &&
             sliceState.assignedTesterWorkerId !== sliceState.assignedWorkerId;

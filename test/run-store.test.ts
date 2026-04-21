@@ -360,6 +360,54 @@ test("run store can reassign a blocked slice into a new executable wave", async 
   }
 });
 
+test("run store does not reassign dependency-blocked slices ahead of prerequisites", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
+  const store = new QuestRunStore(root, root);
+
+  try {
+    const run = await store.createRun(
+      createSpec({
+        maxParallel: 1,
+        slices: [
+          createSlice({
+            id: "parser",
+            owns: ["src/parser.ts"],
+            preferredRunner: "openclaw",
+            title: "Parser",
+          }),
+          createSlice({
+            dependsOn: ["parser"],
+            id: "tests",
+            owns: ["test/parser.test.ts"],
+            title: "Tests",
+          }),
+        ],
+      }),
+      [],
+    );
+    const worker = createWorkerForRunner("ember");
+
+    await expect(store.reassignSlice(run.id, "tests", worker)).rejects.toMatchObject({
+      code: "quest_slice_not_steerable",
+    });
+
+    const parserAssigned = await store.reassignSlice(run.id, "parser", worker);
+    expect(parserAssigned.plan.waves.map((wave) => wave.slices.map((slice) => slice.id))).toEqual([
+      ["parser"],
+    ]);
+
+    const testsAssigned = await store.reassignSlice(run.id, "tests", worker);
+    expect(testsAssigned.plan.waves.map((wave) => wave.slices.map((slice) => slice.id))).toEqual([
+      ["parser"],
+      ["tests"],
+    ]);
+    expect(testsAssigned.slices.find((slice) => slice.sliceId === "parser")?.wave).toBe(1);
+    expect(testsAssigned.slices.find((slice) => slice.sliceId === "tests")?.wave).toBe(2);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run store reassignment overrides a stale preferred runner on the persisted spec", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-store-"));
   const store = new QuestRunStore(root, root);

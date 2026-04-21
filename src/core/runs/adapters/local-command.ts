@@ -17,6 +17,8 @@ function buildLocalCommandPayload(context: RunnerExecutionContext): string {
       sliceState: {
         assignedRunner: context.sliceState.assignedRunner,
         assignedWorkerId: context.sliceState.assignedWorkerId,
+        lastOutput: context.sliceState.lastOutput ?? null,
+        lastTesterOutput: context.sliceState.lastTesterOutput ?? null,
         sliceId: context.sliceState.sliceId,
         status: context.sliceState.status,
         wave: context.sliceState.wave,

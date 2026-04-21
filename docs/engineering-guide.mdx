@@ -307,7 +307,7 @@ Future observability work should prefer:
 - typed sink definitions so new integrations extend the sink union instead of rewriting config storage
 - sink-specific delivery handlers registered into the dispatcher instead of a growing sink-type switch
 - an explicit sink probe path so setup, doctor, and operator checks can validate delivery wiring without waiting for a real run event
-- a portable plain-text formatter that stays the default for every sink, with rich-format card builders layered only for sinks that benefit (Telegram HTML cards today; see [Observability Sinks internals](/docs/internals/observability-sinks) for the pattern)
+- a portable plain-text formatter that stays the default for every sink, with rich-format card builders layered only for sinks that benefit (Telegram HTML cards today; see [Observability Cards v1](/docs/specs/observability-cards-v1) for the rich card contract)
 
 When adding model-backed runners that are not local CLIs:
 - keep the external API call separate from the local file-application step

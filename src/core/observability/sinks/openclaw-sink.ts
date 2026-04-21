@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  assertOpenClawResponseSucceeded,
+  parseOpenClawJsonOutput,
+} from "../../runs/adapters/openclaw-shared";
 import { runSubprocess } from "../../runs/process";
 import { buildProcessEnv } from "../../runs/process-env";
 import type { DeliveryRecord } from "../delivery-schema";
@@ -61,18 +65,19 @@ export class OpenClawSinkHandler implements EventSinkHandler<OpenClawSink> {
       const message = sink.promptPrefix
         ? `${sink.promptPrefix}\n\n${formatSinkTextMessage(context.event)}`
         : formatSinkTextMessage(context.event);
+      const command = [
+        executable,
+        "agent",
+        "--agent",
+        sink.agentId,
+        "--session-id",
+        sessionId,
+        "--message",
+        message,
+        "--json",
+      ];
       const result = await runSubprocess({
-        cmd: [
-          executable,
-          "agent",
-          "--agent",
-          sink.agentId,
-          "--session-id",
-          sessionId,
-          "--message",
-          message,
-          "--json",
-        ],
+        cmd: command,
         cwd: Bun.env.PWD ?? ".",
         env: buildProcessEnv(
           sink.gatewayUrl ? { OPENCLAW_GATEWAY_URL: sink.gatewayUrl } : undefined,
@@ -88,6 +93,12 @@ export class OpenClawSinkHandler implements EventSinkHandler<OpenClawSink> {
           result.stderr.trim() || result.stdout.trim() || `OpenClaw exited ${result.exitCode}`,
         );
       }
+
+      const responseBody = parseOpenClawJsonOutput(result.stdout, result.stderr);
+      assertOpenClawResponseSucceeded(responseBody, {
+        command,
+        workerId: sink.agentId,
+      });
 
       const deliveredAt = new Date().toISOString();
       return {

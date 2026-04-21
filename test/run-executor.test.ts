@@ -227,6 +227,10 @@ test("run executor uses a dedicated tester worker during the trial phase", async
     writeFileSync(
       testerScriptPath,
       [
+        "const payload = JSON.parse(await Bun.stdin.text());",
+        "if (payload.sliceState.lastOutput?.summary !== 'builder:build') {",
+        "  throw new Error('missing builder output in tester payload');",
+        "}",
         "await Bun.write('artifact.txt', 'tester-fixed\\n');",
         "await Bun.write(Bun.stdout, 'tester:' + Bun.env.QUEST_SLICE_PHASE);",
       ].join("\n"),
@@ -294,6 +298,80 @@ test("run executor uses a dedicated tester worker during the trial phase", async
     expect(
       readFileSync(join(executed.slices[0]?.workspacePath ?? "", "artifact.txt"), "utf8"),
     ).toBe("tester-fixed\n");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor persists builder output when a dedicated tester fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    const builderScriptPath = join(root, "builder-worker.ts");
+    writeFileSync(
+      builderScriptPath,
+      [
+        "await Bun.write('artifact.txt', 'builder-output\\n');",
+        "await Bun.write(Bun.stdout, 'builder:' + Bun.env.QUEST_SLICE_PHASE);",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const testerScriptPath = join(root, "tester-worker.ts");
+    writeFileSync(
+      testerScriptPath,
+      [
+        "const payload = JSON.parse(await Bun.stdin.text());",
+        "if (payload.sliceState.lastOutput?.summary !== 'builder:build') {",
+        "  throw new Error('missing builder output in tester payload');",
+        "}",
+        "process.exit(5);",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const builderWorker = createWorker("builder-only", "local-command", ["bun", builderScriptPath]);
+    builderWorker.role = "builder";
+    const testerWorker = createWorker("tester-only", "local-command", ["bun", testerScriptPath]);
+    testerWorker.role = "tester";
+    testerWorker.stats.testing = 95;
+
+    await workerRegistry.upsertWorker(builderWorker);
+    await workerRegistry.upsertWorker(testerWorker);
+
+    const spec = createSpec({
+      maxParallel: 1,
+      slices: [
+        {
+          acceptanceChecks: [],
+          contextHints: [],
+          dependsOn: [],
+          discipline: "coding",
+          goal: "Create the artifact",
+          id: "parser",
+          owns: ["artifact.txt"],
+          title: "Parser",
+        },
+      ],
+      title: "Dedicated tester failure",
+    });
+    const run = await runStore.createRun(spec, await workerRegistry.listWorkers());
+
+    await expect(executor.executeRun(run.id)).rejects.toMatchObject({
+      code: "quest_runner_command_failed",
+    });
+
+    const failedRun = await runStore.getRun(run.id);
+    expect(failedRun.status).toBe("failed");
+    expect(failedRun.slices[0]?.status).toBe("failed");
+    expect(failedRun.slices[0]?.lastOutput?.summary).toBe("builder:build");
+    expect(failedRun.slices[0]?.lastOutput?.stdout).toBe("builder:build");
+    expect(failedRun.slices[0]?.lastError).toContain("tester-only");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

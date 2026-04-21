@@ -6,7 +6,7 @@
     },
     {
       "group": "Core Docs",
-      "pages": ["docs/design-system", "docs/engineering-guide", "docs/tui/setup-wizard"]
+      "pages": ["docs/design-system", "docs/engineering-guide"]
     },
     {
       "group": "Specs",

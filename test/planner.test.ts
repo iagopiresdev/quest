@@ -151,6 +151,41 @@ test("planner serializes overlapping ownership even when maxParallel allows more
   ]);
 });
 
+test("planner serializes literal paths that overlap ownership globs", () => {
+  const parallelWorker = createWorker({
+    id: "parallel-builder",
+    resources: { cpuCost: 1, gpuCost: 0, maxParallel: 2, memoryCost: 1 },
+  });
+  const spec = createSpec({
+    maxParallel: 2,
+    slices: [
+      createSlice({
+        goal: "Update top-level TypeScript files",
+        id: "top-level-ts",
+        owns: ["src/*.ts"],
+        title: "Top Level TS",
+      }),
+      createSlice({
+        goal: "Update the CLI entrypoint",
+        id: "cli-entry",
+        owns: ["src/cli.ts"],
+        title: "CLI Entrypoint",
+      }),
+    ],
+    title: "Glob ownership planning",
+  });
+
+  const plan = planQuest(spec, [parallelWorker]);
+  expect(plan.waves).toHaveLength(2);
+  expect(plan.warnings).toEqual([
+    expect.objectContaining({
+      code: "ownership_conflict",
+      paths: expect.arrayContaining(["src/*.ts", "src/cli.ts"]),
+      relatedSliceIds: ["top-level-ts", "cli-entry"],
+    }),
+  ]);
+});
+
 test("planner defers runnable slices to later waves instead of scheduling null assignments", () => {
   const singleWorker = [workers[0] as RegisteredWorker];
   const spec: QuestSpec = {
@@ -312,4 +347,83 @@ test("planner assigns a dedicated tester when builder and tester roles are split
     assignedTesterWorkerId: "tester-only",
     assignedWorkerId: "builder-only",
   });
+});
+
+test("planner falls back when a preferred builder cannot build", () => {
+  const roleWorkers: RegisteredWorker[] = [
+    createWorker({
+      id: "builder-only",
+      name: "Builder",
+      role: "builder",
+    }),
+    createWorker(
+      {
+        id: "tester-only",
+        name: "Tester",
+        role: "tester",
+      },
+      { profile: "hermes", runner: "hermes" },
+    ),
+  ];
+  const spec = createSpec({
+    slices: [
+      createSlice({
+        goal: "Implement parser changes",
+        id: "parser",
+        preferredWorkerId: "tester-only",
+        title: "Parser",
+      }),
+    ],
+    title: "Preferred incompatible builder",
+  });
+
+  const plan = planQuest(spec, roleWorkers);
+  expect(plan.waves[0]?.slices[0]?.assignedWorkerId).toBe("builder-only");
+  expect(plan.warnings).toContainEqual(
+    expect.objectContaining({
+      code: "preferred_worker_incompatible",
+      sliceId: "parser",
+    }),
+  );
+});
+
+test("planner falls back when a preferred tester cannot test", () => {
+  const roleWorkers: RegisteredWorker[] = [
+    createWorker({
+      id: "builder-only",
+      name: "Builder",
+      role: "builder",
+    }),
+    createWorker(
+      {
+        id: "tester-only",
+        name: "Tester",
+        role: "tester",
+      },
+      { profile: "hermes", runner: "hermes" },
+    ),
+  ];
+  const spec = createSpec({
+    slices: [
+      createSlice({
+        goal: "Implement parser changes",
+        id: "parser",
+        preferredTesterWorkerId: "builder-only",
+        title: "Parser",
+      }),
+    ],
+    title: "Preferred incompatible tester",
+  });
+
+  const plan = planQuest(spec, roleWorkers);
+  expect(plan.waves[0]?.slices[0]).toMatchObject({
+    assignedTesterWorkerId: "tester-only",
+    assignedWorkerId: "builder-only",
+  });
+  expect(plan.warnings).toContainEqual(
+    expect.objectContaining({
+      code: "preferred_tester_incompatible",
+      sliceId: "parser",
+    }),
+  );
 });

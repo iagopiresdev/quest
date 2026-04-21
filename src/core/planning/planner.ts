@@ -1,8 +1,11 @@
 import { QuestDomainError } from "../errors";
 import type { TesterSelectionStrategy } from "../settings";
+import { patternsConflict } from "../shared/path-patterns";
 import { workerSupportsBuilderRole, workerSupportsTesterRole } from "../workers/management";
 import type { RegisteredWorker, WorkerDiscipline } from "../workers/schema";
 import type { QuestSliceSpec, QuestSpec } from "./spec-schema";
+
+export { patternsConflict } from "../shared/path-patterns";
 
 type QuestPlanWarningCode =
   | "ownership_conflict"
@@ -74,33 +77,6 @@ const disciplineToStatKey: Record<WorkerDiscipline, keyof RegisteredWorker["stat
   research: "research",
   testing: "testing",
 };
-
-function normalizePattern(pattern: string): string {
-  return pattern
-    .trim()
-    .replaceAll("\\", "/")
-    .replace(/\/+$/, "")
-    .replace(/\/\*\*$/, "")
-    .replace(/\/\*$/, "");
-}
-
-export function patternsConflict(left: string, right: string): boolean {
-  const normalizedLeft = normalizePattern(left);
-  const normalizedRight = normalizePattern(right);
-
-  if (normalizedLeft.length === 0 || normalizedRight.length === 0) {
-    return false;
-  }
-
-  if (normalizedLeft === normalizedRight || normalizedLeft === "**" || normalizedRight === "**") {
-    return true;
-  }
-
-  return (
-    normalizedLeft.startsWith(`${normalizedRight}/`) ||
-    normalizedRight.startsWith(`${normalizedLeft}/`)
-  );
-}
 
 function collectConflictPaths(
   slice: QuestSliceSpec,
@@ -342,6 +318,12 @@ function buildBuilderCandidates(
         message: `Preferred builder ${slice.preferredWorkerId} uses ${preferredWorker.backend.runner}, not ${slice.preferredRunner}`,
         sliceId: slice.id,
       });
+    } else if (!isBuilderCompatibleWithSlice(preferredWorker, slice)) {
+      warnings.push({
+        code: "preferred_worker_incompatible",
+        message: `Preferred builder ${slice.preferredWorkerId} is not compatible with slice ${slice.id}`,
+        sliceId: slice.id,
+      });
     } else {
       const fallbackWorkers = compatibleWorkers.filter(
         (worker) => worker.id !== preferredWorker.id,
@@ -397,6 +379,12 @@ function buildTesterCandidates(
       warnings.push({
         code: "preferred_tester_incompatible",
         message: `Preferred tester ${slice.preferredTesterWorkerId} uses ${preferredWorker.backend.runner}, not ${slice.preferredTesterRunner}`,
+        sliceId: slice.id,
+      });
+    } else if (!isTesterCompatibleWithSlice(preferredWorker, slice)) {
+      warnings.push({
+        code: "preferred_tester_incompatible",
+        message: `Preferred tester ${slice.preferredTesterWorkerId} is not compatible with slice ${slice.id}`,
         sliceId: slice.id,
       });
     } else {
