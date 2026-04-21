@@ -124,7 +124,6 @@ test("ensureGitRepositoryIsClean caps long path lists with a remainder summary",
   expect(domain.message).toContain("and 3 more");
 });
 
-
 test("prepareExecutionWorkspace disables git hooks during worktree materialization", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-worktree-hooks-"));
   tempRoots.push(root);
