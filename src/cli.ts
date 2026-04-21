@@ -2365,12 +2365,15 @@ async function runDoctor(
       ok: true,
     });
   } catch (error: unknown) {
+    const isOptionalUnsupportedSecretStore =
+      isQuestDomainError(error) && error.code === "quest_unavailable";
     checks.push({
       details: {
         message: error instanceof Error ? error.message : String(error),
+        required: !isOptionalUnsupportedSecretStore,
       },
       name: "secret-store",
-      ok: false,
+      ok: isOptionalUnsupportedSecretStore,
     });
   }
 
@@ -3465,7 +3468,7 @@ function formatZodIssuesPretty(error: ZodError): string {
   return lines.length > 0 ? lines.join("\n") : "  (no field-level details)";
 }
 
-function writeError(error: unknown, mode: OutputMode): void {
+async function writeError(error: unknown, mode: OutputMode): Promise<void> {
   if (error instanceof ZodError) {
     const payload = {
       error: "validation_failed",
@@ -3473,9 +3476,9 @@ function writeError(error: unknown, mode: OutputMode): void {
       message: "Input validation failed",
     };
     if (mode === "json") {
-      void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
+      await Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
     } else {
-      void Bun.write(
+      await Bun.write(
         Bun.stderr,
         `${formatPrettyStatus("fail")} validation_failed: ${payload.message}\n${formatZodIssuesPretty(error)}\n`,
       );
@@ -3490,11 +3493,11 @@ function writeError(error: unknown, mode: OutputMode): void {
       message: error.message,
     };
     if (mode === "json") {
-      void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
+      await Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
     } else {
       const details =
         payload.details === undefined ? [] : formatDomainErrorDetailsPretty(payload.details);
-      void Bun.write(
+      await Bun.write(
         Bun.stderr,
         `${[`${formatPrettyStatus("fail")} ${payload.error}: ${payload.message}`, ...details].join("\n")}\n`,
       );
@@ -3507,9 +3510,9 @@ function writeError(error: unknown, mode: OutputMode): void {
     message: error instanceof Error ? error.message : String(error),
   };
   if (mode === "json") {
-    void Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
+    await Bun.write(Bun.stderr, `${JSON.stringify(payload, null, 2)}\n`);
   } else {
-    void Bun.write(
+    await Bun.write(
       Bun.stderr,
       `${formatPrettyStatus("fail")} ${payload.error}\n${payload.message}\n`,
     );
@@ -4668,7 +4671,7 @@ async function main(): Promise<number> {
     writeOutput(command.id, outputMode, result);
     return 0;
   } catch (error: unknown) {
-    writeError(error, outputMode);
+    await writeError(error, outputMode);
     return 1;
   }
 }
