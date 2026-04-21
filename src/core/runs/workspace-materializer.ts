@@ -264,7 +264,16 @@ async function materializeGitWorktree(
   }
 
   const result = await runSubprocess({
-    cmd: ["git", "worktree", "add", "--detach", workspacePath, "HEAD"],
+    cmd: [
+      "git",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "worktree",
+      "add",
+      "--detach",
+      workspacePath,
+      "HEAD",
+    ],
     cwd: repositoryRoot,
     env: buildProcessEnv(),
   });
