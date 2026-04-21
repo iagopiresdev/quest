@@ -6,7 +6,12 @@
     },
     {
       "group": "Core Docs",
-      "pages": ["docs/operator-guide", "docs/design-system", "docs/engineering-guide"]
+      "pages": [
+        "docs/operator-guide",
+        "docs/pull-request-workflow",
+        "docs/design-system",
+        "docs/engineering-guide"
+      ]
     },
     {
       "group": "Specs",

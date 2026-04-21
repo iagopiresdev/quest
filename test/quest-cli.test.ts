@@ -2706,7 +2706,7 @@ test("quest cli pretty watches run progress", async () => {
   const scriptPath = join(context.stateRoot, "worker-watch.ts");
   writeFileSync(
     scriptPath,
-    ["await Bun.sleep(1200);", "console.log('watch-finished');"].join("\n"),
+    ["await Bun.sleep(3000);", "console.log('watch-finished');"].join("\n"),
     "utf8",
   );
   expectWorkerUpserted(
