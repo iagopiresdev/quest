@@ -54,8 +54,17 @@ function matchesOwnedPath(relativePath: string, ownedPatterns: string[]): boolea
 
 function normalizeHermesWritePath(inputPath: string): string {
   const slashPath = inputPath.replaceAll("\\", "/").trim();
-  const hasWindowsDrivePrefix = /^[A-Za-z]:\//.test(slashPath);
+  const hasWindowsDrivePrefix = /^[A-Za-z]:/.test(slashPath);
   if (slashPath.startsWith("/") || hasWindowsDrivePrefix) {
+    throw new QuestDomainError({
+      code: "quest_command_failed",
+      details: { path: inputPath },
+      message: `Hermes produced an invalid write path: ${inputPath}`,
+      statusCode: 1,
+    });
+  }
+
+  if (slashPath.split("/").includes("..")) {
     throw new QuestDomainError({
       code: "quest_command_failed",
       details: { path: inputPath },

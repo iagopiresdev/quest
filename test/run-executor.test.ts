@@ -16,6 +16,7 @@ import { QuestDomainError } from "../src/core/errors";
 import type { QuestSpec } from "../src/core/planning/spec-schema";
 import { QuestRunExecutor } from "../src/core/runs/executor";
 import { QuestRunStore } from "../src/core/runs/store";
+import { resolveRunWorkspaceRootPath } from "../src/core/runs/workspace-layout";
 import { SecretStore } from "../src/core/secret-store";
 import { WorkerRegistry } from "../src/core/workers/registry";
 import type { RegisteredWorker } from "../src/core/workers/schema";
@@ -1496,7 +1497,7 @@ test("run executor rejects Hermes writes that traverse outside owned paths", asy
       message: "Hermes produced an invalid write path: owned/../unowned/pwned.txt",
     });
     const unownedPath = join(
-      runStore.resolveRunWorkspaceRootPath(run.id),
+      resolveRunWorkspaceRootPath(join(root, "workspaces"), run.id),
       "slices",
       "fix-owned",
       "unowned",
