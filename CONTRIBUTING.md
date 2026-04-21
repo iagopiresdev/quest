@@ -12,6 +12,8 @@ Read these first:
 - [README.md](./README.md)
 - [docs/design-system.mdx](./docs/design-system.mdx)
 - [docs/engineering-guide.mdx](./docs/engineering-guide.mdx)
+- [docs/pull-request-workflow.mdx](./docs/pull-request-workflow.mdx)
+- [code_review.md](./code_review.md)
 
 ## Workflow
 
@@ -20,6 +22,16 @@ Read these first:
 3. Keep the implementation narrow.
 4. Add automated coverage for happy path and edge cases.
 5. Run a real canary when the change touches execution, setup, integration, steering, or sink delivery.
+
+## Branches
+
+Do not push directly to `main` or `master`. Create a topic branch, push it, and open a pull request.
+
+GitHub branch protection is configured as the authoritative guard for `main`. For a local early warning before a push reaches GitHub, install the tracked pre-push hook:
+
+```sh
+bun run hooks:install
+```
 
 ## Local Validation
 
@@ -46,7 +58,17 @@ Keep pull requests small enough that:
 - the validation story is credible
 - battle-tested changes can be reviewed without reconstructing hidden state
 
-Maintainer-authored PRs can opt into GitHub auto-merge by adding the `automerge` label. Auto-merge is only enabled for non-draft PRs from this repository when the PR author is an owner, member, or collaborator. Branch protection still has to pass before GitHub merges the PR.
+Open ready PRs when the work is reviewable. Use draft only for unfinished work;
+draft PRs do not auto-merge.
+
+Request or confirm Codex review for public PRs. If automatic review does not
+trigger, comment `@codex review` once and follow up on findings before merging.
+Review expectations are in [code_review.md](./code_review.md).
+
+Maintainer-authored PRs can opt into GitHub auto-merge by adding the `automerge`
+label. Auto-merge is only enabled for non-draft PRs from this repository when
+the PR author is an owner, member, or collaborator. Branch protection still has
+to pass before GitHub merges the PR.
 
 Include:
 - what changed

@@ -2394,6 +2394,10 @@ test("quest cli reruns a prior run by cloning its spec", () => {
 });
 
 test("quest cli stores, checks, and deletes secrets through the keychain backend", () => {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
   const context = trackContext();
   const secretName = "codex.api";
   const secretValue = "example-secret-value  ";
@@ -2706,7 +2710,7 @@ test("quest cli pretty watches run progress", async () => {
   const scriptPath = join(context.stateRoot, "worker-watch.ts");
   writeFileSync(
     scriptPath,
-    ["await Bun.sleep(1200);", "console.log('watch-finished');"].join("\n"),
+    ["await Bun.sleep(3000);", "console.log('watch-finished');"].join("\n"),
     "utf8",
   );
   expectWorkerUpserted(

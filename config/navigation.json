@@ -6,13 +6,22 @@
     },
     {
       "group": "Core Docs",
-      "pages": ["docs/operator-guide", "docs/design-system", "docs/engineering-guide"]
+      "pages": [
+        "docs/operator-guide",
+        "docs/pull-request-workflow",
+        "docs/release-platform-support",
+        "docs/design-system",
+        "docs/engineering-guide"
+      ]
     },
     {
       "group": "Specs",
       "pages": [
         "docs/specs/observability-cards-v1",
+        "docs/specs/acp-adapter-v1",
         "docs/specs/auto-integrate-v1",
+        "docs/specs/linear-state-tracker-v1",
+        "docs/specs/party-bonfire-v1",
         "docs/specs/run-turn-in-and-recovery-v1",
         "docs/specs/worker-role-separation-v1",
         "docs/specs/tester-lane-v1",
