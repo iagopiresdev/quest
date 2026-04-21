@@ -3,8 +3,8 @@ set -euo pipefail
 
 protected_ref_pattern='^refs/heads/(main|master)$'
 
-while read -r local_ref _local_sha remote_ref _remote_sha; do
-  if [[ "${local_ref}" =~ ${protected_ref_pattern} || "${remote_ref}" =~ ${protected_ref_pattern} ]]; then
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [[ "${remote_ref}" =~ ${protected_ref_pattern} ]]; then
     cat >&2 <<'MSG'
 Direct pushes to main/master are blocked for this repo.
 
