@@ -1,12 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { QuestDomainError } from "../src/core/errors";
 import {
   ensureGitRepositoryIsClean,
+  prepareExecutionWorkspace,
   runWorkspacePreInstall,
 } from "../src/core/runs/workspace-materializer";
 
@@ -121,4 +122,59 @@ test("ensureGitRepositoryIsClean caps long path lists with a remainder summary",
   const domain = caught as QuestDomainError;
   expect(domain.message).toContain("8 uncommitted path(s)");
   expect(domain.message).toContain("and 3 more");
+});
+
+test("prepareExecutionWorkspace disables git hooks during worktree materialization", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-worktree-hooks-"));
+  tempRoots.push(root);
+  const repositoryRoot = join(root, "source-repo");
+  const workspaceRoot = join(root, "workspaces");
+  const workspacePath = join(workspaceRoot, "slice-1");
+  const hookMarkerPath = join(root, "post-checkout-ran");
+
+  const git = (...argv: string[]) => {
+    const result = spawnSync("git", argv, { cwd: repositoryRoot, stdio: "pipe" });
+    if (result.status !== 0) {
+      throw new Error(`git ${argv.join(" ")} failed: ${result.stderr?.toString()}`);
+    }
+  };
+
+  mkdirSync(repositoryRoot, { recursive: true });
+  mkdirSync(workspaceRoot, { recursive: true });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  writeFileSync(join(repositoryRoot, "tracked.txt"), "seed\n", "utf8");
+  git("add", "tracked.txt");
+  git("commit", "-qm", "seed");
+  writeFileSync(
+    join(repositoryRoot, ".git", "hooks", "post-checkout"),
+    ["#!/bin/sh", "set -eu", `printf 'ran' > ${JSON.stringify(hookMarkerPath)}`].join("\n"),
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  await prepareExecutionWorkspace(
+    {
+      id: "run-1",
+      sourceRepositoryPath: repositoryRoot,
+      spec: {
+        execution: {
+          preInstall: false,
+          prepareCommands: [],
+          shareSourceDependencies: false,
+        },
+      },
+      workspaceRoot,
+    } as never,
+    {
+      sliceId: "slice-1",
+      status: "queued",
+      title: "slice",
+      wave: 1,
+    } as never,
+    workspacePath,
+  );
+
+  expect(existsSync(join(workspacePath, "tracked.txt"))).toBe(true);
+  expect(existsSync(hookMarkerPath)).toBe(false);
 });
