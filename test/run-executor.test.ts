@@ -146,6 +146,46 @@ test("run executor completes a planned run in dry-run mode", async () => {
   }
 });
 
+test("run executor skips acceptance checks in dry-run mode", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  try {
+    await workerRegistry.upsertWorker(createWorker("ember"));
+    const spec = createSpec();
+    const run = await runStore.createRun(
+      {
+        ...spec,
+        slices: spec.slices.map((slice) =>
+          slice.id === "parser"
+            ? {
+                ...slice,
+                acceptanceChecks: [
+                  createCommand(["sh", "-lc", "printf 'ran\\n' > acceptance-marker.txt"]),
+                ],
+              }
+            : slice,
+        ),
+      },
+      await workerRegistry.listWorkers(),
+    );
+
+    const executed = await executor.executeRun(run.id, { dryRun: true });
+    const parserSlice = executed.slices.find((slice) => slice.sliceId === "parser");
+    const parserWorkspace = parserSlice?.workspacePath ?? "";
+
+    expect(executed.status).toBe("completed");
+    expect(parserSlice?.lastChecks).toEqual([]);
+    expect(existsSync(join(parserWorkspace, "acceptance-marker.txt"))).toBe(false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run executor completes a planned run with the local-command adapter", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
   const registryPath = join(root, "workers.json");
