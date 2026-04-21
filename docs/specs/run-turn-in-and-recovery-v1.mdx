@@ -7,9 +7,9 @@ Close the main lifecycle gaps left by v0:
 - landing integrated runs back into the source checkout
 - canceling live execution phases
 - marking dead hosts as orphaned
-- recording explicit rescue state after a failed boss fight or turn-in
+- recording explicit rescue state after a failed integration or turn-in
 
-This spec keeps the existing conservative model. Execution, boss fight, and turn-in are still distinct phases in the domain even when the CLI can auto-advance across them.
+This spec keeps the existing conservative model. Execution, integration, and turn-in are still distinct phases in the domain even when the CLI can auto-advance across them.
 
 ## Scope
 
@@ -40,7 +40,7 @@ Builder work on a slice.
 2. `Trial`
 Tester lane plus slice acceptance checks.
 
-3. `Boss Fight`
+3. `Integration`
 Integration worktree replay plus top-level acceptance checks.
 
 4. `Turn-in`
@@ -60,7 +60,7 @@ This keeps turn-in safe and explicit. Quest Runner does not silently retarget an
 
 ## Cancel And Watchdog Rules
 
-- `runs cancel` is allowed while an execution stage is active, even if the run status itself is still `completed` during boss fight or turn-in
+- `runs cancel` is allowed while an execution stage is active, even if the run status itself is still `completed` during integration or turn-in
 - cancel clears tracked subprocess state and marks the run `aborted`
 - `runs babysit` inspects live execution metadata and marks stale dead-host runs `orphaned`
 - the watchdog is command-driven in v1, not a background daemon

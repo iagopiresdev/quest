@@ -146,7 +146,7 @@ If tests fail: `run_integration_checks_failed` → *Blocked*, comment surfaces t
 
 ### Party-level fallback (per inbox)
 
-For workflows where every spec in a party maps to the same Linear issue (epic-style execution), declare the default once at party creation:
+For workflows where every spec in a party maps to the same Linear issue (shared-issue execution), declare the default once at party creation:
 
 ```sh
 quest party create --name alpha \
@@ -195,6 +195,6 @@ If the Linear workflow has a state named differently than the defaults (common �
 
 ## Related Docs
 
-- [Observability Cards v1](/docs/specs/observability-cards-v1) — RPG markdown cards the Linear sink uses for comment bodies.
-- [Engineering Guide](/docs/engineering-guide) — observability invariants for sink delivery.
+- [Observability Cards v1](/docs/specs/observability-cards-v1) — rich markdown cards the Linear sink uses for comment bodies.
+- [Engineering Guide](/docs/engineering-guide) — sink delivery and replay invariants.
 - Symphony's `SymphonyElixir.Linear.Adapter` — inspiration for the three-mutation flow.

@@ -1,6 +1,6 @@
 ---
 title: Observability Cards v1
-description: Telegram HTML cards with RPG flavor copy for observability events and explicit CLI setup.
+description: Telegram HTML cards for observability events and explicit CLI setup.
 ---
 
 # Observability Cards v1
@@ -21,7 +21,7 @@ Telegram is the only sink on the list with native support for rich presentation 
 
 ## Goal
 
-Ship a Telegram-only HTML card builder with RPG flavor copy, route the Telegram sink through it when `parseMode === "HTML"`, and document a command-first path that can reuse the OpenClaw bot token and default chat id.
+Ship a Telegram-only HTML card builder, route the Telegram sink through it when `parseMode === "HTML"`, and document a command-first path that can reuse the OpenClaw bot token and default chat id.
 
 ## Non-Goals
 
@@ -31,11 +31,11 @@ Ship a Telegram-only HTML card builder with RPG flavor copy, route the Telegram 
 - No translation or localization. Copy is English-only.
 - No OpenClaw import for Slack / Linear. The pattern generalizes but only Telegram is wired in v1.
 
-## Addendum: Linear RPG Markdown Cards (2026-04-16)
+## Addendum: Linear Markdown Cards (2026-04-16)
 
 Linear issue comments render GitHub-flavored Markdown, so the card builder pattern extends cleanly. The Linear sink now accepts `useRpgCards: true` (CLI flag `--rpg-cards` on `observability linear upsert`), and when enabled routes events through `formatLinearCard` instead of the plain-text formatter.
 
-The RPG copy (`⚔️ Quest Accepted`, `💀 Party Wiped`, etc.) matches the Telegram card builder 1:1 so the two sinks feel like the same product. Linear cards use `##` headings, italic flavor taglines, bulleted fact lists, fenced code blocks for errors, and a local clock footer.
+Linear cards use `##` headings, short status lines, bulleted fact lists, fenced code blocks for errors, and a local clock footer.
 
 Back-compat: existing Linear sinks with `useRpgCards` unset keep the plain-text formatter. No schema migration.
 
@@ -94,17 +94,17 @@ No new top-level commands. The existing `observability telegram upsert --parse-m
 
 The HTML card path is the observability layer itself. We add:
 
-- `formatTelegramCard` renders an `<i>` flavor line per daemon event type. The test suite asserts every shipped daemon event has a distinct header and flavor so future additions cannot forget to add copy.
+- `formatTelegramCard` renders an `<i>` status line per daemon event type. The test suite asserts every shipped daemon event has a distinct header and status so future additions cannot forget to add copy.
 - `escapeHtml` wraps every user-supplied string before interpolation. The test suite injects `<img src=x>` and `<script>` into party names, reasons, and spec files to prove the card never emits raw tags.
 
 No new event types or sink types.
 
 ## Acceptance Checks
 
-- `bun test test/telegram-card-builder.test.ts` covers: daemon card rendering, `(all parties)` label for `partyName: "*"`, specFile/runId/error inclusion, HTML injection escape, distinct header + flavor per event type.
+- `bun test test/telegram-card-builder.test.ts` covers: daemon card rendering, `(all parties)` label for `partyName: "*"`, specFile/runId/error inclusion, HTML injection escape, distinct header + status per event type.
 - `bun test test/setup-detection.test.ts` covers: env-only detection, OpenClaw config import, malformed OpenClaw JSON tolerated.
 - `bun ./scripts/canaries/daemon-events.ts` still passes end-to-end.
-- Manual: `quest party {create,bonfire,resume} --name <temp>` with the HTML sink configured lands three cards in Telegram with distinct headers, flavor lines, and a local clock.
+- Manual: `quest party {create,bonfire,resume} --name <temp>` with the HTML sink configured lands three cards in Telegram with distinct headers, status lines, and a local clock.
 
 ## Test Plan
 
@@ -127,5 +127,5 @@ If the OpenClaw credential import path misbehaves (e.g., hostile JSON), delete t
 
 ## Related Docs
 
-- [Engineering Guide](/docs/engineering-guide) — higher-level invariants for sink delivery.
 - [Party Bonfire v1](/docs/specs/party-bonfire-v1) — daemon party workflow context.
+- [Engineering Guide](/docs/engineering-guide) — higher-level invariants for sinks, delivery records, and replay.

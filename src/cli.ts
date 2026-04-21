@@ -51,11 +51,19 @@ import {
   type DetectedCodexSetup,
   type DetectedHermesSetup,
   type DetectedOpenClawSetup,
+  type DetectedSinkSetup,
   detectCodexSetup,
   detectHermesSetup,
   detectOpenClawSetup,
+  detectSinkSetup,
   probeOpenClawModelProfile,
 } from "./core/setup/detection";
+import { parseTelegramSinkPlan } from "./core/setup/telegram-sink-plan";
+import {
+  runSetupWizard,
+  type SetupWizardHarness,
+  type SetupWizardHarnessDefaults,
+} from "./core/setup/wizard";
 import { isRecord } from "./core/shared/type-guards";
 import {
   ensureDirectory,
@@ -1028,6 +1036,196 @@ function buildWorkerFromDetectedBackend(
   return buildOpenClawWorker(args, asOpenClawSetup(importedDefaults));
 }
 
+function buildSetupHarnessDefaults(
+  importedCodex: DetectedCodexSetup | null,
+  importedHermes: DetectedHermesSetup | null,
+  importedOpenClaw: DetectedOpenClawSetup | null,
+): Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>> {
+  const codexSummary = describeImportedBackendDefaults("codex", importedCodex);
+  const hermesSummary = describeImportedBackendDefaults("hermes", importedHermes);
+  const openClawSummary = describeImportedBackendDefaults("openclaw", importedOpenClaw);
+  return {
+    codex: {
+      ...(importedCodex?.authMode ? { authMode: importedCodex.authMode } : {}),
+      ...(importedCodex?.envVar ? { envVar: importedCodex.envVar } : {}),
+      ...(importedCodex?.executable ? { executable: importedCodex.executable } : {}),
+      ...(codexSummary ? { importSummary: codexSummary } : {}),
+    },
+    hermes: {
+      ...(importedHermes?.baseUrl ? { baseUrl: importedHermes.baseUrl } : {}),
+      ...(hermesSummary ? { importSummary: hermesSummary } : {}),
+      ...(importedHermes?.models ? { models: importedHermes.models } : {}),
+      ...(importedHermes?.profile ? { profile: importedHermes.profile } : {}),
+    },
+    openclaw: {
+      ...(importedOpenClaw?.agentId ? { agentId: importedOpenClaw.agentId } : {}),
+      ...(importedOpenClaw?.agents ? { openClawAgents: importedOpenClaw.agents } : {}),
+      ...(importedOpenClaw?.executable ? { executable: importedOpenClaw.executable } : {}),
+      ...(importedOpenClaw?.gatewayUrl ? { baseUrl: importedOpenClaw.gatewayUrl } : {}),
+      ...(openClawSummary ? { importSummary: openClawSummary } : {}),
+      ...(importedOpenClaw?.profile ? { profile: importedOpenClaw.profile } : {}),
+    },
+  };
+}
+
+function buildSetupWizardDefaults(
+  backend: string,
+  importedCodex: DetectedCodexSetup | null,
+  importedHermes: DetectedHermesSetup | null,
+  importedOpenClaw: DetectedOpenClawSetup | null,
+  sinkDefaults: DetectedSinkSetup,
+  testerSelectionStrategy: "balanced" | "prefer-cheapest",
+): Parameters<typeof runSetupWizard>[0]["defaults"] {
+  const normalizedBackend = backend === "hermes" || backend === "openclaw" ? backend : "codex";
+  return {
+    backend: normalizedBackend,
+    harnessDefaults: buildSetupHarnessDefaults(importedCodex, importedHermes, importedOpenClaw),
+    sinkDefaults: {
+      ...(sinkDefaults.linearApiKeyEnv ? { linearApiKeyEnv: sinkDefaults.linearApiKeyEnv } : {}),
+      ...(importedOpenClaw?.agentId ? { openClawAgentId: importedOpenClaw.agentId } : {}),
+      ...(importedOpenClaw?.gatewayUrl ? { openClawGatewayUrl: importedOpenClaw.gatewayUrl } : {}),
+      ...(sinkDefaults.openClawTelegramBotToken
+        ? { openClawTelegramBotToken: sinkDefaults.openClawTelegramBotToken }
+        : {}),
+      ...(sinkDefaults.openClawTelegramChatId
+        ? { openClawTelegramChatId: sinkDefaults.openClawTelegramChatId }
+        : {}),
+      ...(sinkDefaults.slackWebhookEnv ? { slackWebhookEnv: sinkDefaults.slackWebhookEnv } : {}),
+      ...(sinkDefaults.telegramBotTokenEnv
+        ? { telegramBotTokenEnv: sinkDefaults.telegramBotTokenEnv }
+        : {}),
+    },
+    testerSelectionStrategy,
+  };
+}
+
+async function detectSetupHarnessDefault(
+  harness: SetupWizardHarness,
+  args: string[],
+): Promise<SetupWizardHarnessDefaults | null> {
+  const importedDefaults = await detectBackendDefaults(harness, args);
+  const defaults = buildSetupHarnessDefaults(
+    asCodexSetup(importedDefaults),
+    asHermesSetup(importedDefaults),
+    asOpenClawSetup(importedDefaults),
+  );
+  return defaults[harness] ?? null;
+}
+
+async function detectSelectedSetupHarnessDefaults(
+  args: string[],
+  setupImports: SetupImports,
+  harnesses: SetupWizardHarness[],
+): Promise<Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>>> {
+  if (!shouldImportExisting(args)) {
+    return {};
+  }
+
+  const existing = buildSetupHarnessDefaults(
+    setupImports.importedCodex,
+    setupImports.importedHermes,
+    setupImports.importedOpenClaw,
+  );
+  const updates: Partial<Record<SetupWizardHarness, SetupWizardHarnessDefaults>> = {};
+  for (const harness of harnesses) {
+    updates[harness] = existing[harness] ?? (await detectSetupHarnessDefault(harness, args)) ?? {};
+  }
+  return updates;
+}
+
+async function buildWorkersFromSetupPlans(
+  plans: Array<{ args: string[]; backend: SetupWizardHarness; update: WorkerUpdate }>,
+): Promise<RegisteredWorker[]> {
+  const workers: RegisteredWorker[] = [];
+  for (const plan of plans) {
+    const importedDefaults = await detectBackendDefaults(plan.backend, plan.args);
+    const baseWorker = buildWorkerFromDetectedBackend(plan.backend, plan.args, importedDefaults);
+    workers.push(registeredWorkerSchema.parse(applyWorkerUpdate(baseWorker, plan.update)));
+  }
+  return workers;
+}
+
+async function configureSetupSink(
+  observabilityStore: ObservabilityStore,
+  secretStore: SecretStore,
+  sinkPlan: Awaited<ReturnType<typeof runSetupWizard>>["sinkPlan"],
+): Promise<Record<string, unknown> | null> {
+  if (!sinkPlan) {
+    return null;
+  }
+
+  if (sinkPlan.kind === "webhook") {
+    return await observabilityStore.upsertWebhookSink(
+      webhookSinkSchema.parse({
+        enabled: true,
+        eventTypes: [],
+        id: "setup-webhook",
+        type: "webhook",
+        url: requireOptionValue(sinkPlan.args, "--url", "--url <https://...>"),
+      }),
+    );
+  }
+
+  if (sinkPlan.kind === "telegram") {
+    const plan = parseTelegramSinkPlan(sinkPlan.args);
+    if (plan.importOpenClawBotToken && plan.botTokenSecretRef) {
+      await secretStore.setSecret(plan.botTokenSecretRef, plan.importOpenClawBotToken);
+    }
+    return await observabilityStore.upsertTelegramSink(
+      telegramSinkSchema.parse({
+        botTokenEnv: plan.botTokenEnv,
+        botTokenSecretRef: plan.botTokenSecretRef,
+        chatId: plan.chatId,
+        enabled: true,
+        eventTypes: [],
+        id: "setup-telegram",
+        ...(plan.parseMode ? { parseMode: plan.parseMode } : {}),
+        type: "telegram",
+      }),
+    );
+  }
+
+  if (sinkPlan.kind === "slack") {
+    return await observabilityStore.upsertSlackSink(
+      slackSinkSchema.parse({
+        enabled: true,
+        eventTypes: [],
+        id: "setup-slack",
+        secretRef: findOptionValue(sinkPlan.args, "--secret-ref"),
+        type: "slack",
+        url: findOptionValue(sinkPlan.args, "--url"),
+        urlEnv: findOptionValue(sinkPlan.args, "--url-env"),
+      }),
+    );
+  }
+
+  if (sinkPlan.kind === "openclaw") {
+    return await observabilityStore.upsertOpenClawSink(
+      openClawSinkSchema.parse({
+        agentId: requireOptionValue(sinkPlan.args, "--agent-id", "--agent-id <id>"),
+        enabled: true,
+        eventTypes: [],
+        gatewayUrl: findOptionValue(sinkPlan.args, "--gateway-url"),
+        id: "setup-openclaw",
+        sessionId: findOptionValue(sinkPlan.args, "--session-id"),
+        type: "openclaw",
+      }),
+    );
+  }
+
+  return await observabilityStore.upsertLinearSink(
+    linearSinkSchema.parse({
+      apiKeyEnv: findOptionValue(sinkPlan.args, "--api-key-env"),
+      apiKeySecretRef: findOptionValue(sinkPlan.args, "--api-key-secret-ref"),
+      enabled: true,
+      eventTypes: [],
+      id: "setup-linear",
+      issueId: requireOptionValue(sinkPlan.args, "--issue-id", "--issue-id <id>"),
+      type: "linear",
+    }),
+  );
+}
+
 async function runSetupCalibrations(
   calibrator: WorkerCalibrator,
   createdWorkers: RegisteredWorker[],
@@ -1090,7 +1288,13 @@ function buildNonInteractiveSetupWorkerArgs(
   pushOption(workerArgs, "--approach", findOptionValue(args, "--approach"));
   pushOption(workerArgs, "--prompt", findOptionValue(args, "--prompt"));
   pushOption(workerArgs, "--command", findOptionValue(args, "--command"));
-  pushOption(workerArgs, "--executable", findOptionValue(args, "--executable"));
+  pushOption(
+    workerArgs,
+    "--executable",
+    findOptionValue(args, "--executable") ??
+      (backend === "codex" ? findOptionValue(args, "--codex-executable") : undefined) ??
+      (backend === "openclaw" ? findOptionValue(args, "--openclaw-executable") : undefined),
+  );
   pushOption(workerArgs, "--gateway-url", findOptionValue(args, "--gateway-url"));
   pushOption(workerArgs, "--session-id", findOptionValue(args, "--session-id"));
   if (hasFlag(args, "--local")) {
@@ -1143,6 +1347,7 @@ type SetupImports = {
   importedHermes: DetectedHermesSetup | null;
   importedOpenClaw: DetectedOpenClawSetup | null;
   importedSummary: string | undefined;
+  sinkDefaults: DetectedSinkSetup;
 };
 
 type SetupWorkerState = {
@@ -1229,6 +1434,7 @@ async function detectSetupImports(args: string[]): Promise<SetupImports> {
     importedHermes: asHermesSetup(importedDefaults),
     importedOpenClaw,
     importedSummary: describeImportedBackendDefaults(backend, importedDefaults),
+    sinkDefaults: await detectSinkSetup(),
   };
 }
 
@@ -1272,6 +1478,57 @@ function shouldRunSetupCalibration(args: string[]): boolean {
     return false;
   }
   return hasFlag(args, "--calibrate") || hasFlag(args, "--training");
+}
+
+async function runInteractiveSetupFlow(
+  args: string[],
+  calibrator: WorkerCalibrator,
+  observabilityStore: ObservabilityStore,
+  registry: WorkerRegistry,
+  secretStore: SecretStore,
+  settingsStore: QuestSettingsStore,
+  setupImports: SetupImports,
+): Promise<{
+  calibrationResults: Array<{ runId: string; status: string; workerId: string }>;
+  configuredSink: Record<string, unknown> | null;
+  settings: Awaited<ReturnType<QuestSettingsStore["writeSettings"]>>;
+  workerState: SetupWorkerState;
+}> {
+  const currentSettings = await settingsStore.readSettings();
+  const wizardResult = await runSetupWizard({
+    defaults: buildSetupWizardDefaults(
+      setupImports.backend,
+      setupImports.importedCodex,
+      setupImports.importedHermes,
+      setupImports.importedOpenClaw,
+      setupImports.sinkDefaults,
+      currentSettings.planner.testerSelectionStrategy,
+    ),
+    loadHarnessDefaults: (harnesses) =>
+      detectSelectedSetupHarnessDefaults(args, setupImports, harnesses),
+  });
+  const createdWorkers: RegisteredWorker[] = [];
+  for (const worker of await buildWorkersFromSetupPlans(wizardResult.workerPlans)) {
+    createdWorkers.push(await registry.upsertWorker(worker));
+  }
+
+  return {
+    calibrationResults: await runSetupCalibrations(
+      calibrator,
+      createdWorkers,
+      wizardResult.calibrateWorkerIds,
+    ),
+    configuredSink: await configureSetupSink(
+      observabilityStore,
+      secretStore,
+      wizardResult.sinkPlan,
+    ),
+    settings: await settingsStore.writeSettings(wizardResult.settingsUpdate),
+    workerState: {
+      createdWorker: createdWorkers[0] ?? null,
+      createdWorkers,
+    },
+  };
 }
 
 type NonInteractiveSetupInputs = {
@@ -2200,39 +2457,56 @@ async function runSetup(
     setupImports.importedCodex,
   );
 
+  const interactive = stdinIsTty() && !hasFlag(args, "--yes");
   let workerState: SetupWorkerState = {
     createdWorker: null,
     createdWorkers: [],
   };
   let calibrationResults: Array<{ runId: string; status: string; workerId: string }> = [];
-  const configuredSink: Record<string, unknown> | null = null;
+  let configuredSink: Record<string, unknown> | null = null;
   let settings = await settingsStore.readSettings();
 
-  const testerSelection = findOptionValue(args, "--tester-selection");
-  if (testerSelection === "balanced" || testerSelection === "prefer-cheapest") {
-    settings = await settingsStore.writeSettings({
-      planner: {
-        testerSelectionStrategy: testerSelection,
-      },
-    });
-  }
-  if (shouldCreateWorker) {
-    workerState = await runNonInteractiveSetupFlow(
+  if (interactive) {
+    const interactiveResult = await runInteractiveSetupFlow(
       args,
-      setupImports.backend,
-      setupImports.importedCodex,
-      setupImports.importedDefaults,
-      setupImports.importedHermes,
-      setupImports.importedOpenClaw,
+      calibrator,
+      observabilityStore,
       registry,
-      paths.stateRoot,
+      secretStore,
+      settingsStore,
+      setupImports,
     );
-    if (shouldRunSetupCalibration(args)) {
-      calibrationResults = await runSetupCalibrations(
-        calibrator,
-        workerState.createdWorkers,
-        workerState.createdWorkers.map((worker) => worker.id),
+    calibrationResults = interactiveResult.calibrationResults;
+    configuredSink = interactiveResult.configuredSink;
+    settings = interactiveResult.settings;
+    workerState = interactiveResult.workerState;
+  } else {
+    const testerSelection = findOptionValue(args, "--tester-selection");
+    if (testerSelection === "balanced" || testerSelection === "prefer-cheapest") {
+      settings = await settingsStore.writeSettings({
+        planner: {
+          testerSelectionStrategy: testerSelection,
+        },
+      });
+    }
+    if (shouldCreateWorker) {
+      workerState = await runNonInteractiveSetupFlow(
+        args,
+        setupImports.backend,
+        setupImports.importedCodex,
+        setupImports.importedDefaults,
+        setupImports.importedHermes,
+        setupImports.importedOpenClaw,
+        registry,
+        paths.stateRoot,
       );
+      if (shouldRunSetupCalibration(args)) {
+        calibrationResults = await runSetupCalibrations(
+          calibrator,
+          workerState.createdWorkers,
+          workerState.createdWorkers.map((worker) => worker.id),
+        );
+      }
     }
   }
 

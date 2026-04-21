@@ -479,6 +479,7 @@ test("quest cli setup bootstraps a codex worker from detected tooling", () => {
   expect(result.doctor.ok).toBe(true);
   expect(result.createdWorker.id).toBe("quest-codex");
   expect(result.createdWorker.backend.adapter).toBe("codex-cli");
+  expect(result.createdWorker.backend.executable).toBe(codexExecutable);
   expect(result.settings.planner.testerSelectionStrategy).toBe("balanced");
   expect(result.workers).toHaveLength(1);
 });
@@ -597,6 +598,7 @@ test("quest cli setup bootstraps an openclaw worker from detected gateway", asyn
   expect(result.createdWorker.id).toBe("quest-openclaw");
   expect(result.createdWorker.backend.adapter).toBe("openclaw-cli");
   expect(result.createdWorker.backend.agentId).toBe("main");
+  expect(result.createdWorker.backend.executable).toBe(openClawExecutable);
 });
 
 test("quest cli setup retries transient openclaw status before creating worker", async () => {

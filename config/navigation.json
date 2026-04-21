@@ -10,7 +10,15 @@
     },
     {
       "group": "Specs",
-      "pages": ["docs/specs/training-grounds-v2", "docs/specs/observability-cards-v1"]
+      "pages": [
+        "docs/specs/observability-cards-v1",
+        "docs/specs/auto-integrate-v1",
+        "docs/specs/run-turn-in-and-recovery-v1",
+        "docs/specs/worker-role-separation-v1",
+        "docs/specs/tester-lane-v1",
+        "docs/specs/fresh-install-canary-v1",
+        "docs/specs/training-grounds-v2"
+      ]
     }
   ]
 }

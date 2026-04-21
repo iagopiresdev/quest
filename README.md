@@ -1,13 +1,13 @@
 # quest-runner
 
-CLI-first worker registry and quest planner for parallel agent execution.
+CLI-first orchestration for running, validating, and integrating spec-driven agent work.
 
-`quest-runner` is designed for agents first:
+`quest-runner` is designed around local, inspectable execution:
 - machine-readable JSON input and output
 - no daemon required for correctness
 - local state stored outside the repo
 - conservative planning around worker capacity and file ownership
-- event-driven observability with optional sinks such as webhooks
+- event-driven observability with optional sinks
 
 CLI output modes:
 - JSON remains the stable automation contract
@@ -16,31 +16,11 @@ CLI output modes:
 - `--pretty` forces human-readable output
 - `bun run lint` now also fails on circular imports in `src/**`
 
-Pretty-mode vocabulary keeps the engine plain and adds light RPG flavor:
-- `Briefing`
-  plan and quest context
-- `Party Selection`
-  worker assignment and candidate ranking
-- `Roster`
-  worker lists and summaries
-- `Encounter`
-  one slice of work
-- `Boss Fight`
-  final integration state and checks
-- `Turn-in`
-  successful integrated outcome
-- `Training Grounds`
-  calibration output
+Human-readable output uses themed labels, but JSON, persisted state, and internal domain names stay plain.
 
 Engineering guidance for future work lives in [docs/engineering-guide.mdx](./docs/engineering-guide.mdx).
 Project structure, spec-driven workflow, and documentation rules live in [docs/design-system.mdx](./docs/design-system.mdx).
-Future roadmap notes for the training-ground system live in [docs/specs/training-grounds-v2.mdx](./docs/specs/training-grounds-v2.mdx).
-Worker-role planning notes live in [docs/specs/worker-role-separation-v1.mdx](./docs/specs/worker-role-separation-v1.mdx).
-Auto-integration planning notes live in [docs/specs/auto-integrate-v1.mdx](./docs/specs/auto-integrate-v1.mdx).
-Turn-in and recovery notes live in [docs/specs/run-turn-in-and-recovery-v1.mdx](./docs/specs/run-turn-in-and-recovery-v1.mdx).
-Party bonfire notes live in [docs/specs/party-bonfire-v1.mdx](./docs/specs/party-bonfire-v1.mdx).
-Tester-lane planning notes live in [docs/specs/tester-lane-v1.mdx](./docs/specs/tester-lane-v1.mdx).
-Fresh-install canary notes live in [docs/specs/fresh-install-canary-v1.mdx](./docs/specs/fresh-install-canary-v1.mdx).
+Feature specs live under [`docs/specs`](./docs/specs).
 Contribution guidance lives in [CONTRIBUTING.md](./CONTRIBUTING.md).
 Security guidance lives in [SECURITY.md](./SECURITY.md).
 Community expectations live in [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
@@ -105,7 +85,7 @@ Rules:
 - examples should use clearly fake placeholder values
 - execution-facing changes should ship with both automated coverage and real canaries
 - install/setup changes should be validated through the fresh-install `tmux` canary
-- keep `AGENTS.md`, `HANDOFF.md`, `FEEDBACK.md`, and `.env` in `.gitignore` — these are local-only files
+- keep `AGENTS.md`, `HANDOFF.md`, `FEEDBACK.md`, `.env`, `.codex/`, `.openclaw/`, `.quest-runner/`, and local database files in `.gitignore`
 - if you would not put it on a public GitHub repo, do not commit it
 
 ## Worker Backends
@@ -428,15 +408,15 @@ Operational notes:
 If the run has `--source-repo <path>`, Quest Runner materializes each slice workspace as a detached Git worktree from that repository before the worker starts. Source repositories must be clean; dirty working trees fail fast with a typed error that includes the changed-path count and the underlying `git status --short` output instead of silently forking from stale or partial state.
 Workspace cleanup is explicit through `runs cleanup`; Quest Runner does not auto-delete workspaces after execution.
 Completed runs can then be integrated serially with `runs integrate`, which replays slice results into a dedicated integration worktree instead of mutating the user’s main checkout directly.
-If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into the boss fight automatically after all slice trials pass.
-If you want full turn-in in the same command, `runs execute --auto-integrate --land` advances from execution through boss fight into a fast-forward landing step on the current clean source checkout.
+If you want the happy path as one command, `runs execute --auto-integrate` advances from execution into integration automatically after all slice trials pass.
+If you want full landing in the same command, `runs execute --auto-integrate --land` advances from execution through integration into a fast-forward landing step on the current clean source checkout.
 `runs land` is the explicit turn-in command when you want to inspect an integrated run before landing it.
-If turn-in fails because the source branch drifted after boss fight, `runs refresh-base` rebuilds the integration workspace against the latest target revision so landing can be retried without replaying the full encounter phase.
+If turn-in fails because the source branch drifted after integration, `runs refresh-base` rebuilds the integration workspace against the latest target revision so landing can be retried without replaying the full execution phase.
 Top-level spec `acceptanceChecks` run in that integration worktree after slices are replayed. If they fail, integration exits non-zero and the recorded integration checks stay on the run for inspection.
 `--dry-run --auto-integrate` is intentionally invalid because the dry-run adapter does not produce real slice results to land.
 `--land` without `--auto-integrate` is intentionally invalid on `runs execute`; use `runs land` for already integrated runs.
-`runs cancel` is the explicit stop command for active execution, boss fight, or turn-in phases. `runs abort` remains as a compatibility alias.
-`runs babysit` marks dead or stale in-flight runs as `orphaned`, and `runs rescue` records whether a failed boss fight or turn-in was manually recovered or abandoned. The latest rescue note is denormalized onto the run so summaries can show it without replaying the full event log.
+`runs cancel` is the explicit stop command for active execution, integration, or turn-in phases. `runs abort` remains as a compatibility alias.
+`runs babysit` marks dead or stale in-flight runs as `orphaned`, and `runs rescue` records whether a failed integration or turn-in was manually recovered or abandoned. The latest rescue note is denormalized onto the run so summaries can show it without replaying the full event log.
 Planner conflict handling is conservative on purpose: overlapping `owns` patterns are serialized into separate waves and now emit explicit plan warnings so hot ownership conflicts are visible before execution starts.
 Acceptance checks are structured argv commands, not shell strings. Example:
 
@@ -714,10 +694,10 @@ quest runs status --id quest-abc12345-deadbeef
 # inspect the global party rest state
 quest party status
 
-# rest the party at a bonfire before the next dispatch
+# pause dispatch before the next run
 quest party bonfire --reason "backend maintenance"
 
-# let the party press on again
+# resume dispatch
 quest party resume
 
 # watch one run live until it settles
@@ -732,13 +712,13 @@ quest runs execute --id quest-abc12345-deadbeef --dry-run
 # execute a persisted run and backfill a source repo for worktree materialization
 quest runs execute --id quest-abc12345-deadbeef --source-repo /abs/path/to/repo
 
-# if the party rests at a bonfire, new dispatch is blocked until resume
+# if dispatch is paused, new execution is blocked until resume
 # quest runs execute --id quest-abc12345-deadbeef
 
 # execute and auto-integrate in one step
 quest runs execute --id quest-abc12345-deadbeef --auto-integrate --target-ref main
 
-# execute, boss fight, and turn-in in one step
+# execute, integrate, and land in one step
 quest runs execute --id quest-abc12345-deadbeef --auto-integrate --land --target-ref main
 
 # integrate a completed run into a dedicated integration worktree
@@ -811,13 +791,13 @@ quest workspaces prune --dry-run --skip-invalid
 # abort a pending or running run
 quest runs abort --id quest-abc12345-deadbeef
 
-# cancel an active execution / boss fight / turn-in phase
+# cancel an active execution / integration / turn-in phase
 quest runs cancel --id quest-abc12345-deadbeef
 
 # mark stale dead-host runs as orphaned
 quest runs babysit --stale-minutes 15
 
-# record manual rescue state after a failed boss fight or turn-in
+# record manual rescue state after a failed integration or turn-in
 quest runs rescue --id quest-abc12345-deadbeef --status rescued --note "landed manually"
 
 # create a fresh run from a prior run's spec

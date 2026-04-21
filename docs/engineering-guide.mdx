@@ -38,7 +38,7 @@ Read [Design System](/docs/design-system) first when the question is about proje
    If the planner is meant to choose “the best worker for the task,” operators need a first-class way to inspect worker strengths, update them, and explain ranking decisions without editing raw JSON by hand.
 
 9. Keep worker progression inspectable too.
-   Calibration history, trust changes, and top strengths should be visible through the CLI so the RPG layer stays grounded in real measured outcomes instead of hidden registry state.
+   Calibration history, trust changes, and top strengths should be visible through the CLI so presentation stays grounded in real measured outcomes instead of hidden registry state.
 
 10. Setup should import trustworthy local backend and sink state.
    If Codex login, Hermes models, OpenClaw agents, or sink auth env vars are already present locally, setup and worker creation should reuse those facts as defaults instead of forcing the operator to retype them. Imported defaults must still compile down into persisted worker or sink records.
@@ -110,15 +110,15 @@ The following invariants should stay true:
 - Ownership conflicts must be surfaced, not just handled silently. If overlapping `owns` patterns force slices into separate waves, the plan should also emit an explicit warning so the operator sees the contention before execution.
 - Setup-time worker shaping must compile down to the normal worker model. Archetypes, party mode, and onboarding defaults are presentation helpers, not parallel registry formats.
 - Feature-doc / chronicle writes must append the same lifecycle event whether they happen during turn-in or through a later operator command, or observability stops being replayable from events alone.
-- Turn-in must stay stricter than boss fight. An integrated run is not landed until the source checkout is clean, the target has not drifted, and the landing step succeeds.
-- Global rest state must be persisted if it gates dispatch. A bonfire that only lives in one CLI process is a false control plane because Quest dispatch spans separate invocations.
+- Turn-in must stay stricter than integration. An integrated run is not landed until the source checkout is clean, the target has not drifted, and the landing step succeeds.
+- Global rest state must be persisted if it gates dispatch. A pause that only lives in one CLI process is a false control plane because Quest dispatch spans separate invocations.
 - Rescue state needs both history and a query surface. Keep the full rescue event trail, but denormalize the latest rescue note onto the run so summary views do not need to replay events for a basic operator answer.
 - Worker command failure is different from runner unavailability.
 - Observability delivery is downstream of persisted events. A failing webhook must not redefine run correctness.
 - JSON output is the public CLI contract.
 - JSON is the stable CLI contract for automation. Human-readable output may exist as a presentation layer, but it must be derived from the same result object instead of inventing a second command surface.
 - New state should be appended, not inferred from logs after the fact.
-- Failed boss fights must not strand cleanup. If turn-in already failed, cleanup should be allowed to reap workspaces and temporary runner identities.
+- Failed integration must not strand cleanup. If turn-in already failed, cleanup should be allowed to reap workspaces and temporary runner identities.
 - Aggregate operator commands should degrade gracefully over legacy junk. `runs list`, `runs usage --all`, and workspace-prune scans may expose an explicit tolerant mode for malformed pre-v1 run files, but the strict path must remain the default and current-document tampering must still surface as a typed failure.
 - Recovery should be explicit. If operators choose a tolerant aggregate mode, there should still be first-class `runs validate` and `runs quarantine` commands for diagnosis and recovery instead of forcing manual file deletion.
 
@@ -166,7 +166,7 @@ Minimum edge cases to consider for execution-facing work:
 - landing drift or wrong checked-out branch
 - sink delivery failure and replay
 - sink probe/test-send flows
-- live cancel of in-flight execution or boss-fight work
+- live cancel of in-flight execution or integration work
 
 For runner adapters specifically:
 
