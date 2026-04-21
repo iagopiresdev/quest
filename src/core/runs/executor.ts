@@ -560,7 +560,10 @@ export class QuestRunExecutor {
           const hasDedicatedTester =
             sliceState.assignedTesterWorkerId !== null &&
             sliceState.assignedTesterWorkerId !== sliceState.assignedWorkerId;
-          const hasTrialPhase = hasDedicatedTester || sliceSpec.acceptanceChecks.length > 0;
+          const shouldRunAcceptanceChecks = options.dryRun !== true;
+          const hasTrialPhase =
+            hasDedicatedTester ||
+            (shouldRunAcceptanceChecks && sliceSpec.acceptanceChecks.length > 0);
 
           if (hasTrialPhase) {
             const eventAt = nowIsoString();
@@ -591,16 +594,18 @@ export class QuestRunExecutor {
             continue;
           }
 
-          const checkResults = await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd, {
-            idleTimeoutMs,
-            ...this.createTrackedProcessHooks(run.id, {
-              kind: "trial",
-              sliceId: sliceState.sliceId,
-              workerId:
-                sliceState.assignedTesterWorkerId ?? sliceState.assignedWorkerId ?? undefined,
-            }),
-            timeoutMs,
-          });
+          const checkResults = shouldRunAcceptanceChecks
+            ? await runAcceptanceChecks(sliceSpec.acceptanceChecks, workerCwd, {
+                idleTimeoutMs,
+                ...this.createTrackedProcessHooks(run.id, {
+                  kind: "trial",
+                  sliceId: sliceState.sliceId,
+                  workerId:
+                    sliceState.assignedTesterWorkerId ?? sliceState.assignedWorkerId ?? undefined,
+                }),
+                timeoutMs,
+              })
+            : [];
           sliceState.lastChecks = checkResults;
 
           const failedCheck = checkResults.find((check) => check.exitCode !== 0);
