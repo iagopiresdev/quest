@@ -2394,6 +2394,10 @@ test("quest cli reruns a prior run by cloning its spec", () => {
 });
 
 test("quest cli stores, checks, and deletes secrets through the keychain backend", () => {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
   const context = trackContext();
   const secretName = "codex.api";
   const secretValue = "example-secret-value  ";

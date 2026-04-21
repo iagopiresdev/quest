@@ -31,6 +31,8 @@ Required local tools:
 
 Windows is not a supported platform yet. Some paths may work under WSL, but native Windows support needs explicit validation because Quest uses POSIX shell scripts, Git worktrees, executable wrappers, and terminal-oriented canaries.
 
+The built-in secret store currently uses macOS Keychain. On Linux, `quest doctor` treats that backend as optional unless a command explicitly needs secret storage.
+
 ## Backend Support
 
 | Backend | Status | Notes |
