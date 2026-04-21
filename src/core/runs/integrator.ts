@@ -594,7 +594,7 @@ async function integrateSlice(
   }
 
   const cherryPickResult = await runSubprocess({
-    cmd: buildSafeGitCommand(["cherry-pick", "--no-commit", "--no-verify", resultRevision]),
+    cmd: buildSafeGitCommand(["cherry-pick", "--no-commit", resultRevision]),
     cwd: integrationWorkspacePath,
     env: buildProcessEnv(),
   });
