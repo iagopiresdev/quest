@@ -1,5 +1,5 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, posix, relative, resolve } from "node:path";
 
 import { z } from "zod";
 import { isQuestDomainError, QuestDomainError } from "../../errors";
@@ -50,6 +50,36 @@ function buildHermesSignal(
 
 function matchesOwnedPath(relativePath: string, ownedPatterns: string[]): boolean {
   return matchesQuestPathPattern(relativePath, ownedPatterns);
+}
+
+function normalizeHermesWritePath(inputPath: string): string {
+  const slashPath = inputPath.replaceAll("\\", "/").trim();
+  const hasWindowsDrivePrefix = /^[A-Za-z]:\//.test(slashPath);
+  if (slashPath.startsWith("/") || hasWindowsDrivePrefix) {
+    throw new QuestDomainError({
+      code: "quest_command_failed",
+      details: { path: inputPath },
+      message: `Hermes produced an invalid write path: ${inputPath}`,
+      statusCode: 1,
+    });
+  }
+
+  const normalized = posix.normalize(slashPath).replace(/^\.\/+/, "");
+  if (
+    normalized.length === 0 ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    throw new QuestDomainError({
+      code: "quest_command_failed",
+      details: { path: inputPath },
+      message: `Hermes produced an invalid write path: ${inputPath}`,
+      statusCode: 1,
+    });
+  }
+
+  return normalized;
 }
 
 async function listWorkspaceFiles(root: string): Promise<string[]> {
@@ -181,7 +211,7 @@ async function applyHermesWrites(
   files: Array<{ content: string; path: string }>,
 ): Promise<void> {
   for (const file of files) {
-    const normalizedPath = file.path.replaceAll("\\", "/");
+    const normalizedPath = normalizeHermesWritePath(file.path);
     if (!matchesOwnedPath(normalizedPath, ownedPatterns)) {
       throw new QuestDomainError({
         code: "quest_command_failed",
