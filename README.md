@@ -143,6 +143,7 @@ Use `QUEST_STATE_ROOT=/path/to/state` for disposable runs and canaries.
 ## Docs
 
 - [Operator Guide](./docs/operator-guide.mdx) for setup, workflows, recovery, observability, and canaries.
+- [Pull Request Workflow](./docs/pull-request-workflow.mdx) for opening PRs, following CI and review comments, Codex review, and maintainer auto-merge.
 - [Design System](./docs/design-system.mdx) for project structure, specs, domain boundaries, and documentation rules.
 - [Engineering Guide](./docs/engineering-guide.mdx) for typing, linting, runtime invariants, and validation expectations.
 - [Feature Specs](./docs/specs) for behavior proposals and versioned design notes.
