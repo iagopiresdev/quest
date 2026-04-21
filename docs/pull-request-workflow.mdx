@@ -1,0 +1,143 @@
+---
+title: Pull Request Workflow
+description: Maintainer and agent workflow for opening, reviewing, following CI, and merging quest pull requests.
+---
+
+# Pull Request Workflow
+
+This repository uses pull requests for all public changes. `main` is protected,
+CI must pass, and maintainers opt into GitHub auto-merge with the `automerge`
+label.
+
+## Opening A Pull Request
+
+1. Branch from the current default branch.
+
+```sh
+git fetch origin main
+git switch -c codex/<short-topic> origin/main
+```
+
+2. Keep the change scoped to one behavior, doc, or workflow slice.
+3. Run the validation that matches the risk of the change.
+4. Open a ready pull request when the change is reviewable.
+5. Use draft only when the PR is intentionally unfinished.
+
+Draft PRs do not auto-merge. If a PR should go through the auto-merge path, mark
+it ready for review before adding `automerge`.
+
+## Required Checks
+
+Every PR runs the `validate` CI job on Linux and macOS:
+
+```sh
+bun run check
+```
+
+Before committing code changes locally, use the full local gate:
+
+```sh
+bun run check
+```
+
+Execution, setup, integration, sink, and backend-import changes should also run
+the relevant canary from `scripts/canaries/`.
+
+## Codex Code Review
+
+Codex code review is configured in
+[Codex Code review settings](https://chatgpt.com/codex/settings/code-review).
+OpenAI's docs say repository-level review can be enabled there, automatic
+reviews can be configured for connected repositories, and review triggers can
+control which pull request events start a review.
+
+If automatic review is not triggered, request one in a PR comment:
+
+```text
+@codex review
+```
+
+When Codex has GitHub access and `gh` is authenticated locally, the Codex app can
+also load PR context, comments, and changed files so fixes can stay in the same
+review loop.
+
+Review guidance for humans and agents lives in [`code_review.md`](../code_review.md).
+Ask AI reviewers to use it together with [Engineering Guide](/docs/engineering-guide).
+
+### Review Quota Notes
+
+OpenAI's pricing docs currently define Code Review usage as reviews that Codex
+runs through GitHub, including `@codex review` and automatic repository reviews.
+Local reviews or reviews outside GitHub count toward general usage instead.
+
+The same docs currently list Codex code review as running on GPT-5.3-Codex.
+Plan limits and credit accounting vary by plan, so use the Codex settings page
+as the source of truth for the active workspace's remaining quota. Do not spam
+manual review comments on the same PR just to force another pass.
+
+## Following CI And Comments
+
+Use `gh` as the primary PR operations surface:
+
+```sh
+gh pr view <number> --json state,isDraft,mergeStateStatus,labels,autoMergeRequest
+gh pr checks <number> --watch
+gh run list --branch <branch> --limit 5
+gh run view <run-id> --log-failed
+```
+
+When CI fails:
+
+1. Read the failing job logs.
+2. Reproduce locally when practical.
+3. Commit the smallest fix to the PR branch.
+4. Push and watch the next CI run.
+
+When reviewers leave comments:
+
+1. Read unresolved review threads before editing.
+2. Fix actionable findings or respond with the reason they are not being changed.
+3. Push follow-up commits to the same PR branch.
+4. Wait for CI and review automation to settle again.
+
+## Auto-Merge
+
+Maintainer-authored PRs can opt into auto-merge by adding the `automerge` label.
+The workflow only enables GitHub auto-merge when all of these are true:
+
+- the PR is not a draft
+- the PR branch belongs to this repository
+- the PR author is an owner, member, or collaborator
+- the PR has the `automerge` label
+
+Add `automerge` only after the PR is reviewable, CI is expected to pass, and
+Codex or human review has been requested. GitHub still waits for required branch
+protection checks before merging.
+
+Remove the `automerge` label to disable auto-merge. Converting a PR back to
+draft also disables auto-merge.
+
+## Troubleshooting
+
+If a PR does not merge automatically, check these first:
+
+- Is the PR still a draft?
+- Does it have the `automerge` label?
+- Is the branch from this repository instead of a fork?
+- Is the author a maintainer or collaborator?
+- Is the required `validate` check passing?
+- Is the branch up to date enough for GitHub to merge?
+- Are branch protection or unresolved conversations blocking the merge?
+- Is repository-level auto-merge still enabled in GitHub settings?
+
+If Codex review does not run, check the repository in Codex Code review settings
+and comment `@codex review` once. If it still does not react, verify that the
+GitHub integration is connected for the repository and that review quota is
+available.
+
+## References
+
+- [OpenAI Codex GitHub integration](https://developers.openai.com/codex/integrations/github)
+- [OpenAI Codex Cloud code review setup](https://developers.openai.com/codex/enterprise/admin-setup#enable-code-review-with-codex-cloud)
+- [OpenAI Codex pricing and Code Review usage](https://developers.openai.com/codex/pricing)
+- [OpenAI Codex app PR review flow](https://developers.openai.com/codex/app/review#pull-request-reviews)
