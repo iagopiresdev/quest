@@ -34,6 +34,14 @@ bun run install:local
 quest --pretty
 ```
 
+## Platform And Release Status
+
+Quest is pre-1.0 and source-first. The repository is public, but no public package registry release is guaranteed yet.
+
+The supported CI platforms are Linux and macOS with Bun `1.3.9` or newer. Native Windows support is not claimed yet; use WSL only as an unvalidated local path.
+
+See [Release And Platform Support](./docs/release-platform-support.mdx) for backend support levels and release expectations.
+
 Preview the docs locally with:
 
 ```sh
@@ -169,10 +177,7 @@ docs/assets/readme/quest-demo.png
 Run the standard validation gate before committing code changes:
 
 ```sh
-bun run lint
-bun run typecheck
-bun test
-bun run build
+bun run check
 ```
 
 Execution, setup, sink, integration, or backend import changes should also pass an appropriate real canary from `scripts/canaries/`.

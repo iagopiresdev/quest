@@ -28,22 +28,16 @@ it ready for review before adding `automerge`.
 
 ## Required Checks
 
-Every PR runs the `validate` CI job:
+Every PR runs the `validate` CI job on Linux and macOS:
 
 ```sh
-bun run lint
-bun run typecheck
-bun run test:ci
-bun run build
+bun run check
 ```
 
 Before committing code changes locally, use the full local gate:
 
 ```sh
-bun run lint
-bun run typecheck
-bun test
-bun run build
+bun run check
 ```
 
 Execution, setup, integration, sink, and backend-import changes should also run
