@@ -196,9 +196,12 @@ export async function resolveGitRepositoryRoot(sourceRepositoryPath: string): Pr
   return result.stdout.trim();
 }
 
-export async function ensureGitRepositoryIsClean(repositoryRoot: string): Promise<void> {
+export async function ensureGitRepositoryIsClean(
+  repositoryRoot: string,
+  options: { statusCommand?: string[] | undefined } = {},
+): Promise<void> {
   const result = await runSubprocess({
-    cmd: ["git", "status", "--porcelain"],
+    cmd: options.statusCommand ?? ["git", "status", "--porcelain"],
     cwd: repositoryRoot,
     env: buildProcessEnv(),
   });
@@ -264,7 +267,16 @@ async function materializeGitWorktree(
   }
 
   const result = await runSubprocess({
-    cmd: ["git", "worktree", "add", "--detach", workspacePath, "HEAD"],
+    cmd: [
+      "git",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "worktree",
+      "add",
+      "--detach",
+      workspacePath,
+      "HEAD",
+    ],
     cwd: repositoryRoot,
     env: buildProcessEnv(),
   });

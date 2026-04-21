@@ -16,6 +16,7 @@ import { QuestDomainError } from "../src/core/errors";
 import type { QuestSpec } from "../src/core/planning/spec-schema";
 import { QuestRunExecutor } from "../src/core/runs/executor";
 import { QuestRunStore } from "../src/core/runs/store";
+import { resolveRunWorkspaceRootPath } from "../src/core/runs/workspace-layout";
 import { SecretStore } from "../src/core/secret-store";
 import { WorkerRegistry } from "../src/core/workers/registry";
 import type { RegisteredWorker } from "../src/core/workers/schema";
@@ -1453,6 +1454,96 @@ test("run executor rejects Hermes writes through symlinked owned paths", async (
       code: "quest_command_failed",
     });
     expect(existsSync(join(externalRoot, "pwned.txt"))).toBe(false);
+  } finally {
+    server.stop(true);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("run executor rejects Hermes writes that traverse outside owned paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-executor-"));
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, join(root, "workspaces"));
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+
+  const server = await startTestServer({
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  files: [
+                    {
+                      content: "escaped\n",
+                      path: "owned/../unowned/pwned.txt",
+                    },
+                  ],
+                  summary: "Hermes attempted traversal",
+                }),
+              },
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+  });
+  if (!server) {
+    return;
+  }
+
+  try {
+    await workerRegistry.upsertWorker(
+      createWorker("ember", "hermes-api", undefined, {
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        profile: "hermes-local",
+        runner: "hermes",
+      }),
+    );
+    const repositoryRoot = createCommittedRepo(root);
+    mkdirSync(join(repositoryRoot, "owned"), { recursive: true });
+    writeFileSync(join(repositoryRoot, "owned", "seed.txt"), "seed\n", "utf8");
+    Bun.spawnSync({ cmd: ["git", "add", "owned/seed.txt"], cwd: repositoryRoot });
+    Bun.spawnSync({ cmd: ["git", "commit", "-m", "Add owned seed"], cwd: repositoryRoot });
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          {
+            acceptanceChecks: [],
+            contextHints: [],
+            dependsOn: [],
+            discipline: "coding",
+            goal: "Update owned file",
+            id: "fix-owned",
+            owns: ["owned/**"],
+            preferredRunner: "hermes",
+            title: "Fix owned file",
+          },
+        ],
+        title: "Hermes traversal run",
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+
+    await expect(executor.executeRun(run.id)).rejects.toMatchObject({
+      code: "quest_command_failed",
+      message: "Hermes produced an invalid write path: owned/../unowned/pwned.txt",
+    });
+    const unownedPath = join(
+      resolveRunWorkspaceRootPath(join(root, "workspaces"), run.id),
+      "slices",
+      "fix-owned",
+      "unowned",
+      "pwned.txt",
+    );
+    expect(existsSync(unownedPath)).toBe(false);
   } finally {
     server.stop(true);
     rmSync(root, { force: true, recursive: true });
