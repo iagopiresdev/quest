@@ -532,6 +532,7 @@ test("quest cli setup persists tester routing strategy", () => {
 
 test("quest cli setup bootstraps a hermes worker from detected api", async () => {
   const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
   const server = await startTestServer({
     fetch: async () =>
       new Response(
@@ -553,6 +554,8 @@ test("quest cli setup bootstraps a hermes worker from detected api", async () =>
       "hermes",
       "--hermes-base-url",
       `http://127.0.0.1:${server.port}/v1`,
+      "--codex-executable",
+      codexExecutable,
       "--worker-name",
       "Quest Hermes",
       "--profile",
@@ -2586,6 +2589,7 @@ test("quest cli doctor dedupes duplicate writable paths", () => {
 
 test("quest cli doctor can probe configured sinks", async () => {
   const context = trackContext();
+  const codexExecutable = createCodexMockExecutable(context.stateRoot);
   const receivedEvents: Array<{ eventType: string }> = [];
   const server = await startTestServer({
     fetch: async (request) => {
@@ -2609,12 +2613,13 @@ test("quest cli doctor can probe configured sinks", async () => {
     ]);
     expect(sink.code).toBe(0);
 
-    const doctor = await runCliAsync(context, [
-      "doctor",
-      "--test-sinks",
-      "--sink-id",
-      "doctor-webhook",
-    ]);
+    const doctor = await runCliAsync(
+      context,
+      ["doctor", "--test-sinks", "--sink-id", "doctor-webhook"],
+      {
+        env: { QUEST_CODEX_EXECUTABLE: codexExecutable },
+      },
+    );
     expect(doctor.code).toBe(0);
     const report = JSON.parse(doctor.stdout) as {
       checks: Array<{ name: string; ok: boolean }>;
