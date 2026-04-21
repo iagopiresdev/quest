@@ -72,6 +72,14 @@ function runCopy(eventType: ObservableRunEvent["eventType"]): string {
       return "🚫 Quest Halted";
     case "run_started":
       return "⚔️ Quest Begun";
+    case "run_paused":
+      return "⏸️ Quest Paused";
+    case "run_resumed":
+      return "▶️ Quest Resumed";
+    case "run_orphaned":
+      return "🧭 Quest Orphaned";
+    case "run_cancel_requested":
+      return "🛑 Retreat Called";
     case "run_completed":
       return "🏆 Quest Cleared";
     case "run_failed":
@@ -80,6 +88,8 @@ function runCopy(eventType: ObservableRunEvent["eventType"]): string {
       return "🏳️ Quest Abandoned";
     case "run_integration_started":
       return "🧵 Weaving the Branches";
+    case "run_integration_failed":
+      return "💥 Weaving Failed";
     case "run_integration_checks_started":
       return "🔮 Trials Begin";
     case "run_integration_checks_completed":
@@ -88,6 +98,14 @@ function runCopy(eventType: ObservableRunEvent["eventType"]): string {
       return "💥 Trials Broke You";
     case "run_integrated":
       return "🔀 Quest Sealed";
+    case "run_landing_started":
+      return "📦 Turn-in Started";
+    case "run_landed":
+      return "✅ Turn-in Complete";
+    case "run_base_refreshed":
+      return "🔄 Base Refreshed";
+    case "run_rescue_status_updated":
+      return "🛟 Rescue Updated";
     case "run_feature_doc_written":
       return "📚 Lore Inscribed";
     case "run_workspace_cleaned":
@@ -104,6 +122,12 @@ function runCopy(eventType: ObservableRunEvent["eventType"]): string {
       return "💥 Trial Failed";
     case "slice_completed":
       return "🏹 Encounter Cleared";
+    case "slice_skipped":
+      return "⏭️ Encounter Skipped";
+    case "slice_reassigned":
+      return "🔁 Encounter Reassigned";
+    case "slice_retry_queued":
+      return "🔄 Encounter Retried";
     case "slice_failed":
       return "🗡️ Encounter Lost";
     case "slice_aborted":

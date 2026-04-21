@@ -109,8 +109,11 @@ function summarizeSlices(run: QuestRunDocument): string {
 function summarizeIntegration(run: QuestRunDocument): string {
   const targetRef = run.targetRef ?? "HEAD";
   const integrationWorkspace = run.integrationWorkspacePath ?? "not created";
+  const turnInStatus = run.events.some((event) => event.type === "run_landed")
+    ? "completed"
+    : "pending";
   const lines = [
-    `- turn-in status: ${run.events.some((event) => event.type === "run_integrated") ? "completed" : "pending"}`,
+    `- turn-in status: ${turnInStatus}`,
     `- boss fight target: \`${targetRef}\``,
     `- integration workspace: \`${integrationWorkspace}\``,
   ];

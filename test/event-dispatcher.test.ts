@@ -7,7 +7,9 @@ import { EventDispatcher } from "../src/core/observability/event-dispatcher";
 import type { DeliveryRecord, WebhookSink } from "../src/core/observability/schema";
 import type { EventSinkHandler } from "../src/core/observability/sinks/handler";
 import { ObservabilityStore } from "../src/core/observability/store";
+import type { QuestRunDocument } from "../src/core/runs/schema";
 import { SecretStore } from "../src/core/secret-store";
+import { createSpec } from "./helpers";
 
 function createObservabilityHarness() {
   const root = mkdtempSync(join(tmpdir(), "quest-observability-"));
@@ -173,6 +175,88 @@ test("event dispatcher records failed deliveries when a sink has no registered h
     const deliveries = await harness.store.listDeliveries({ sinkId: "orphan-webhook" });
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]?.lastError).toContain("No sink handler is registered");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("event dispatcher can deliver landing events through an all-events sink", async () => {
+  const harness = createObservabilityHarness();
+  const seen: string[] = [];
+  const handler: EventSinkHandler<WebhookSink> = {
+    async deliver(sink, context): Promise<DeliveryRecord> {
+      seen.push(context.event.eventType);
+      return {
+        attempts: context.attempts,
+        deliveredAt: "2026-04-21T00:00:00.000Z",
+        eventId: context.event.eventId,
+        eventType: context.event.eventType,
+        lastAttemptAt: "2026-04-21T00:00:00.000Z",
+        payload: context.event,
+        sinkId: sink.id,
+        status: "delivered",
+      };
+    },
+    type: "webhook",
+  };
+  const run: QuestRunDocument = {
+    activeProcesses: [],
+    createdAt: "2026-04-21T00:00:00.000Z",
+    id: "quest-12345678-90abcdef",
+    integrationRescueStatus: "unset",
+    plan: {
+      maxParallel: 1,
+      questTitle: "Landing Events",
+      unassigned: [],
+      warnings: [],
+      waves: [],
+      workspace: "landing-events",
+    },
+    slices: [],
+    sourceRepositoryPath: "/tmp/source",
+    spec: createSpec({ title: "Landing Events", workspace: "landing-events" }),
+    status: "completed",
+    updatedAt: "2026-04-21T00:01:00.000Z",
+    version: 1,
+    events: [
+      {
+        at: "2026-04-21T00:00:00.000Z",
+        details: {},
+        type: "run_landing_started",
+      },
+      {
+        at: "2026-04-21T00:01:00.000Z",
+        details: { landedRevision: "abc123" },
+        type: "run_landed",
+      },
+    ],
+    workspaceRoot: "/tmp/workspace",
+  };
+
+  try {
+    await harness.store.upsertWebhookSink({
+      enabled: true,
+      eventTypes: [],
+      headers: {},
+      id: "all-events-webhook",
+      type: "webhook",
+      url: "https://example.com/all-events",
+    });
+    const dispatcher = new EventDispatcher(harness.store, harness.secretStore, [handler]);
+
+    const attempts = await dispatcher.dispatchRun(run);
+
+    expect(attempts.map((attempt) => attempt.eventType)).toEqual([
+      "run_landing_started",
+      "run_landed",
+    ]);
+    expect(attempts.every((attempt) => attempt.ok)).toBe(true);
+    expect(seen).toEqual(["run_landing_started", "run_landed"]);
+    const deliveries = await harness.store.listDeliveries({ sinkId: "all-events-webhook" });
+    expect(deliveries.map((delivery) => delivery.eventType)).toEqual([
+      "run_landing_started",
+      "run_landed",
+    ]);
   } finally {
     harness.cleanup();
   }
