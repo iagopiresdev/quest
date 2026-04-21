@@ -46,6 +46,8 @@ Keep pull requests small enough that:
 - the validation story is credible
 - battle-tested changes can be reviewed without reconstructing hidden state
 
+Maintainer-authored PRs can opt into GitHub auto-merge by adding the `automerge` label. Auto-merge is only enabled for non-draft PRs from this repository when the PR author is an owner, member, or collaborator. Branch protection still has to pass before GitHub merges the PR.
+
 Include:
 - what changed
 - why it changed
