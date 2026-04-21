@@ -192,6 +192,51 @@ test("run integrator runs top-level acceptance checks in the integration workspa
   }
 });
 
+test("run integrator disables git hooks during integration commits", async () => {
+  const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
+  const repositoryRoot = createCommittedRepo(root);
+  const scriptPath = join(root, "worker-update.ts");
+  const registryPath = join(root, "workers.json");
+  const runsRoot = join(root, "runs");
+  const workspacesRoot = join(root, "workspaces");
+  const workerRegistry = new WorkerRegistry(registryPath);
+  const runStore = new QuestRunStore(runsRoot, workspacesRoot);
+  const executor = new QuestRunExecutor(runStore, workerRegistry);
+  const integrator = new QuestRunIntegrator(runStore);
+  const hooksPath = join(root, "hooks");
+
+  try {
+    mkdirSync(hooksPath, { recursive: true });
+    writeFileSync(join(hooksPath, "pre-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    runCommandOrThrow(["git", "config", "core.hooksPath", hooksPath], repositoryRoot);
+
+    writeFileSync(scriptPath, "await Bun.write('tracked.txt', 'integrated-change\\n');\n", "utf8");
+    await workerRegistry.upsertWorker(
+      createWorker({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+    );
+
+    const run = await runStore.createRun(
+      createSpec({
+        slices: [
+          createSlice({
+            owns: ["tracked.txt"],
+          }),
+        ],
+      }),
+      await workerRegistry.listWorkers(),
+      {
+        sourceRepositoryPath: repositoryRoot,
+      },
+    );
+    await executor.executeRun(run.id);
+    const integratedRun = await integrator.integrateRun(run.id);
+
+    expect(integratedRun.slices[0]?.integrationStatus).toBe("integrated");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("run integrator runs workspace preparation commands before top-level checks", async () => {
   const root = mkdtempSync(join(tmpdir(), "quest-run-integrator-"));
   const repositoryRoot = createCommittedRepo(root);

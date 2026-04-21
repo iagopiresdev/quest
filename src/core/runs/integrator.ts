@@ -66,6 +66,10 @@ function buildTrackedProcess(
   };
 }
 
+function buildSafeGitCommand(args: string[]): string[] {
+  return ["git", "-c", "core.hooksPath=/dev/null", ...args];
+}
+
 function clearExecutionStateOnRun(run: QuestRunDocument): void {
   run.activeProcesses = [];
   delete run.executionHeartbeatAt;
@@ -466,7 +470,7 @@ async function freezeSliceResult(
     }
 
     const addResult = await runSubprocess({
-      cmd: ["git", "add", "-A", "--", ...stageablePaths],
+      cmd: buildSafeGitCommand(["add", "-A", "--", ...stageablePaths]),
       cwd: sliceState.workspacePath,
       env: buildProcessEnv(),
     });
@@ -486,9 +490,9 @@ async function freezeSliceResult(
     }
 
     const commitResult = await runSubprocess({
-      cmd: [
-        "git",
+      cmd: buildSafeGitCommand([
         "commit",
+        "--no-verify",
         "-m",
         [
           `quest: freeze ${sliceState.sliceId}`,
@@ -497,7 +501,7 @@ async function freezeSliceResult(
           `Quest-Slice-Id: ${sliceState.sliceId}`,
           `Quest-Base-Revision: ${baseRevision}`,
         ].join("\n"),
-      ],
+      ]),
       cwd: sliceState.workspacePath,
       env: buildProcessEnv(),
     });
@@ -535,9 +539,9 @@ async function commitIntegrationSlice(
   driftedFromBase: boolean,
 ): Promise<string> {
   const commitResult = await runSubprocess({
-    cmd: [
-      "git",
+    cmd: buildSafeGitCommand([
       "commit",
+      "--no-verify",
       "-m",
       [
         `quest: integrate ${sliceState.sliceId}`,
@@ -548,7 +552,7 @@ async function commitIntegrationSlice(
         `Quest-Result-Revision: ${resultRevision}`,
         `Quest-Drifted: ${driftedFromBase}`,
       ].join("\n"),
-    ],
+    ]),
     cwd: integrationWorkspacePath,
     env: buildProcessEnv(),
   });
@@ -590,7 +594,7 @@ async function integrateSlice(
   }
 
   const cherryPickResult = await runSubprocess({
-    cmd: ["git", "cherry-pick", "--no-commit", resultRevision],
+    cmd: buildSafeGitCommand(["cherry-pick", "--no-commit", "--no-verify", resultRevision]),
     cwd: integrationWorkspacePath,
     env: buildProcessEnv(),
   });
