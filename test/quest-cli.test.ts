@@ -2785,8 +2785,17 @@ test("quest cli pretty prints training grounds output when requested", () => {
 
 test("quest cli pretty prints trials in chronicle output when requested", async () => {
   const context = trackContext();
+  const scriptPath = join(context.stateRoot, "chronicle-worker.ts");
+  writeFileSync(
+    scriptPath,
+    ["await Bun.stdin.text();", "await Bun.write(Bun.stdout, 'builder-ok');"].join("\n"),
+    "utf8",
+  );
 
-  expectWorkerUpserted(context);
+  expectWorkerUpserted(
+    context,
+    createWorkerJson({}, { adapter: "local-command", command: ["bun", scriptPath] }),
+  );
   const created = await runCliAsync(context, ["run", "--stdin"], {
     input: JSON.stringify(
       createSpec({
@@ -2804,7 +2813,7 @@ test("quest cli pretty prints trials in chronicle output when requested", async 
   expect(created.code).toBe(0);
   const runId = JSON.parse(created.stdout).run.id as string;
 
-  const executed = await runCliAsync(context, ["runs", "execute", "--id", runId, "--dry-run"]);
+  const executed = await runCliAsync(context, ["runs", "execute", "--id", runId]);
   expect(executed.code).toBe(0);
 
   const logs = await runCliAsync(context, ["runs", "logs", "--id", runId, "--pretty"]);
